@@ -246,6 +246,50 @@ async def test_bug544_report_only_fts_probe_keeps_a_concurrent_writers_statement
 
 
 @pytest.mark.asyncio
+async def test_declare_reuses_an_entity_another_process_registers_in_the_gap(file_db):
+    """bug-631: declare looks an entity up before it inserts one. With the lookup
+    outside SQLite's write lock, another process could register the same name in
+    between, and the insert then failed on the unique index -- the whole
+    declaration answered an error for an entity that did exist."""
+    from cpersona import associations
+
+    agent = "u03.declare"
+
+    async def handler():
+        return await associations.declare(agent, {"entities": [{"name": "Kenji"}]})
+
+    result = await _race(
+        file_db,
+        "INSERT INTO entities (agent_id, project_id, channel, name, normalized, declared_by, created_at) "
+        "VALUES (?, '', '', 'Kenji', ?, 'agent', '2026-01-01T00:00:00+00:00')",
+        (agent, associations.normalize("Kenji")),
+        handler,
+    )
+    assert result["dropped"] == [], result
+    assert _rows(file_db, "SELECT name FROM entities WHERE agent_id = ?", (agent,)) == [("Kenji",)]
+
+
+@pytest.mark.asyncio
+async def test_declare_does_not_mention_a_record_another_process_deletes_in_the_gap(file_db):
+    """bug-631 (b): the anchor check ran before the write lock, so a record deleted
+    by another process in between still got a mention, after its delete trigger had
+    already fired -- an orphan no health check sweeps."""
+    from cpersona import associations
+
+    agent = "u03.anchor"
+    mem_id = await _store(agent, "Kenji leads the payments rewrite")
+
+    async def handler():
+        return await associations.declare(
+            agent, {"entities": [{"name": "Kenji"}]}, anchor_ref=f"mem:{mem_id}"
+        )
+
+    result = await _race(file_db, "DELETE FROM memories WHERE id = ?", (mem_id,), handler)
+    assert result["mentions"] == 0, result
+    assert _rows(file_db, "SELECT COUNT(*) FROM entity_mentions WHERE ref = ?", (f"mem:{mem_id}",)) == [(0,)]
+
+
+@pytest.mark.asyncio
 async def test_bug544_probe_with_no_writer_still_releases_its_own_transaction(in_memory_db):
     """The guard must not keep the probe's own transaction open on the shared
     connection: an in-memory export copies the database with SQLite's backup,

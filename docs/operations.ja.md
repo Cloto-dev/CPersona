@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:6c8838ded1715e46aab7ec7daa0cf6e119c55d1d -->
+<!-- i18n-source: docs/operations.md@blob:8f427f0febc707c79d4edea1b980cc2c1184ee94 -->
 
 # 運用 Runbook
 
