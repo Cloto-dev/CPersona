@@ -400,10 +400,12 @@ effective_budget = min(budget_base, max_budget)
   抜粋が消えることはありません。最初の一節さえ収まらない時は、その item が収まるだけの claims を残し、
   削った数を `claims_omitted` で述べます。最初の一節にその head の claim と応答自身の欄を足しても上限を
   超える時は `error: "cap_below_minimum"` を返し、`detail` は一節だけで上限を超えたのかどうかを述べます。
+  このエラーも、候補の recall がそのセッションに届けた通知を運びます (運ばなければそのセッションでは失われます)。
   mode を指定しない呼び出しは変わりません。
   - `mode: "lite"` は、2.6.5a3 が `lite=true` として入れたプリセットで、`lite=true` はその別名として残ります
     (両方の指定は拒否します)。予算は、呼び出し側が指定しない限り 2,800 字です (運用者が強制した予算は
-    これまで通り優先します)。列は `CPERSONA_RECONSTRUCT_SEQUENCE` の値にかかわらず `whole`
+    これまで通り優先します)。これは mode のサーバー既定値であって要求ではないので、報告する時は
+    `budget_policy` が出どころをサーバーとし、`requested_budget` は null です。列は `CPERSONA_RECONSTRUCT_SEQUENCE` の値にかかわらず `whole`
     ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length)) で、上限は 3,000 です。
     mode を開発する間に測った lite の応答はすべてこれより下でした。
   - `mode: "pro"` は、`count` を省くと設定の上限にかかわらず 15 件を読み、指定がない限り字数の予算を持たず、

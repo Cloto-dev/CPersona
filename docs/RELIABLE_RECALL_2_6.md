@@ -476,11 +476,15 @@ effective_budget = min(budget_base, max_budget)
   most claims that do, the cut stated in `claims_omitted`; a cap that the first
   passage with its head claim and the response's own fields exceeds answers
   `error: "cap_below_minimum"`, and its `detail` says whether the passage alone
-  is over. A call that names no mode is unchanged.
+  is over; the error still carries the notices the candidate recall delivered to
+  the session, which would otherwise be lost for it. A call that names no mode is
+  unchanged.
   - `mode: "lite"` is the preset 2.6.5a3 introduced as `lite=true`, which
     remains its other name (the two together are refused). The budget is 2,800
     characters unless the caller names one (an operator-forced budget still
-    wins), the sequence is `whole`
+    wins). It is the server's default for the mode, not a request: when it is
+    reported, `budget_policy` names the server as its source and
+    `requested_budget` is null. The sequence is `whole`
     ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
     whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says, and the cap is 3,000, above
     every lite response measured while the modes were developed.

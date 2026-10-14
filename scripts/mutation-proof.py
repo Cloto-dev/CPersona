@@ -3290,8 +3290,8 @@ MUTATIONS += [
         tests=('tests/test_cue_coarse_auto.py',),
         target='coarse suggestion — reconstruct forwards it',
         file='cpersona/reconstruct.py',
-        find='    for notice in ("advisory", "update", "suggestion", "time_cue"):\n',
-        replace='    for notice in ("advisory", "update", "time_cue"):\n',
+        find='    for notice in _NOTICES:\n        if notice in recall_result:\n',
+        replace='    for notice in (n for n in _NOTICES if n != "suggestion"):\n        if notice in recall_result:\n',
         breaks='a reconstruct caller never hears the suggestion its recall consumed',
         expect='test_cue_coarse_auto.py::test_a_recall_carries_the_suggestion_once_and_reconstruct_forwards_it',
     ),
@@ -3412,6 +3412,15 @@ MUTATIONS += [
         file='cpersona/reconstruct.py',
         find='        if before and governed[before - 1][1] > start:\n            continue\n        bisect.insort(governed, (start, end))\n',
         replace='        bisect.insort(governed, (start, end))\n',
+        # A block inside a taken range is skipped before its range is computed, which
+        # alone keeps a range that governs two blocks from being offered twice; both go.
+        also=(
+            (
+                '        before = bisect.bisect_left(governed, (row[2],))\n'
+                '        if before and governed[before - 1][1] > row[1]:\n            continue\n',
+                '',
+            ),
+        ),
         breaks='the same text is offered twice, so a quote repeats itself and the budget pays for it twice',
         expect='test_reconstruct_evidence_sequence.py::test_two_blocks_governed_by_one_range_give_one_passage',
     ),
@@ -3596,8 +3605,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_lite.py',),
         target='lite — the lite budget when the caller names none',
         file='cpersona/reconstruct.py',
-        find='    if mode == MODE_LITE and budget is None:\n        budget = LITE_BUDGET\n',
-        replace='    if False:\n        budget = LITE_BUDGET\n',
+        find='    mode_budget = LITE_BUDGET if mode == MODE_LITE else None\n',
+        replace='    mode_budget = None\n',
         breaks='lite answers at the default budget, as large as a plain call',
         expect='test_reconstruct_lite.py::test_lite_through_do_reconstruct',
     ),
