@@ -229,7 +229,7 @@ def owned_paths() -> list[OwnedPath]:
     """
     import glob as _glob
 
-    from cpersona import config, update_check, vector_index
+    from cpersona import block_index, coarse_index, config, update_check, vector_index
 
     db = config.DB_PATH
     if db == ":memory:":
@@ -248,6 +248,14 @@ def owned_paths() -> list[OwnedPath]:
         OwnedPath(vector_index.index_path(table), "file", f"an embedding of every {table} row")
         for table in ("memories", "episodes")
     ]
+    # The one-bit indexes beside it hold the sign bits of every embedding and the
+    # agent / project / channel codes of every row, so they are as private as the
+    # vectors they were cut from.
+    out += [
+        OwnedPath(coarse_index.index_path(table), "file", f"the embedding sign bits of every {table} row")
+        for table in ("memories", "episodes")
+    ]
+    out.append(OwnedPath(block_index.index_path(), "file", "the embedding sign bits of every block row"))
     # Written by _back_up_calibration_sidecar under a name it mints, so the
     # pattern is the only way to name them; it is the one the pruner uses.
     out += [

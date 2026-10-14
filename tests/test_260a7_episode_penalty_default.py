@@ -32,13 +32,16 @@ def test_the_penalty_is_off_when_nothing_is_set():
     assert _flag_in_fresh_process(None) == "False"
 
 
-@pytest.mark.parametrize("value", ["true", "TRUE", "True"])
+# The usual spellings of "on" opt in like `true` does: read as anything but `true`,
+# a deployment that wrote `yes` asked for the penalty and silently did not get it.
+@pytest.mark.parametrize("value", ["true", "TRUE", "True", "1", "yes", "on"])
 def test_a_deployment_can_opt_back_in(value):
     assert _flag_in_fresh_process(value) == "True"
 
 
-@pytest.mark.parametrize("value", ["false", "0", "yes", ""])
-def test_anything_but_true_leaves_it_off(value):
+# Off, empty (unset) and a value that is not a yes/no word all leave it off.
+@pytest.mark.parametrize("value", ["false", "0", "no", "off", "", "enabled"])
+def test_anything_else_leaves_it_off(value):
     assert _flag_in_fresh_process(value) == "False"
 
 

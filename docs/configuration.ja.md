@@ -4,6 +4,8 @@
 
 > **対象: CPersona {{ version_line }}。** 設定はすべて環境変数で、妥当な既定値を持ちます。
 > このページが正本で、README は quick start に必要な部分集合だけを持ちます。
+> on/off の設定は `true`・`1`・`yes`・`on` と `false`・`0`・`no`・`off` を大文字小文字を
+> 問わず受け付けます。空の値は未設定として扱い、それ以外の値は文書の既定値のまま警告を記録します。
 >
 > **翻訳について**: 正本は英語版です。変数名・既定値・型は原文のまま保持して
 > います (訳すと設定できなくなるため)。
@@ -18,7 +20,7 @@
 | `CPERSONA_EMBEDDING_MODEL_MODE` | `warn` | 保存されたベクトルに、現在と違うモデルのラベルが付いていたときの扱い。ベクトルは、それを作ったものを示すラベル付きで書き込まれます: バックエンドが `GET /capabilities` で返す指紋 (CEmbedding 0.9.0 以降)、それが無ければ `api` トランスポートが送るモデル名か設定したモデル名、どれも無ければ空です。ラベルを比べるのは、現在の識別子があるとき (指紋が返ってきたとき、または `api` トランスポートのモデル) だけです。`warn` は別のモデルが書いたベクトルを `check_health` (`embedding_model`) で報告し、recall の結果は何も変えません。`reject` はそのベクトルを問いと比べなくなり、該当する行はキーワードでだけ見つかり、ベクトルの票なしで採点されます。`off` は報告を外します。2.6.3 より前に保存したベクトルにはラベルが無く、数えられません |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | ベクトル検索の実行場所 (`local` = プロセス内コサイン、`remote` = 外部委譲)。`remote` は `/index`・`/search`・`/remove`・`/purge` を `CPERSONA_EMBEDDING_URL` と同じ階層のルートへクエリ文字列ごと送るため、その URL は `/embed` で終わる必要があります。それ以外の URL ではリモート呼び出しを行わず、その旨の警告を 1 度だけ出します |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`) — 後述 |
-| `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211): 超過分は行がプレビュー階層に戻り — 関連度の高い行から全文で残し (bug-214) — 応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効化します — 無効な階層への降格は本文を無言で落とすことになるため、切り詰めをやめる選択はどこでも切り詰めないという選択になります |
+| `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211): 超過分は行がプレビュー階層に戻り — 関連度の高い行から全文で残し (bug-214) — 応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効化します — 無効な階層への降格は本文を無言で落とすことになるため、切り詰めをやめる選択はどこでも切り詰めないという選択になります。`CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` と `CPERSONA_RECONSTRUCT_MAX_BUDGET` は、未設定ならこの大きさの抜粋 1 つ分まで引き上がります |
 | `CPERSONA_RECALL_EXCERPT_CHARS` | `800` | プレビューが本文を切ったとき、recall の行がプレビューの傍らに持つクエリ関連の抜粋: 一致したレコードの部分を、ランキング順にこの文字数まで詰め、本文中の順序で並べて示します ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。全文が示される行 (`full_content=true` で応答の予算内に収まる行を含む) には付きません。`full_content=true` の行のうち予算でプレビューへ切り戻された行には付きます。`0` で無効化され、プレビュー階層が無効なときは常に off です |
 | `CPERSONA_RRF_K` | `60` | RRF の平滑化パラメータ |
 | `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | 記憶 1 件・エピソード 1 件あたりの最大文字数。超過分は切り詰められ、`check_health(fix=true)` は既存行も上限で切るため、**下げると保存済みデータが短くなります**。2.5.4a2 で `2000` から引き上げ。埋め込みウィンドウを超えた本文も、行全体を索引するキーワードチャネル経由では検索できます |
@@ -32,7 +34,7 @@
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | バックグラウンドタスクキュー (DB 永続・クラッシュ復帰可能) |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | 直近に想起された記憶へのペナルティ |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | 上記ペナルティの対象時間窓 (分) |
-| `CPERSONA_MAX_MEMORIES` | `10000` | ベクトル検索の**走査ウィンドウ** (保存件数の上限ではありません) — 大きなコーパスでは引き上げてください ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
+| `CPERSONA_MAX_MEMORIES` | `10000` | ベクトル検索の**走査ウィンドウ** (保存件数の上限ではありません) — 大きなコーパスでは引き上げてください ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories))。1 未満の値はウィンドウにならないため、`10000` に戻して警告を記録します |
 | `CPERSONA_VECTOR_REACH` | `0` | ベクトル検索が走査ウィンドウの先をどこまで見てよいか (行数)。効果を持たせるには **`CPERSONA_MAX_MEMORIES` より大きくする必要があります**: 同値以下 (既定の `0` を含む) では遠方リストは存在せず、追加の処理は一切走りません。大きくすると、2 つの数値の間にある行が**第 2 のリスト**としてランク付けされ、第 1 のリストと並んで融合されます。つまりウィンドウは新しさの事前分布として働き続けたまま、到達距離だけを独立に伸ばせます。ローカルのベクトル検索と `rrf`/`rsf` の融合モードでのみ有効です ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | その第 2 のリストのうち何行を融合層に渡すか。`0` (既定) は**応答の `limit` と同じ**という意味で、この設定なしで構築される第 2 のリストそのものです。正の値を与えると `min(limit, N)` 行に切り詰められます。これは候補件数の上限であり、行のスコア計算は一切変わりません。したがって残るのは、フル長のリストが先頭に並べていた行そのものです。`CPERSONA_VECTOR_REACH` が `CPERSONA_MAX_MEMORIES` より大きくない限り無関係で、第 1 のリスト側の打ち切りは `limit` のままです ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_FAR_SEATS_ENABLED` | `false` | 窓の外の席 ([binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md#5-far-seats))。**走査の窓より外**にあり、1 ビットの粗探索が意味で見つけた記録のために、block の予約の後ろに 2 席を確保します。探索は `CPERSONA_MAX_MEMORIES` と `CPERSONA_VECTOR_REACH` が終わる位置から始まり、上位の候補は保存されたベクトルの cosine で並べ直され、ベクトルの腕の類似度の下限を満たすものだけが残ります。block の予約と同じく、この席は何も押し出しません。席がない時に返していた行はすべて同じ順で返り、応答は `limit` を**超えて**最大 2 行を運びます。席に入った行は `match_reason.signal` = `far` を報告し、その記録の recall count には加算されません。`python -m cpersona.vector_index build` が連続索引の隣に書く粗探索の索引は、探索を安くするだけで結果を変えません。索引がなければ保存されたベクトルを読みます。off では探索は走りません。ベクトル検索がリモートの構成では効果がなく、エピソードは探索しません |
@@ -70,11 +72,11 @@
 | `CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS` | `60` | 同じ送り手の候補を、同じ project と channel の中で何秒以内なら 1 つの item に束ねるか。最初の行から測るので、短い間隔が続いても何時間もの会話は 1 つになりません。`0` でこの束ねを無効にします |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | item の先頭引用: そのレコードのうち一致した部分を、ランキング順にこの文字数まで詰め、本文中の順序で示します — recall の抜粋と同じ詰め方です。これ以下の長さのレコードは全体が引用されます。`0` にすると、2.6 より前と同様に、支配する 1 節をプレビュー階層で切って引用します |
 | `CPERSONA_RECONSTRUCT_FULL_QUOTES` | `5` | 先頭から何件の item に、上の先頭引用の大きさをそのまま使うか。2.6.4 から |
-| `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` | `400` | それより後の item の先頭引用の大きさ。0 より大きく `CPERSONA_RECONSTRUCT_QUOTE_CHARS` 以下でないと起動時に止まります。同じ値にすると、2.6.4 より前と同じくどの item も同じ大きさで引用します。2.6.4 から |
+| `CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS` | `400` | それより後の item の先頭引用の大きさ。未設定なら、より小さい `CPERSONA_RECONSTRUCT_QUOTE_CHARS` に合わせて下がります。明示的に設定した値は 0 より大きく `CPERSONA_RECONSTRUCT_QUOTE_CHARS` 以下でないと起動時に止まります。同じ値にすると、2.6.4 より前と同じくどの item も同じ大きさで引用します。2.6.4 から |
 | `CPERSONA_RECONSTRUCT_SEQUENCE` | `items` | 予算が切る引用の列。`items` は各 item の先頭引用を item の順に並べ、そのあと各 item の抜粋を順に回す列です。`evidence` は item の先頭レコードの引用候補をすべて、レコードをまたいだ 1 つの順序に並べて切ります。item の先頭引用はそのレコードのうち切り取りに入った部分 (本文の順に表示) になり、1 つも入らなかった item は返しません ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md))。`whole` は同じ順序に長さで引いた床を付けたものです。引用の長さ (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`) 以下の先頭レコードを丸ごと item の順に先に並べ、それより長いレコードの引用候補を `evidence` の順序で続けます。予算を上げて引用が消えることはありません。`CPERSONA_RECONSTRUCT_QUOTE_CHARS` が 0 より大きい時だけ読みます。実験的な設定です。2.6.5a1 から (`whole` は 2.6.5a3 から) |
-| `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | 呼び出し側が `budget` を省略した時のペイロード予算 (引用本文の文字数)。ウィンドウの item の先頭引用の大きさを合計した方が大きければそちらになります。件数と予算の掃引で選ぶまでの暫定値です |
+| `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | 呼び出し側が `budget` を省略した時のペイロード予算 (引用本文の文字数)。ウィンドウの item の先頭引用の大きさを合計した方が大きければそちらになります。未設定ならプレビュー層の抜粋 1 つ分まで引き上がり、より小さい `CPERSONA_RECONSTRUCT_MAX_BUDGET` に合わせて下がります。件数と予算の掃引で選ぶまでの暫定値です |
 | `CPERSONA_RECONSTRUCT_FORCED_BUDGET` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします |
-| `CPERSONA_RECONSTRUCT_MAX_BUDGET` | `20000` | 予算の絶対上限。超える要求は切り詰めて報告します。既定値・強制値がこれを超える場合、または設定値がプレビュー層の抜粋 1 つ分に満たない場合は起動時に停止します |
+| `CPERSONA_RECONSTRUCT_MAX_BUDGET` | `20000` | 予算の絶対上限。超える要求は切り詰めて報告します。未設定なら、`CPERSONA_RECALL_PREVIEW_CHARS` の方が大きい時にプレビュー層の抜粋 1 つ分まで引き上がります。設定した既定値・強制値がこれを超える場合、または設定した値がプレビュー層の抜粋 1 つ分に満たない場合は起動時に停止します |
 
 優先順位は `forced ?? requested ?? default` で、最大値で制限します。
 既定値や強制値が最大値を超える設定は、起動時エラーになります。
