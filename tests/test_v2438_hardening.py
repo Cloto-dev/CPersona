@@ -201,9 +201,11 @@ async def test_locked_rows_survive_destructive_maintenance(clean_db):
 
 
 # ---------------------------------------------------------------------------
-# bug-014: duplicate_content collapses across channels (intended cleanup) but
-# NOT across the hard project_id isolation axis. Same content under project ''
-# and project 'X' are distinct rows with different visibility and must survive.
+# bug-014: duplicate_content collapses a channel copy only into a channel=''
+# row of the same project, never across the hard project_id isolation axis.
+# Same content under project '' and project 'X' are distinct rows with
+# different visibility and must survive; so are two sibling-channel copies with
+# no shared row, since each is the only copy its channel's readers can see.
 # ---------------------------------------------------------------------------
 
 
@@ -223,9 +225,13 @@ async def test_duplicate_content_does_not_collapse_across_projects(clean_db):
     # same content, DIFFERENT project → legitimately distinct, must both survive
     g = await ins("shared text", "", "")            # global project
     x = await ins("shared text", "proj-x", "")       # project 'proj-x'
-    # same content, SAME project, different channels → intended cross-channel dedup
+    # same content, SAME project, channel copies covered by a shared row → dedup
+    c0 = await ins("chan dup", "", "")
     c1 = await ins("chan dup", "", "ch1")
     c2 = await ins("chan dup", "", "ch2")
+    # same content, SAME project, sibling channels, no shared row → both kept
+    s1 = await ins("sibling text", "", "ch1")
+    s2 = await ins("sibling text", "", "ch2")
     await db.commit()
 
     from cpersona import maintenance_handlers as mh
@@ -237,13 +243,14 @@ async def test_duplicate_content_does_not_collapse_across_projects(clean_db):
     # cross-project rows both preserved (bug-014 fix)
     assert await exists(g), "global-project copy was deleted (cross-project collapse)"
     assert await exists(x), "project-x copy was deleted (cross-project collapse)"
-    # cross-channel duplicates within one project still collapse to one survivor
-    survivors = {c1, c2} & {
+    # channel copies covered by the shared row collapse into it
+    survivors = {c0, c1, c2} & {
         r[0] for r in await db.execute_fetchall(
             "SELECT id FROM memories WHERE agent_id=? AND content='chan dup'", (A,)
         )
     }
-    assert survivors == {c1}, "cross-channel dedup should keep MIN(id) survivor only"
+    assert survivors == {c0}, "covered channel copies should collapse into the shared row"
+    assert await exists(s1) and await exists(s2), "a sibling channel lost its only copy"
 
 
 # ---------------------------------------------------------------------------

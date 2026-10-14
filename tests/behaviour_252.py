@@ -2453,10 +2453,12 @@ async def _seed_health_warn(ctx: Ctx) -> None:
     the cross-channel duplicate check_duplicate_content owns (bug-014).
 
     The v12 UNIQUE index keys on `(agent_id, project_id, channel, content)`,
-    so identical content in DIFFERENT channels passes the write-time index
-    yet still lands in one health-check duplicate group.
+    so identical content in DIFFERENT channels passes the write-time index.
+    The first row sits in the shared channel '', which every reader of c2 also
+    sees, so the c2 row is a true duplicate; two named sibling channels with no
+    shared row would be two memories and no finding.
     """
-    await _mem(ctx.db, agent=_HEALTH_AGENT, channel="c1",
+    await _mem(ctx.db, agent=_HEALTH_AGENT, channel="",
                content="duplicated body", source=_HEALTH_SOURCE, seq=1)
     await _mem(ctx.db, agent=_HEALTH_AGENT, channel="c2",
                content="duplicated body", source=_HEALTH_SOURCE, seq=2)

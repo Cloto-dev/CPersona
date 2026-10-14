@@ -10611,7 +10611,7 @@
       "memories": [
         {
           "agent_id": "h1",
-          "channel": "c1",
+          "channel": "",
           "content": "duplicated body",
           "created_at": "2026-01-01T00:00:01Z",
           "embedding": "<blob 256B sha256:da896ea19607cfbf>",
@@ -10653,7 +10653,7 @@
         "agent_memories": 1,
         "axes": {
           "channel": {
-            "c1": 1
+            "(global)": 1
           },
           "project_id": {
             "(global)": 1
@@ -10752,7 +10752,7 @@
       "memories": [
         {
           "agent_id": "h1",
-          "channel": "c1",
+          "channel": "",
           "content": "duplicated body",
           "created_at": "2026-01-01T00:00:01Z",
           "embedding": "<blob 256B sha256:da896ea19607cfbf>",
@@ -10819,7 +10819,7 @@
         "agent_memories": 2,
         "axes": {
           "channel": {
-            "c1": 1,
+            "(global)": 1,
             "c2": 1
           },
           "project_id": {

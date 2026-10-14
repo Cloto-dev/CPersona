@@ -2499,6 +2499,10 @@ registry.auto_tool(
     # C26: rendered from checks.DEEP_FIX_CAPABLE — the prose named only two of
     # the four report-only checks, so fix=true silently no-opped on the others.
     f"fix=true applies repairs for: {', '.join(sorted(checks_module.DEEP_FIX_CAPABLE))}. "
+    # The short_content repair is a DELETE, not a rewrite: an operator who
+    # reads "repairs" as reversible must learn it here, before the call.
+    "The short_content repair deletes every unlocked row it reports; run "
+    "without fix first and read its samples. "
     f"Report-only (fix is accepted and ignored): {', '.join(checks_module.DEEP_REPORT_ONLY)} "
     "— apply those decisions via merge_memories / delete_memory / "
     "calibrate_threshold / update_profile. Use checks parameter to select "

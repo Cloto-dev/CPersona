@@ -84,6 +84,7 @@ import os
 import re
 import sqlite3
 import stat
+import unicodedata
 
 import aiosqlite
 
@@ -137,6 +138,13 @@ CALIBRATION_STALE_DAYS = 90
 
 _USERNAME_PREFIX_PATTERN = re.compile(r"^\[(.+?)\]\s")
 _SHORT_CONTENT_THRESHOLD = 5
+# What one East Asian wide character (CJK ideograph, kana, hangul) counts for
+# against _SHORT_CONTENT_THRESHOLD. The threshold was set on Latin-script noise
+# ("ok", "hmm"), where a character carries a fraction of a word; one CJK
+# character carries what two or three Latin letters do, so a five-character
+# Japanese sentence ("妻は看護師", "my wife is a nurse") is a complete fact.
+# At 3 a single wide character still reads as trivial and two do not.
+_WIDE_CHAR_WEIGHT = 3
 _STALE_PROFILE_DAYS = 30
 
 
@@ -272,49 +280,56 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
 
 async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
-    # bug-014: group by (agent_id, project_id, content) — deliberately NOT the
-    # same key as the idx_memories_dedup_content UNIQUE index
-    # (agent_id, project_id, channel, content). Omitting channel is intentional:
-    # the index only forbids exact (…,channel,…) duplicates at write time, and
-    # this check is what collapses the same content across different channels of
-    # one project (the cross-channel cleanup the index deliberately leaves to
-    # check_health — see test_v2435_bugfixes.py::_insert_dup). Including
-    # project_id is the fix: project_id is a hard γ-isolation axis, so the same
-    # content under project '' (global) and project 'X' are legitimately
-    # distinct rows with different visibility. The previous (agent_id, content)
-    # grouping collapsed them and the MIN(id) survivor could delete the global
-    # copy, silently narrowing visibility for every other project (bug-014).
-    dup_rows = await db.execute_fetchall(
-        f"""SELECT content, COUNT(*) as cnt FROM memories
-            WHERE 1=1{iso.and_clause}
-            GROUP BY agent_id, project_id, content HAVING cnt > 1""",
-        iso.params,
-    )
-    if not dup_rows:
-        return []
-    total_dupes = sum(r[1] - 1 for r in dup_rows)
-    # Agent-scoped, locked-safe (bug-007): only unlocked non-survivors within
-    # scope. The survivor grouping MUST match the detection grouping above
-    # (bug-014). bug-128: prefer the channel='' shared row so cross-channel dedup
-    # never deletes the broadest-visibility copy; otherwise keep the MIN(id).
+    # A row is a duplicate only when deleting it leaves every reader who could
+    # see it able to see the same content. project_id is a hard γ-isolation
+    # axis, so the same content under project '' and project 'X' are distinct
+    # rows (bug-014); a channel 'X' read sees channel 'X' plus channel ''. So,
+    # within one (agent_id, project_id, content) group, a row is covered when
+    #   - an older row sits in the same channel: the exact-bucket duplicate the
+    #     idx_memories_dedup_content UNIQUE index forbids at write time, which a
+    #     corpus from before that index can still hold; or
+    #   - it sits in a named channel and a channel='' row exists, which every
+    #     reader of that channel still sees (bug-128).
+    # The same text in two sibling channels with no channel='' copy is two
+    # memories, not a duplicate: deleting either one removes the content from
+    # every recall scoped to its channel. The store draws the same line -- a
+    # channel write is skipped only against the same channel or channel ''.
     #
-    # One fragment, two verbs: the COUNT that reports `repairable` and the DELETE
-    # that performs the repair have to select the same rows, and a count that
-    # disagrees with its own delete is the defect the contract exists to catch
-    # (the reasoning behind ``invalid_source_type_where``). Local rather than a
-    # module constant so the isolation predicate stays inside the statement the
-    # agent-scoping gate reads.
-    surplus = f"""FROM memories
-                WHERE locked = 0
-                  AND id NOT IN (
-                      SELECT COALESCE(MIN(CASE WHEN channel = '' THEN id END), MIN(id))
-                      FROM memories GROUP BY agent_id, project_id, content
+    # One fragment, every verb: the groups / total_extra report, the COUNT that
+    # reports `repairable` and the DELETE that performs the repair select the
+    # same rows, and a count that disagrees with its own delete is the defect
+    # the contract exists to catch (the reasoning behind
+    # ``invalid_source_type_where``). Local rather than a module constant so the
+    # isolation predicate stays inside the statement the agent-scoping gate reads.
+    covered = f"""FROM memories
+                WHERE (
+                      id NOT IN (
+                          SELECT MIN(id) FROM memories
+                          GROUP BY agent_id, project_id, channel, content
+                      )
+                      OR (channel != '' AND EXISTS (
+                          SELECT 1 FROM memories AS shared
+                          WHERE shared.agent_id = memories.agent_id
+                            AND shared.project_id = memories.project_id
+                            AND shared.content = memories.content
+                            AND shared.channel = ''
+                      ))
                   )
                  {iso.and_clause}"""
+    total_dupes = (await db.execute_fetchall(f"SELECT COUNT(*) {covered}", iso.params))[0][0]
+    if not total_dupes:
+        return []
+    groups = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM (SELECT 1 {covered} GROUP BY agent_id, project_id, content)",
+            iso.params,
+        )
+    )[0][0]
+    # Agent-scoped, locked-safe (bug-007): only the unlocked covered rows.
     # Counted from the fixer's own predicate, not derived from `total_extra`: a
-    # group whose every non-survivor is locked contributes to total_extra and to
-    # nothing a fix can write (bug-139's lesson, applied before the repair
-    # rather than after it).
+    # covered row that is locked contributes to total_extra and to nothing a fix
+    # can write (bug-139's lesson, applied before the repair rather than after it).
+    surplus = f"{covered} AND locked = 0"
     deletable = (await db.execute_fetchall(f"SELECT COUNT(*) {surplus}", iso.params))[0][0]
     if fix:
         # A deleted copy's declarations move to its group's survivor, which holds the
@@ -338,7 +353,7 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     return [
         {
             "type": "duplicate_content",
-            "groups": len(dup_rows),
+            "groups": groups,
             "total_extra": total_dupes,
             "repairable": deletable,
         }
@@ -2677,7 +2692,13 @@ async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
         # name to recover into a shape that never claimed one.
         issue["unattributed"] = unattributed
     if anon:
-        issue["hint"] = "Use deep_check with fix=true to recover names from content"
+        # Name the scoped call: deep_check with no checks runs every deep
+        # repair, and short_content's repair deletes rows -- following this hint
+        # must repair attribution and nothing else.
+        issue["hint"] = (
+            "Use deep_check(agent_id, fix=true, checks=['anonymous_source']) "
+            "to recover names from content"
+        )
     return [issue]
 
 
@@ -3898,11 +3919,29 @@ async def deep_anonymous_source(db, agent_id: str, fix: bool) -> dict:
 _SHORT_CONTENT_DELETE_CHUNK = 500
 
 
+def _short_content_length(content: str) -> int:
+    """Length of ``content`` for the trivial-content test, counting each East
+    Asian wide character as _WIDE_CHAR_WEIGHT. Strips spaces only, as SQLite's
+    TRIM does, so the SQL prefilter and this count agree on what is trimmed.
+    A non-text value (SQLite's type affinity lets a legacy row hold one) is
+    measured as its text form rather than raising mid-repair."""
+    text = content if isinstance(content, str) else str(content)
+    return sum(
+        _WIDE_CHAR_WEIGHT if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        for ch in text.strip(" ")
+    )
+
+
 async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
-    rows = await db.execute_fetchall(
+    # SQLite's LENGTH counts characters, and every character weighs at least 1,
+    # so the character prefilter is a superset of the weighted test; the weight
+    # is applied here so that a short CJK fact is never selected, reported, or
+    # deleted as trivial.
+    candidates = await db.execute_fetchall(
         "SELECT id, content FROM memories WHERE agent_id = ? AND LENGTH(TRIM(content)) <= ?",
         (agent_id, _SHORT_CONTENT_THRESHOLD),
     )
+    rows = [r for r in candidates if _short_content_length(r[1]) <= _SHORT_CONTENT_THRESHOLD]
     fixed_count = 0
     if fix and rows:
         ids = [r[0] for r in rows]
