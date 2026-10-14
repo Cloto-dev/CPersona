@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from cpersona import generation, tasks, vector
-from cpersona.database import connection, transaction
+from cpersona.database import connection, hold_write_lock, transaction
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +316,9 @@ async def write_nodes(db, prepared: PreparedNodes) -> bool:
     at that moment, so a stale set written now would survive. This comparison is
     what keeps invariant 6 across the unlocked window.
     """
+    # Hold the write lock across the comparison and the writes, so another
+    # process cannot delete or edit the record between them (see write_blocks).
+    await hold_write_lock(db)
     if await _parent_text(db, prepared.kind, prepared.parent_id) != prepared.text:
         return False
     await db.execute(

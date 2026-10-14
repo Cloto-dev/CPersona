@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass
 
 from cpersona import config, generation, tasks, vector
-from cpersona.database import background_connection, connection, transaction
+from cpersona.database import background_connection, connection, hold_write_lock, transaction
 from cpersona.isolation import isolation_where
 from cpersona.nodes import PARENT_TEXT, _parent_text
 
@@ -628,6 +628,10 @@ async def write_blocks(db, prepared: PreparedBlocks) -> bool:
     transaction, so a crash between the delete and the inserts leaves the
     previous set intact rather than half of a new one.
     """
+    # The comparison only means something if nothing can commit between it and
+    # the DELETE below; in deferred mode it would read in autocommit, and another
+    # process's delete or edit landing in that gap leaves rows no trigger removes.
+    await hold_write_lock(db)
     parent = await _parent_row(db, prepared.kind, prepared.parent_id)
     if parent is None or parent[0] != prepared.text:
         return False

@@ -381,6 +381,25 @@ async def transaction(scope_stats_neutral: bool = False):
             raise
 
 
+async def hold_write_lock(db) -> None:
+    """Inside ``transaction()``: take SQLite's write lock before the next read.
+
+    The shared connection runs in sqlite3's deferred mode, which BEGINs only
+    before the first INSERT/UPDATE/DELETE. A body that reads a row and then
+    writes on the strength of that read (a compare-and-swap) therefore reads in
+    autocommit, and another process can commit between the read and the write;
+    the write then starts a fresh transaction on the new state without noticing.
+    BEGIN IMMEDIATE makes the read part of the write's transaction and holds the
+    lock across both, so the other process waits or is refused instead.
+
+    A no-op when the body has already written: that transaction holds the lock
+    already, and SQLite refuses a nested BEGIN. ``transaction()`` still owns the
+    commit/rollback that ends it.
+    """
+    if not db.in_transaction:
+        await db.execute("BEGIN IMMEDIATE")
+
+
 async def init_db() -> None:
     """Boot-time initialisation: open the connection, run schema + migrations.
 
