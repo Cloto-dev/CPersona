@@ -585,9 +585,14 @@ async def observe_all() -> dict:
 # beside `excluded`, the rows that had no embedding when it ran. Additive -- the
 # build, its row count and its watermark are unchanged, and the two recorded
 # builds had no such rows (0). Pinned in tests/test_bug388_index_behind.py.
+#
+# generation, built_seq (bug-514): build_index reports where the vector change log
+# stood when it read its rows, the position a read checks the log against.
+# Additive -- the build, its row count and its watermark are unchanged. Pinned in
+# tests/test_bug514_index_change_log.py.
 _KEYS_ADDED_SINCE_GOLDEN = {
     "repairable", "checks_run", "advisory_scope", "budget", "providers", "stage_inputs",
-    "unembedded", "coverage",
+    "unembedded", "coverage", "generation", "built_seq",
 }
 
 
@@ -605,8 +610,16 @@ _KEYS_ADDED_SINCE_GOLDEN = {
 # still the residual verdict and are still compared here, so the bug-059
 # property this scenario was recorded for stays pinned. Behaviour pinned in
 # tests/test_review_c_fixes.py.
+#
+# ("corpus-nonfinite-recall-index", ("result", "built", "bytes")) and the same
+# path of its -shipping-default sibling — bug-514: the index file's header gained
+# the change log's generation, head and schema cookie (format 3), so the same
+# rows make a file 64 bytes longer. The rows, their count and the watermark are
+# still compared, and so is every answer the scenarios record through the file.
 _VALUES_CHANGED_SINCE_GOLDEN = {
     ("health-fix-repairs-warn", ("result", "issues")),
+    ("corpus-nonfinite-recall-index", ("result", "built", "bytes")),
+    ("corpus-nonfinite-recall-index-shipping-default", ("result", "built", "bytes")),
 }
 
 
@@ -1809,6 +1822,7 @@ async def _(ctx):
     _install_confidence_on(ctx)
     path = vector_index.index_path("memories")
     try:
+        await vector_index.start_logging()
         built = await vector_index.build_index(ctx.db, "memories")
         recalled = await memory_handlers.do_recall(_NONFINITE_AGENT, "apples", 6)
         # The file sits beside the scratch database, whose directory differs
@@ -1920,6 +1934,7 @@ async def _(ctx):
     install_local(ctx)
     path = vector_index.index_path("memories")
     try:
+        await vector_index.start_logging()
         built = await vector_index.build_index(ctx.db, "memories")
         recalled = await memory_handlers.do_recall(_NONFINITE_AGENT, "apples", 6)
         built = {**built, "path": "<index>"} if "path" in built else built

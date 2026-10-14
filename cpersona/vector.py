@@ -688,11 +688,43 @@ async def _index_phase1(
     does not match, or any condition under which this path cannot promise the
     same answer. The scan it replaces stays correct, and the design's whole claim
     rests on that staying true.
+
+    bug-514: the file holds each row's vector and axes as they were at the build,
+    and a row the build held can change since -- its vector replaced or cleared, an
+    axis or its time rewritten, the row deleted. The change log names those rows
+    (`vector_index.changed_since_build`); they are left out of the selection and
+    read from the live table with the other rows the file cannot answer for, so
+    the merge sees each of them as it is now. A log that cannot vouch for the file
+    sends the query to the scan.
     """
     try:
         index = vector_index.cached_index(table)
         if index is None or index.dim != query_dim:
             return None
+    except vector_index.IndexUnusable as exc:
+        # Visible, not just logged at debug: an index that has been unusable for
+        # a week otherwise reads as "somehow not faster", which is a failure this
+        # project has already made once.
+        logger.warning("Vector index unusable, falling back to the live scan: %s", exc)
+        return None
+    except Exception:  # noqa: BLE001 — fail open, deliberately
+        logger.warning("Vector index raised, falling back to the live scan", exc_info=True)
+        return None
+
+    try:
+        changed, refusal = await vector_index.changed_since_build(db, index, table)
+    except Exception:  # noqa: BLE001 — fail open, deliberately, as the probes below
+        logger.warning("Vector change log read raised, falling back to the live scan", exc_info=True)
+        return None
+    if changed is None:
+        logger.warning(
+            "Vector index cannot be read through the change log (%s); "
+            "falling back to the live scan until it is rebuilt",
+            vector_index.LOG_REFUSALS[refusal],
+        )
+        return None
+
+    try:
         # Inside the guard (bug-276). Selection used to sit outside it, so any
         # exception raised while selecting escaped into recall instead of
         # falling back — which is the one thing a derived, optional artifact
@@ -704,13 +736,8 @@ async def _index_phase1(
             channel=channel,
             source_id=source_id,
             limit=scan_offset + scan_limit,
+            exclude_ids=changed,
         )
-    except vector_index.IndexUnusable as exc:
-        # Visible, not just logged at debug: an index that has been unusable for
-        # a week otherwise reads as "somehow not faster", which is a failure this
-        # project has already made once.
-        logger.warning("Vector index unusable, falling back to the live scan: %s", exc)
-        return None
     except Exception:  # noqa: BLE001 — fail open, deliberately
         # The backstop, not the fix: the two type errors this was filed for are
         # repaired at their sources. It is here because the claim to hold is
@@ -723,10 +750,10 @@ async def _index_phase1(
 
     try:
         lost = await _index_rows_lost_embedding(
-            db, index.ids[positions], agent_id=agent_id, table=table
+            db, index.ids[positions], agent_id=agent_id, table=table, changed=changed
         )
         gone = not lost and await _index_rows_gone(
-            db, index, positions, agent_id=agent_id, table=table
+            db, index, positions, agent_id=agent_id, table=table, changed=changed
         )
     except Exception:  # noqa: BLE001 — fail open, deliberately
         # bug-285: the probe used to sit outside every guard, so an operational
@@ -778,6 +805,7 @@ async def _index_phase1(
             source_id=source_id,
             scan_limit=scan_offset + scan_limit,
             table=table,
+            changed=changed,
         )
         if tail is None:
             return None
@@ -796,6 +824,21 @@ async def _index_phase1(
             exc_info=True,
         )
         return None
+
+
+def _changed_within(changed, lo: int, hi: int) -> list[int]:
+    """The ids the change log named that fall inside ``[lo, hi]``, as plain ints.
+
+    The selection left every one of them out (`vector_index.select`), so a run of
+    ids whose only gaps are these is a run with named holes rather than a
+    scattered selection.
+    """
+    import numpy as np
+
+    if changed is None or not len(changed):
+        return []
+    arr = np.asarray(changed, dtype=np.int64)
+    return [int(i) for i in arr[(arr >= lo) & (arr <= hi)]]
 
 
 # Rows per `IN (...)` when the selection is scattered. Well under 999, the
@@ -819,10 +862,14 @@ _LOST_EMBEDDING_PROBE_CHUNK = 500
 # planner whose costing shifts once different statistics exist, reintroduces the
 # 3.0 s walk with no test able to report it. Said here rather than left as a
 # claim of coverage that does not exist.
-def _lost_embedding_range_sql(table: str = "memories") -> str:
+def _lost_embedding_range_sql(table: str = "memories", *, skipping: bool = False) -> str:
+    # `skipping`: the run has holes, and every hole is a row the change log named
+    # (bug-514), bound as one JSON parameter after the agent. Without one the
+    # statement is the one the plan test pins.
+    skip = " AND id NOT IN (SELECT value FROM json_each(?))" if skipping else ""
     return (
         f"SELECT 1 FROM {table} WHERE id BETWEEN ? AND ? AND +agent_id = ?"
-        " AND embedding IS NULL LIMIT 1"
+        f" AND embedding IS NULL{skip} LIMIT 1"
     )
 
 
@@ -839,7 +886,7 @@ def _lost_embedding_chunk_sql(count: int, table: str = "memories") -> str:
 
 
 async def _index_rows_lost_embedding(
-    db: aiosqlite.Connection, ids, *, agent_id: str, table: str = "memories"
+    db: aiosqlite.Connection, ids, *, agent_id: str, table: str = "memories", changed=()
 ) -> bool:
     """Whether any of these indexed ids no longer carries an embedding.
 
@@ -865,6 +912,11 @@ async def _index_rows_lost_embedding(
 
     The unary plus on `agent_id` in both statements is load-bearing — see the
     note on `_LOST_EMBEDDING_RANGE_SQL`; a test pins the plan.
+
+    `changed` are the ids the change log named, which the selection left out
+    (bug-514). A run whose only holes are such ids is still asked as a range,
+    with them skipped: a row edited inside the window would otherwise turn every
+    query after it into the chunked form until the next build.
     """
     import numpy as np
 
@@ -873,10 +925,17 @@ async def _index_rows_lost_embedding(
     if n == 0:
         return False
     lo, hi = int(ids.min()), int(ids.max())
-    if hi - lo + 1 == n:
+    holes = _changed_within(changed, lo, hi)
+    if hi - lo + 1 == n + len(holes):
         # Ids are unique, so a span equal to the count means every id in
-        # [lo, hi] is selected and the range asks exactly the same question.
-        row = await db.execute_fetchall(_lost_embedding_range_sql(table), (lo, hi, agent_id))
+        # [lo, hi] is selected and the range asks exactly the same question --
+        # or, with holes, every id in [lo, hi] but the named ones.
+        if holes:
+            row = await db.execute_fetchall(
+                _lost_embedding_range_sql(table, skipping=True), (lo, hi, agent_id, json.dumps(holes))
+            )
+        else:
+            row = await db.execute_fetchall(_lost_embedding_range_sql(table), (lo, hi, agent_id))
         return bool(row)
     for start in range(0, n, _LOST_EMBEDDING_PROBE_CHUNK):
         chunk = ids[start : start + _LOST_EMBEDDING_PROBE_CHUNK].tolist()
@@ -897,10 +956,12 @@ async def _index_rows_lost_embedding(
 #
 # `agent_id` is a plain term here, not `+agent_id` as in the probes above: the
 # point is the opposite one, to have the planner constrain that index with it.
-def _gone_range_sql(table: str = "memories") -> str:
+def _gone_range_sql(table: str = "memories", *, skipping: bool = False) -> str:
+    # `skipping`: as for `_lost_embedding_range_sql`, the named holes of the run.
+    skip = " AND id NOT IN (SELECT value FROM json_each(?))" if skipping else ""
     return (
         f"SELECT COUNT(*) FROM {table} WHERE agent_id = ? AND created_at >= ?"
-        " AND id BETWEEN ? AND ?"
+        f" AND id BETWEEN ? AND ?{skip}"
     )
 
 
@@ -912,7 +973,7 @@ def _gone_scattered_sql(table: str = "memories") -> str:
 
 
 async def _index_rows_gone(
-    db: aiosqlite.Connection, index, positions, *, agent_id: str, table: str = "memories"
+    db: aiosqlite.Connection, index, positions, *, agent_id: str, table: str = "memories", changed=()
 ) -> bool:
     """Whether any of the selected index rows has been deleted since the build.
 
@@ -927,6 +988,8 @@ async def _index_rows_gone(
     The ids travel as two bounds when they are one contiguous run -- every id in
     the run is then selected, so the range asks exactly the same question -- and
     as one JSON parameter otherwise, which no SQLITE_MAX_VARIABLE_NUMBER limits.
+    A run whose only holes are ids the change log named is a run too, with them
+    skipped (bug-514), as in `_index_rows_lost_embedding`.
     """
     import numpy as np
 
@@ -937,8 +1000,14 @@ async def _index_rows_gone(
     ids = index.ids[positions]
     oldest = bytes(index.created_at[positions[-1]]).decode("ascii")
     lo, hi = int(ids.min()), int(ids.max())
-    if hi - lo + 1 == n:
-        row = await db.execute_fetchall(_gone_range_sql(table), (agent_id, oldest, lo, hi))
+    holes = _changed_within(changed, lo, hi)
+    if hi - lo + 1 == n + len(holes):
+        if holes:
+            row = await db.execute_fetchall(
+                _gone_range_sql(table, skipping=True), (agent_id, oldest, lo, hi, json.dumps(holes))
+            )
+        else:
+            row = await db.execute_fetchall(_gone_range_sql(table), (agent_id, oldest, lo, hi))
     else:
         row = await db.execute_fetchall(
             _gone_scattered_sql(table), (agent_id, oldest, json.dumps(ids.tolist()))
@@ -987,6 +1056,7 @@ async def _index_tail_rows(
     scan_limit: int,
     table: str = "memories",
     window: tuple | None = None,
+    changed=(),
 ):
     """The rows the index cannot answer for, read exactly.
 
@@ -1005,6 +1075,11 @@ async def _index_tail_rows(
     routine maintenance creates, since filling a NULL embedding is what
     check_health(fix=True) does.
 
+    `changed` is a fourth, named by the change log rather than the build: the rows
+    held by the file that changed since it was built (bug-514). The caller left
+    them out of its selection, so here they are read as they are now -- or not at
+    all, when the row is gone or no longer carries an embedding.
+
     Returns None when a tail row carries a foreign embedding width. The live scan
     applies its window BEFORE skipping such rows, so their presence changes which
     rows fall inside the window — the index cannot reproduce that, and a
@@ -1015,7 +1090,7 @@ async def _index_tail_rows(
     # with no embedding is not in the meta query that produces the excluded list) and
     # the query treats them identically — read this id exactly, whatever the watermark
     # says. The build caps their sum for this reason.
-    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)
+    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids) + tuple(int(i) for i in changed)
 
     # The steady state — nothing written since the build, no named holes — is the
     # shape the index exists for, and in it the statement below is structurally

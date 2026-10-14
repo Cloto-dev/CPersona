@@ -604,7 +604,10 @@ async def _answer_without_the_index(db):
 
 @pytest.mark.asyncio
 async def test_health_check_reports_an_index_holding_a_deleted_row(corpus):
+    """bug-315, after bug-514: the deleted row is named by the change log, which every
+    query reads it through; what the check must report is a log that cannot vouch."""
     db = corpus
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     index = vector_index.load_index("memories")
     rows = await db.execute_fetchall(
@@ -615,18 +618,24 @@ async def test_health_check_reports_an_index_holding_a_deleted_row(corpus):
 
     assert (await admin_handlers.do_delete_memory(victim, agent_id=AGENT_315))["ok"]
 
-    issues = await checks.check_vector_index(db, AGENT_315, False)
-    assert issues, (
-        f"check_vector_index reported nothing after indexed row {victim} (watermark "
-        f"{index.watermark}, {index.count} indexed rows) was deleted; the index still "
-        "scores an id the database no longer holds (checks.py:2319-2335 only counts "
-        "rows past the watermark)"
+    changed, refusal = await vector_index.changed_since_build(db, index, "memories")
+    assert refusal == "" and victim in changed.tolist(), (
+        f"the change log did not name indexed row {victim} after its delete; the index "
+        "would still score an id the database no longer holds"
     )
+
+    assert await vector_index.stop_logging(db)
+    await db.commit()
+    issues = await checks.check_vector_index(db, AGENT_315, False)
+    assert [(i["type"], i["reason"]) for i in issues if i.get("table") == "memories"] == [
+        ("vector_index_log_refused", "logging_off")
+    ], issues
 
 
 @pytest.mark.asyncio
 async def test_index_path_returns_the_same_rows_as_the_scan_after_a_delete(corpus):
     db = corpus
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     index = vector_index.load_index("memories")
     scored = await _search(db)

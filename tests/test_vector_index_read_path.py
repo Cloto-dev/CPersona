@@ -137,6 +137,7 @@ async def test_index_answers_exactly_what_the_scan_answers(corpus, taken, name):
     expected = await _search(corpus, **scenario)
     assert taken["index"] == 0, "no index exists yet — the baseline must be the live scan"
 
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
     assert result["built"], result
 
@@ -148,6 +149,7 @@ async def test_index_answers_exactly_what_the_scan_answers(corpus, taken, name):
 @pytest.mark.asyncio
 async def test_rows_written_after_the_build_are_still_found(corpus, taken):
     """The watermark's whole point: no window in which a new memory is invisible."""
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
     # Tied with the corpus and newer than all of it: scan order then says it
     # leads. Asserting the lead rather than mere membership keeps the claim
@@ -191,6 +193,7 @@ async def test_a_row_embedded_after_the_build_is_still_found(corpus, taken):
     )
     await corpus.commit()
 
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
     assert result["built"], result
 
@@ -224,6 +227,7 @@ async def test_a_tail_row_older_than_the_index_lands_in_the_right_place(corpus, 
     concatenation would put it at the front of the window; the scan puts it where
     its timestamp says. This test is the difference between the two.
     """
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
 
     # Newest id, oldest timestamp — the shape a restore produces — and TIED with
@@ -269,6 +273,7 @@ async def test_a_row_the_format_cannot_spell_stays_reachable(corpus, taken):
     expected = await _search(corpus)
     assert "odd stamp" in expected[0]["content"], "the fixture must make the row observable"
 
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
     assert result["excluded"] == 1, "the non-canonical row should be named, not silently kept"
 
@@ -314,6 +319,7 @@ async def test_an_empty_tail_is_settled_on_the_rowid_alone(corpus, taken, statem
     isolation index — 12.53 ms of a 49.92 ms arm at 100,000 rows. The rowid
     range answers it instead.
     """
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
     assert result["built"] and result["excluded"] == 0, result
     statements.clear()
@@ -336,6 +342,7 @@ async def test_a_row_written_after_the_build_still_reaches_the_tail_read(corpus,
     would lose them silently, which is the failure this index is least allowed
     to have.
     """
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
     await _store(
         corpus, f"{TOPIC} freshly written", created_at="2026-03-01 00:00:09",
@@ -369,6 +376,7 @@ async def test_a_named_hole_is_read_even_though_nothing_is_past_the_watermark(
     await corpus.commit()
     expected = await _search(corpus)
 
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
     assert result["excluded"] == 1, "the fixture must produce a hole below the watermark"
     statements.clear()
@@ -411,6 +419,7 @@ async def test_the_probe_is_answered_by_the_rowid(corpus):
 @pytest.mark.asyncio
 async def test_absent_index_falls_back(corpus, taken):
     expected = await _search(corpus)
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
     os.unlink(vector_index.index_path("memories"))
     assert await _search(corpus) == expected
@@ -420,6 +429,7 @@ async def test_absent_index_falls_back(corpus, taken):
 @pytest.mark.asyncio
 async def test_corrupt_index_falls_back(corpus, taken):
     expected = await _search(corpus)
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
     path = vector_index.index_path("memories")
     with open(path, "r+b") as fh:
@@ -432,6 +442,7 @@ async def test_corrupt_index_falls_back(corpus, taken):
 @pytest.mark.asyncio
 async def test_dimension_mismatch_falls_back(corpus, taken, monkeypatch):
     expected = await _search(corpus)
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
 
     index = vector_index.load_index("memories")
@@ -446,11 +457,13 @@ async def test_dimension_mismatch_falls_back(corpus, taken, monkeypatch):
 @pytest.mark.asyncio
 async def test_a_rebuild_is_picked_up_without_anyone_invalidating_a_cache(corpus, taken):
     """Rebuild cadence is a performance knob only if a rebuild is seen on its own."""
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
     await _search(corpus)  # warms the cache
 
     await _store(corpus, f"{TOPIC} second wave", created_at="2026-03-01 00:00:08")
     await corpus.commit()
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
 
     index = vector_index.cached_index("memories")
@@ -466,6 +479,7 @@ async def test_a_foreign_width_row_written_after_the_build_falls_back(corpus, ta
     the index cannot reproduce which rows fall inside the window. It declines,
     and the answer stays the scan's.
     """
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories")
     await _store(
         corpus, f"{TOPIC} wrong width", created_at="2026-03-01 00:00:07",
@@ -481,6 +495,7 @@ async def test_a_foreign_width_row_written_after_the_build_falls_back(corpus, ta
 
 async def _built_index(db):
     """Build the index over the fixture corpus and map it."""
+    await vector_index.start_logging()
     result = await vector_index.build_index(db, "memories")
     assert result["built"], result
     index = vector_index.load_index("memories")
@@ -738,6 +753,7 @@ async def test_more_holes_than_a_small_build_has_variables_still_reach_the_answe
     )
     await corpus.commit()
 
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
     assert result["built"], result
     index = vector_index.load_index("memories")

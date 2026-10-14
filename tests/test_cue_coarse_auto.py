@@ -17,7 +17,7 @@ import os
 import pytest
 import pytest_asyncio
 
-from cpersona import checks, coarse_index, coarse_notice, coarse_search, config, cue, vector
+from cpersona import checks, coarse_index, coarse_notice, coarse_search, config, cue, vector, vector_index
 from cpersona import memory_handlers as M
 from cpersona import reconstruct as R
 from cpersona.database import get_db
@@ -71,6 +71,7 @@ def _pairs(rows):
 
 
 async def _build(db):
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
 
 
@@ -173,10 +174,15 @@ async def test_on_never_reports_a_remainder_left_out(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_index_that_cannot_answer_is_skipped_and_reported(db, monkeypatch):
-    """A candidate deleted since the build sends "on" to the live store; auto skips."""
+    """An index its change log cannot vouch for sends "on" to the live store; auto skips.
+
+    The cause used to be a candidate deleted since the build; the change log now
+    names such a row and the index answers (bug-514). A log turned off since the
+    build is a state no read can answer exactly through the file.
+    """
     ids = await _seed(db)
     await _build(db)
-    await db.execute("DELETE FROM memories WHERE id = ?", (ids[40],))
+    assert await vector_index.stop_logging(db)
     await db.commit()
     _no_live_store(monkeypatch)
     rows = await _arm(db, monkeypatch, "auto")

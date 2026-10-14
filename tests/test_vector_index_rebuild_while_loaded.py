@@ -46,6 +46,7 @@ async def db():
 async def test_a_rebuild_replaces_an_index_the_process_still_holds(db, tmp_path):
     path = str(tmp_path / "idx")
     try:
+        await vector_index.start_logging()
         await vector_index.build_index(db, "memories", path)
         held = vector_index.cached_index("memories", path)  # what a server that has searched keeps
         assert held is not None and held.count == 5
@@ -53,6 +54,7 @@ async def test_a_rebuild_replaces_an_index_the_process_still_holds(db, tmp_path)
 
         await _insert(db, 5)
         await db.commit()
+        await vector_index.start_logging()
         result = await vector_index.build_index(db, "memories", path)  # moves a new file over the held one
         assert result["built"] and result["count"] == 6
 
@@ -73,6 +75,7 @@ async def test_read_mode_loads_the_same_arrays_and_maps_nothing(db, tmp_path, mo
     """The Windows path (_maps_files() False) on every platform: the arrays equal the mapped ones, field by field,
     and none of them is a mapping — a mapping is what kept the file from being replaced."""
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories", path)
     reference = vector_index.load_index("memories", path)
 

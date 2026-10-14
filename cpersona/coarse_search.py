@@ -22,14 +22,15 @@ Two suppliers run one algorithm:
 
 Both feed the same selection (`_Best`), and quantising a stored vector is
 deterministic, so they return the same `Candidates` for the same store: building
-or deleting the index changes what this costs, never what it returns. The index
-falls back to the live store under the conditions the contiguous index falls
-back under — a row it holds whose embedding was cleared since the build, a row
-it must read live that carries another width — and, as the contiguous index does
-for its survivors (bug-315), when a candidate it would return no longer exists.
-Like the contiguous index it does not see a row deleted or retagged since the
-build that is not among its candidates, which can move a range boundary by that
-row; a rebuild removes the difference.
+or deleting the index changes what this costs, never what it returns. A row the
+index holds that changed since the build -- its vector replaced or cleared, an
+axis or its time rewritten, the row deleted -- is named by the change log and
+read live with the rows written since (bug-514), so it takes the place and the
+bits it has now. The index falls back to the live store under the conditions the
+contiguous index falls back under — a log that cannot vouch for the file, a row
+it must read live that carries another width — and, as backstops, when a row it
+holds lost its embedding or a candidate it would return no longer exists without
+the log having named either.
 
 Nothing here decides who may see a row. `isolation_where()` stays the authority:
 the index narrows by the same axis codes the contiguous index uses
@@ -236,12 +237,32 @@ async def _from_index(db, query_bits, dim, k, path, *, agent_id, project_id, cha
         index = coarse_index.cached_coarse_index("memories", path)
         if index is None or index.dim != dim:
             return None
-        selected = vector_index.select(
-            index, agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id, limit=0,
-        )
     except IndexUnusable as exc:
         logger.warning("Coarse index unusable, falling back to the live store: %s", exc)
         return None
+    except Exception:  # noqa: BLE001 — fail open, deliberately
+        logger.warning("Coarse index raised, falling back to the live store", exc_info=True)
+        return None
+
+    # The rows the file holds that changed since its build (bug-514): left out of
+    # the selection and read live with the tail, as the contiguous index does.
+    try:
+        changed, refusal = await vector_index.changed_since_build(db, index, "memories")
+    except Exception:  # noqa: BLE001 — fail open, deliberately
+        logger.warning("Vector change log read raised, falling back to the live store", exc_info=True)
+        return None
+    if changed is None:
+        logger.warning(
+            "Coarse index cannot be read through the change log (%s); "
+            "falling back to the live store until it is rebuilt",
+            vector_index.LOG_REFUSALS[refusal],
+        )
+        return None
+    try:
+        selected = vector_index.select(
+            index, agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id, limit=0,
+            exclude_ids=changed,
+        )
     except Exception:  # noqa: BLE001 — fail open, deliberately
         logger.warning("Coarse index raised, falling back to the live store", exc_info=True)
         return None
@@ -270,7 +291,7 @@ async def _from_index(db, query_bits, dim, k, path, *, agent_id, project_id, cha
 
         tail = await vector._index_tail_rows(
             db, index, agent_id=agent_id, project_id=project_id, channel=channel,
-            source_id=source_id, scan_limit=-1, table="memories", window=period,
+            source_id=source_id, scan_limit=-1, table="memories", window=period, changed=changed,
         )
         if tail is None:
             return None

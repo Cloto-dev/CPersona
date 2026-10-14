@@ -70,13 +70,13 @@ def test_a_key_the_golden_already_holds_is_kept(capture):
 
 
 def test_a_deliberately_changed_value_keeps_what_the_golden_recorded(capture):
-    """The one entry in `_VALUES_CHANGED_SINCE_GOLDEN`. The current code answers
+    """The health entry in `_VALUES_CHANGED_SINCE_GOLDEN`. The current code answers
     differently on purpose; the file must still hold what was observed before
     it, because that recording is the evidence the change was reviewed."""
     from behaviour_252 import _VALUES_CHANGED_SINCE_GOLDEN
 
-    sid, path = next(iter(_VALUES_CHANGED_SINCE_GOLDEN))
-    assert path == ("result", "issues"), "this test hard-codes the shape of the one entry"
+    sid, path = next(e for e in sorted(_VALUES_CHANGED_SINCE_GOLDEN) if e[1] == ("result", "issues"))
+    assert sid == "health-fix-repairs-warn", "this test hard-codes the shape of that entry"
 
     recorded = {sid: {"result": {"issues": [], "status": "degraded"}}}
     observed = {sid: {"result": {"issues": [{"check": "duplicate_content"}], "status": "degraded"}}}
@@ -85,6 +85,25 @@ def test_a_deliberately_changed_value_keeps_what_the_golden_recorded(capture):
 
     assert written[sid]["result"]["issues"] == [], "the recorded value was overwritten"
     assert written[sid]["result"]["status"] == "degraded", "an unlisted key was touched"
+
+
+def test_a_changed_index_file_size_keeps_what_the_golden_recorded(capture):
+    """The two index-build entries (bug-514): a longer header changed the file's
+    size, and the golden keeps the size it recorded while the rest is compared."""
+    from behaviour_252 import _VALUES_CHANGED_SINCE_GOLDEN
+
+    entries = sorted(e for e in _VALUES_CHANGED_SINCE_GOLDEN if e[1] == ("result", "built", "bytes"))
+    assert [sid for sid, _ in entries] == [
+        "corpus-nonfinite-recall-index", "corpus-nonfinite-recall-index-shipping-default"
+    ]
+    for sid, _path in entries:
+        recorded = {sid: {"result": {"built": {"bytes": 2114, "count": 6}}}}
+        observed = {sid: {"result": {"built": {"bytes": 2178, "count": 7}}}}
+
+        written = capture._reconciled(observed, recorded)
+
+        assert written[sid]["result"]["built"]["bytes"] == 2114, "the recorded value was overwritten"
+        assert written[sid]["result"]["built"]["count"] == 7, "an unlisted key was excused"
 
 
 def test_the_same_change_in_another_scenario_is_not_excused(capture):

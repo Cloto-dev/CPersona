@@ -55,7 +55,10 @@ from cpersona.vector_index import IndexUnusable
 logger = logging.getLogger(__name__)
 
 MAGIC = b"CPXBIT01"
-FORMAT_VERSION = 1
+# 2 (bug-514): the header gained the change log's generation, head and schema
+# cookie at the build, as the contiguous index's did; a file without them is
+# refused and built again.
+FORMAT_VERSION = 2
 HEADER_ALIGN = 64
 
 #: Records only. Episodes are counted in the hundreds where records are counted in
@@ -114,6 +117,10 @@ class CoarseIndex:
     watermark: int
     excluded_ids: tuple[int, ...]
     unembedded_ids: tuple[int, ...]
+    #: The change log at the build, as `vector_index.VectorIndex` carries it.
+    generation: int
+    built_seq: int
+    schema_cookie: int
     embedding_model: str
     scoring_version: str
     ids: np.ndarray  # int64[count]
@@ -140,6 +147,9 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
     plan counted, and the ids it reads must be the plan's in the plan's order
     (bug-589, see ``vector_index.build_index``); a mismatch aborts the build rather
     than leaving bits shifted by a row against their ids.
+
+    The change log must be on before ``db`` reads its first row, as for the
+    contiguous index (``vector_index.build_index``); without it the build declines.
     """
     if table not in COARSE_TABLES:
         return {"built": False, "reason": f"no coarse index is built for {table}"}
@@ -147,6 +157,9 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
     # Before any row is read, as for the contiguous index: a purge that drops the
     # files after this must not see them republished from rows read before it.
     purges_at_start = vector_index.purges()
+    position = await vector_index.log_position(db)
+    if isinstance(position, str):
+        return {"built": False, "reason": position}
     plan = await vector_index.plan_rows(db, table, extra_columns=(TIMESTAMP_EXPR,))
     if isinstance(plan, dict):
         return plan
@@ -176,6 +189,7 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
         "watermark": plan.watermark,
         "excluded_ids": plan.excluded,
         "unembedded_ids": plan.unembedded,
+        **position,
         "fingerprint": {
             "dim": plan.dim,
             "embedding_model": config.EMBEDDING_MODEL,
@@ -240,6 +254,8 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
         "excluded": len(plan.excluded),
         "unembedded": len(plan.unembedded),
         "unreadable_timestamps": sum(1 for s in stamps if s == UNREADABLE_TIMESTAMP),
+        "generation": position["generation"],
+        "built_seq": position["built_seq"],
         "bytes": os.path.getsize(out),
     }
 
@@ -306,6 +322,11 @@ def load_coarse_index(table: str = "memories", path: str | None = None) -> Coars
     stamps = _map(off, f"S{TIMESTAMP_WIDTH}", (count,))
 
     fingerprint = header.get("fingerprint", {})
+    try:
+        generation, built_seq = int(header["generation"]), int(header["built_seq"])
+        schema_cookie = int(header["schema_cookie"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise IndexUnusable(f"{src}: header lacks the change log's position ({exc!r})") from exc
     return CoarseIndex(
         path=src,
         dim=dim,
@@ -313,6 +334,9 @@ def load_coarse_index(table: str = "memories", path: str | None = None) -> Coars
         watermark=int(header["watermark"]),
         excluded_ids=tuple(int(i) for i in header.get("excluded_ids", ())),
         unembedded_ids=tuple(int(i) for i in header.get("unembedded_ids", ())),
+        generation=generation,
+        built_seq=built_seq,
+        schema_cookie=schema_cookie,
         embedding_model=str(fingerprint.get("embedding_model", "")),
         scoring_version=str(fingerprint.get("scoring_version", "")),
         ids=ids,
@@ -411,17 +435,25 @@ async def status(table: str = "memories") -> dict:
     # since the build, and the named rows every query reads exactly (bug-388).
     iso = isolation_where(agent_id=None)
     async with connection() as db:
+        changed, refusal = await vector_index.changed_since_build(db, index, table)
+        if changed is None:
+            return {
+                "table": table, "path": path, "present": True, "usable": False,
+                "reason": vector_index.LOG_REFUSALS[refusal],
+                "hint": "build again; every read goes to the live store until then",
+            }
         row = await db.execute_fetchall(
             f"SELECT COUNT(*) FROM {table} WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
             (index.watermark, *iso.params),
         )
-        read_exactly = await vector_index.rows_read_exactly(db, index, table, iso)
+        read_exactly = await vector_index.rows_read_exactly(db, index, table, iso, changed)
     st = os.stat(path)
     return {
         "table": table,
         "path": path,
         "present": True,
         "usable": True,
+        "rows_changed_since_build": len(changed),
         "rows": index.count,
         "dim": index.dim,
         "watermark": index.watermark,

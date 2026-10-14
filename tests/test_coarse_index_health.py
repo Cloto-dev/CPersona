@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from cpersona import acl, checks, coarse_index, config, findings, vector
+from cpersona import acl, checks, coarse_index, config, findings, vector, vector_index
 from cpersona.database import get_db
 
 AGENT = "coarsehealth.agent"
@@ -164,19 +164,38 @@ async def test_an_unreadable_file_is_unusable(db):
 
 
 @pytest.mark.asyncio
-async def test_rows_the_index_holds_and_the_store_lost_are_reported(db):
+async def test_rows_the_index_holds_and_the_store_lost_are_read_through_the_log(db):
+    """bug-514: a deleted row is named by the change log and costs no report of its own."""
     await _insert(db, WINDOW + 20)
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
-    await db.execute("DELETE FROM memories WHERE id = (SELECT MIN(id) FROM memories)")
+    gone = (await db.execute_fetchall("SELECT MIN(id) FROM memories"))[0][0]
+    await db.execute("DELETE FROM memories WHERE id = ?", (gone,))
+    await db.commit()
+    assert await _run(db) == []
+    changed, _ = await vector_index.changed_since_build(db, coarse_index.load_coarse_index(), "memories")
+    assert changed.tolist() == [gone]
+
+
+@pytest.mark.asyncio
+async def test_an_index_the_log_cannot_vouch_for_is_reported(db):
+    """A log turned off since the build: every read goes to the live store, which is a defect."""
+    await _insert(db, WINDOW + 20)
+    await vector_index.start_logging()
+    assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
+    assert await vector_index.stop_logging(db)
     await db.commit()
     issues = await _run(db)
-    assert [(i["type"], i["severity"]) for i in issues] == [("coarse_index_rows_missing", "warn")]
-    assert issues[0]["indexed_rows"] - issues[0]["rows_still_present"] == 1
+    assert [(i["type"], i["severity"], i["reason"]) for i in issues] == [
+        ("coarse_index_log_refused", "warn", "logging_off")
+    ]
+    assert issues[0]["repairable"] == 1
 
 
 @pytest.mark.asyncio
 async def test_a_grown_tail_is_an_observation_at_the_registry_default(db):
     await _insert(db, WINDOW + 20)
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
     await _insert(db, 10, start=500)  # 10 > 30 * INDEX_TAIL_RATIO
     issues = await _run(db)
@@ -187,6 +206,7 @@ async def test_a_grown_tail_is_an_observation_at_the_registry_default(db):
 @pytest.mark.asyncio
 async def test_a_tail_inside_the_ratio_says_nothing(db):
     await _insert(db, WINDOW + 20)
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
     await _insert(db, 6, start=500)  # 6 == 30 * INDEX_TAIL_RATIO: not past it
     assert await _run(db) == []
@@ -195,6 +215,7 @@ async def test_a_tail_inside_the_ratio_says_nothing(db):
 @pytest.mark.asyncio
 async def test_a_corpus_of_another_width_is_drift_and_one_of_two_widths_is_not_repairable(db):
     await _insert(db, WINDOW + 20)
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
     await _insert(db, 2, start=500, dim=DIM * 2)
     issues = await _run(db)

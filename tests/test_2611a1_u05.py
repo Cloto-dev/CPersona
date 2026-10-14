@@ -167,6 +167,7 @@ async def test_a_deleted_window_row_does_not_push_the_edge_row_out(clean, window
         for n, vec in zip((2, 3, 4), _fillers(3))
     ]
     await db.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
 
     # The window holds the three fillers; the match is one position past it.
@@ -193,6 +194,7 @@ async def test_a_deleted_row_in_a_scattered_selection_does_not_shorten_it(clean,
         project = "p2" if n % 2 == 0 else "p1"
         rows[n] = await _memory(db, f"filler {n}", second=n, project_id=project, embedding=next(vecs))
     await db.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
 
     assert await _search(db, project_id="p1") == []
@@ -214,6 +216,7 @@ async def test_a_deleted_episode_does_not_push_the_edge_episode_out(clean, windo
         for n, vec in zip((2, 3, 4), _fillers(3))
     ]
     await db.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "episodes"))["built"]
 
     assert await _search(db) == []
@@ -239,6 +242,7 @@ async def test_a_deletion_outside_the_selection_keeps_the_index_path(clean, wind
         await _memory(db, f"filler {n}", second=n, embedding=vec)
     foreign = await _memory(db, "another agent's row", second=5, agent_id=OTHER)
     await db.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
 
     assert (await admin_handlers.do_delete_memory(foreign, agent_id=OTHER))["ok"]
@@ -342,6 +346,7 @@ async def test_a_build_never_pairs_an_id_with_another_rows_vector(clean, race_af
     out = str(tmp_path / "race.vecindex")
     async with connection() as rdb:
         try:
+            await vector_index.start_logging()
             result = await vector_index.build_index(rdb, "memories", out)
         except vector_index.IndexUnusable:
             result = {"built": False}
@@ -359,6 +364,7 @@ async def test_a_coarse_build_never_pairs_an_id_with_another_rows_bits(clean, ra
     out = str(tmp_path / "race.coarseindex")
     async with connection() as rdb:
         try:
+            await vector_index.start_logging()
             result = await coarse_index.build_coarse_index(rdb, "memories", out)
         except vector_index.IndexUnusable:
             result = {"built": False}

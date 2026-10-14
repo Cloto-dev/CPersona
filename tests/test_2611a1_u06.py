@@ -298,6 +298,7 @@ async def test_one_negative_year_timestamp_does_not_block_the_coarse_build(db, t
     assert (await db.execute_fetchall("SELECT datetime(timestamp) FROM memories WHERE id = ?", (odd_id,)))[0][0].startswith("-")
 
     out = str(tmp_path / "coarse")
+    await vector_index.start_logging()
     built = await coarse_index.build_coarse_index(db, "memories", out)
     assert built["built"], built
     index = coarse_index.load_coarse_index(path=out)
@@ -329,6 +330,7 @@ async def _built_with(db, stamp) -> int:
         await _insert(db, seed)
     target = await _insert(db, 6, timestamp=stamp)
     await db.commit()
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
     return target
 
@@ -372,6 +374,7 @@ async def test_a_timestamp_repair_of_a_record_the_index_does_not_hold_keeps_the_
     for seed in range(1, 6):
         await _insert(db, seed)
     await db.commit()
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
     target = await _insert(db, 6, timestamp="2099-01-01T00:00:00+00:00")
     await db.commit()

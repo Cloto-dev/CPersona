@@ -45,6 +45,7 @@ from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_va
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
+from cpersona import vector_index
 from cpersona.admin_handlers import (
     LIST_EPISODES_MAX_ROWS,
     LIST_MEMORIES_MAX_ROWS,
@@ -3909,6 +3910,10 @@ async def main():
         # Stops the block change log when the block index file is off, and queues
         # the file's build when it is on and due (docs/BLOCK_CANDIDATES_CONTRACT.md §3).
         await block_index.on_startup()
+        # Stops the vector change log when no vector index file is left to read it
+        # (docs/CONTIGUOUS_INDEX_DESIGN.md §5): an operator who deleted the files
+        # should not keep paying a row per update and delete.
+        await vector_index.on_startup()
 
         transport = config.transport()
         if transport == "stdio":

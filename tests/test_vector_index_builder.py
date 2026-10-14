@@ -91,6 +91,7 @@ async def _canonical_rows(db):
 @pytest.mark.asyncio
 async def test_index_holds_the_scan_order(corpus, tmp_path):
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories", path)
     assert result["built"], result
 
@@ -106,6 +107,7 @@ async def test_embeddings_round_trip_bit_for_bit(corpus, tmp_path):
     """The value of this index is exactness; a transform anywhere in the write
     path would spend it silently, so compare the bytes rather than the norms."""
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", path)
     idx = vector_index.load_index(path=path)
 
@@ -120,7 +122,9 @@ async def test_embeddings_round_trip_bit_for_bit(corpus, tmp_path):
 @pytest.mark.asyncio
 async def test_rebuild_is_byte_identical(corpus, tmp_path):
     first, second = str(tmp_path / "a"), str(tmp_path / "b")
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", first)
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", second)
     assert open(first, "rb").read() == open(second, "rb").read()
 
@@ -128,6 +132,7 @@ async def test_rebuild_is_byte_identical(corpus, tmp_path):
 @pytest.mark.asyncio
 async def test_axis_codes_decode_to_the_row_values(corpus, tmp_path):
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", path)
     idx = vector_index.load_index(path=path)
 
@@ -147,6 +152,7 @@ async def test_axis_codes_decode_to_the_row_values(corpus, tmp_path):
 @pytest.mark.asyncio
 async def test_watermark_bounds_the_index_and_new_rows_stay_outside(corpus, tmp_path):
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories", path)
     idx = vector_index.load_index(path=path)
     assert idx.watermark == max(idx.ids)
@@ -178,6 +184,7 @@ async def test_mixed_widths_decline_the_build(corpus, tmp_path):
     await corpus.commit()
 
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories", path)
     assert result["built"] is False
     assert "widths" in result["reason"]
@@ -195,6 +202,7 @@ async def test_non_canonical_created_at_is_named_not_dropped(corpus, tmp_path):
     odd = (await corpus.execute_fetchall("SELECT MAX(id) FROM memories"))[0][0]
 
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", path)
     idx = vector_index.load_index(path=path)
     assert odd not in set(int(i) for i in idx.ids)
@@ -209,6 +217,7 @@ async def test_too_many_exclusions_declines_the_build(corpus, tmp_path, monkeypa
     await corpus.commit()
 
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories", path)
     assert result["built"] is False
     assert "non-canonical" in result["reason"]
@@ -218,6 +227,7 @@ async def test_too_many_exclusions_declines_the_build(corpus, tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_empty_corpus_declines_rather_than_writing_an_empty_index(db, tmp_path):
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     result = await vector_index.build_index(db, "memories", path)
     assert result["built"] is False
     assert not os.path.exists(path)
@@ -230,6 +240,7 @@ def test_missing_file_is_not_an_error(tmp_path):
 @pytest.mark.asyncio
 async def test_truncated_file_is_rejected(corpus, tmp_path):
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", path)
     with open(path, "r+b") as fh:
         fh.truncate(os.path.getsize(path) - 4)
@@ -243,6 +254,7 @@ async def test_body_longer_than_the_header_claims_is_rejected(corpus, tmp_path):
     by a second one, a concatenation — disagrees with its header in the other
     direction and must fail the same way."""
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", path)
     with open(path, "ab") as fh:
         fh.write(b"\x00" * 32)
@@ -253,6 +265,7 @@ async def test_body_longer_than_the_header_claims_is_rejected(corpus, tmp_path):
 @pytest.mark.asyncio
 async def test_foreign_magic_is_rejected(corpus, tmp_path):
     path = str(tmp_path / "idx")
+    await vector_index.start_logging()
     await vector_index.build_index(corpus, "memories", path)
     with open(path, "r+b") as fh:
         fh.write(b"NOTANIDX")
@@ -270,6 +283,7 @@ async def test_temp_file_does_not_survive_a_failed_build(corpus, tmp_path, monke
     monkeypatch.setattr(vector_index, "_stream_embeddings", boom)
     path = str(tmp_path / "idx")
     with pytest.raises(RuntimeError):
+        await vector_index.start_logging()
         await vector_index.build_index(corpus, "memories", path)
     assert not os.path.exists(f"{path}.tmp")
     assert not os.path.exists(path)

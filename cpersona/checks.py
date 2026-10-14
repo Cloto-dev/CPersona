@@ -1472,6 +1472,81 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "INSERT INTO record_block_changes (seq, parent_kind, parent_id) "
         "VALUES ((SELECT head FROM block_log_clock WHERE id = 0), new.parent_kind, new.parent_id); END",
     },
+    # v20 (see VECTOR_LOG_SQL in database.py). Warn, not critical, for the reason
+    # the block log's are: a vector index file is not built while one of these is
+    # missing or different (vector_index.log_position compares them with these
+    # definitions), and a file built before one was dropped is refused because the
+    # schema changed, so a missing trigger costs a query the file's speed and never
+    # its answer.
+    "memories_vector_log_au": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER memories_vector_log_au "
+        "AFTER UPDATE OF embedding, agent_id, project_id, channel, source, timestamp, created_at ON memories "
+        "WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 "
+        "AND (new.embedding IS NOT old.embedding OR new.agent_id IS NOT old.agent_id "
+        "OR new.project_id IS NOT old.project_id OR new.channel IS NOT old.channel "
+        "OR new.source IS NOT old.source OR new.timestamp IS NOT old.timestamp "
+        "OR new.created_at IS NOT old.created_at) BEGIN "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', old.id); END",
+    },
+    "memories_vector_log_ak": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER memories_vector_log_ak AFTER UPDATE OF id ON memories "
+        "WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 AND new.id IS NOT old.id BEGIN "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', old.id); "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', new.id); END",
+    },
+    "memories_vector_log_ad": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER memories_vector_log_ad AFTER DELETE ON memories "
+        "WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 BEGIN "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', old.id); END",
+    },
+    "episodes_vector_log_au": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER episodes_vector_log_au "
+        "AFTER UPDATE OF embedding, agent_id, project_id, channel, created_at ON episodes "
+        "WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 "
+        "AND (new.embedding IS NOT old.embedding OR new.agent_id IS NOT old.agent_id "
+        "OR new.project_id IS NOT old.project_id OR new.channel IS NOT old.channel "
+        "OR new.created_at IS NOT old.created_at) BEGIN "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', old.id); END",
+    },
+    "episodes_vector_log_ak": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER episodes_vector_log_ak AFTER UPDATE OF id ON episodes "
+        "WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 AND new.id IS NOT old.id BEGIN "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', old.id); "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', new.id); END",
+    },
+    "episodes_vector_log_ad": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER episodes_vector_log_ad AFTER DELETE ON episodes "
+        "WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 BEGIN "
+        "UPDATE vector_log_clock SET head = head + 1 WHERE id = 0; "
+        "INSERT INTO record_vector_changes (seq, kind, record_id) "
+        "VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', old.id); END",
+    },
     # v15 (see ASSOCIATIONS_SQL in database.py). Critical: without one of these
     # a deleted entity or record leaves aliases, mentions and relations that
     # point at rows which no longer exist (design invariant 8), and a walk
@@ -2946,6 +3021,8 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
     - **dimension drift** — the corpus no longer matches what the index was built
       for, which is what a model swap looks like from here. ``warn`` for the same
       reason.
+    - **log refused** — the change log cannot say which rows the file holds have
+      changed since the build (bug-514), so every query goes to the scan. ``warn``.
 
     A fourth line reports a healthy index whose tail has grown past
     ``INDEX_TAIL_RATIO``, which is the one form of staleness this design admits.
@@ -3053,35 +3130,26 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                 }
             ]
 
-        # bug-315: the tail below is the staleness that GREW; this is the
-        # staleness that SHRANK, and nothing measured it. The tail counts rows
-        # written since the build, so a row the index holds and the database no
-        # longer does is invisible to it -- and invisible to the lost-embedding
-        # probe too, which asked `embedding IS NULL` and so could only see a row
-        # that was still there. Measured on a 12-row corpus: deleting one indexed
-        # row left this check with no findings at all. Global for the same reason
-        # the widths above are: the index is one object per table, and a count of
-        # rows is a size rather than corpus content (the bug-062 rule).
-        live_indexed = (
-            await db.execute_fetchall(
-                f"SELECT COUNT(*) FROM {table} WHERE id <= ? AND embedding IS NOT NULL"
-                f"{all_axes.and_clause}",
-                (index.watermark, *all_axes.params),
-            )
-        )[0][0]
-        if index.count and live_indexed < index.count:
+        # bug-514: the rows the index holds that changed since the build -- a
+        # vector replaced or cleared, an axis or a time rewritten, the row deleted
+        # (bug-315 measured the last one going unreported) -- are named by the
+        # change log, and every query reads them live. When the log cannot vouch
+        # for the file, every query is handed back to the scan, which is this
+        # check's business to report. Global for the same reason the widths above
+        # are: the log is one object, and a count of ids is a size rather than
+        # corpus content (the bug-062 rule).
+        changed, refusal = await vector_index.changed_since_build(db, index, table)
+        if changed is None:
             return [
                 {
-                    "type": "vector_index_rows_missing",
+                    "type": "vector_index_log_refused",
                     "severity": "warn",
                     "table": table,
-                    "indexed_rows": index.count,
-                    "rows_still_present": live_indexed,
+                    "reason": refusal,
+                    "detail": vector_index.LOG_REFUSALS[refusal],
                     "hint": (
-                        "rows the index holds are gone from the database; every query "
-                        "whose window holds one of them is handed back to the scan until "
-                        "the index is rebuilt: "
-                        f"python -m cpersona.vector_index --db <path> --table {table} build"
+                        "the index is not being used; every query reads the scan until it "
+                        f"is rebuilt: python -m cpersona.vector_index --db <path> --table {table} build"
                     ),
                 }
             ]
@@ -3098,7 +3166,7 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
         # embedding is what check_health(fix=True) does -- so counting the tail
         # alone let the ordinary repair create a per-query cost this check never
         # reported. One definition, shared with `vector_index status`.
-        read_exactly = await vector_index.rows_read_exactly(db, index, table, iso)
+        read_exactly = await vector_index.rows_read_exactly(db, index, table, iso, changed)
         if index.count and read_exactly > index.count * INDEX_TAIL_RATIO:
             return [
                 {
@@ -3108,8 +3176,8 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                     "rows_past_watermark": tail,
                     "rows_read_exactly": read_exactly,
                     "hint": (
-                        "rebuild the index; the rows it cannot answer for -- written since "
-                        "the build, or named by it as holes -- are read exactly on every query"
+                        "rebuild the index; the rows it cannot answer for -- written or changed "
+                        "since the build, or named by it as holes -- are read exactly on every query"
                     ),
                 }
             ]
@@ -3140,7 +3208,7 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     - **absent** (warn, from ``INDEX_MATTERS_ROWS`` records past the window).
       Unlike the contiguous index's absence this is stamped: the operator turned
       on a setting whose cost, without the file, is the size of the store.
-    - **unusable**, **dimension drift**, **rows missing** (warn): a file exists
+    - **unusable**, **dimension drift**, **log refused** (warn): a file exists
       and recall is not using it.
 
     The time cue's default mode (auto, since 2.6.4) reads the index too, but never
@@ -3151,7 +3219,7 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     - **tail grown** (the registry default, info): the file is used, and the rows
       it cannot answer for are read exactly on every recall.
 
-    ``fix`` builds the file again whatever the state: it is a derived artifact,
+    ``fix`` builds the file again in any state reported here: it is a derived artifact,
     never repaired. One file holds every agent's records, so the registry
     declares the repair cross-agent and the guard demands write on every agent
     for it. ``repairable`` is 1 (the one file) or 0 when the builder would
@@ -3242,27 +3310,23 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
             "repairable": repairable,
             "hint": "the index is not being used; build it again once the corpus carries one embedding width",
         }
+    changed = None
     if issue is None:
-        # The rows the index holds that the store no longer does: each sends the
-        # recall that meets one back to the live store (coarse_search._from_index).
-        live_indexed = (
-            await db.execute_fetchall(
-                "SELECT COUNT(*) FROM memories WHERE id <= ? AND embedding IS NOT NULL"
-                f"{all_axes.and_clause}",
-                (index.watermark, *all_axes.params),
-            )
-        )[0][0]
-        if index.count and live_indexed < index.count:
+        # bug-514: the rows the index holds that changed since the build, deleted
+        # ones included, are named by the change log and read live. A log that
+        # cannot vouch for the file sends every read back to the live store.
+        changed, refusal = await vector_index.changed_since_build(db, index, "memories")
+        if changed is None:
             issue = {
-                "type": "coarse_index_rows_missing",
+                "type": "coarse_index_log_refused",
                 "severity": "warn",
-                "indexed_rows": index.count,
-                "rows_still_present": live_indexed,
+                "reason": refusal,
+                "detail": vector_index.LOG_REFUSALS[refusal],
                 "repairable": repairable,
-                "hint": f"rows the index holds are gone from the database; {hint}",
+                "hint": f"the index is not being used; {hint}",
             }
     if issue is None:
-        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", all_axes)
+        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", all_axes, changed)
         if index.count and read_exactly > INDEX_TAIL_RATIO * index.count:
             issue = {
                 "type": "coarse_index_tail_grown",
@@ -3286,10 +3350,19 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
             )
 
     if fix and repairable:
+        # The change log goes on, and is pruned, on the repair's own transaction:
+        # the build reads its rows on it too, so no write can fall between the
+        # log's head and the rows (bug-514).
+        await vector_index.start_logging_on(db)
         try:
             built = await coarse_index.build_coarse_index(db, "memories")
         except vector_index.IndexUnusable as exc:
             built = {"built": False, "reason": str(exc)}
+        if built.get("built"):
+            await vector_index.prune_log_on(db)
+        elif not any(os.path.exists(path) for path, _magic in vector_index._log_readers()):
+            # A declined build leaves no file to read the log it turned on.
+            await vector_index.stop_logging(db)
         # Present on every fix run, so "not built" is an answer rather than an absence.
         issue["rebuilt"] = bool(built.get("built"))
         if issue["rebuilt"]:

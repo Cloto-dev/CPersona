@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:fb16b5b52fe744c7925004c2e9e72d835c5e947a -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:bf9d2967d64d8148f28e820822cfe5fc10490595 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -30,7 +30,7 @@
 
 ## 最初の起動で起きること { #what-the-first-start-does }
 
-2.6 は最初の起動で、データベースをスキーマ版 13 (2.5.x のすべて) からスキーマ版 19 (2.6.3〜2.6.7a1 は 18、2.6.0〜2.6.2 は 17) まで、
+2.6 は最初の起動で、データベースをスキーマ版 13 (2.5.x のすべて) からスキーマ版 20 (2.6.7a2〜2.6.11a1 は 19、2.6.3〜2.6.7a1 は 18、2.6.0〜2.6.2 は 17) まで、
 1 段ずつ移行します。**保存済みの行は 1 行も書き換えません**: 各段はテーブルとトリガー、または列を 1 つ足すだけです。
 失敗した段は完了として記録されないので、次の起動でやり直されます。
 
@@ -42,6 +42,7 @@
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block と一緒に作られます |
 | 18 | 2.6.3a1 | `memories` と `episodes` の `embedding_model`: 各ベクトルを作ったモデルのラベル。保存済みの行は空のラベル (不明) になります | なし: ベクトルは次に書かれるときにラベルが付きます |
 | 19 | 2.6.7a2 | `block_log_clock`、`record_block_changes`: どの記録の Block が変わったかの記録。Block の索引ファイルが on の間だけ付けます ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **自動で作ります**: キューで作ります。ファイルを off にした場合を除きます ([下](#the-block-index-file-is-on-by-default)) |
+| 20 | 2.6.11 | `vector_log_clock`、`record_vector_changes`: ベクトル索引ファイルが持つ行のうち、どれが変わったかの記録。そのファイルが 1 つでもある間だけ付けます ([設計 §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **ベクトル索引を作っているなら、あり**: 作り直します ([下](#build-the-vector-index-again)) |
 
 2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1、2.6.7、2.6.8a1、2.6.8、2.6.9a1、2.6.9、2.6.10a1、2.6.10a2、2.6.10a3、2.6.10a4、2.6.10、2.6.11a1 はスキーマを変えていません。
 
@@ -114,6 +115,21 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 - **Windows ではファイルをメモリに読み込みます** (マップしません)。
 - **off にするには** `CPERSONA_BLOCK_INDEX=false` を設定します。サーバーは起動時に記録を止め、想起は
   SQLite を読みます。
+
+### ベクトル索引を作り直す { #build-the-vector-index-again }
+
+連続ベクトル索引 (と、それと一緒に作る粗探索の索引) を作っているなら、最初の起動の後に
+作り直してください。
+
+```bash
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" build
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" --table episodes build
+```
+
+ファイルは作った時点の変更ログの位置を持つようになり、クエリはそれ以降に変わった行を
+すべてデータベースから読みます ([運用](operations.md#the-contiguous-vector-index))。スキーマ 20 より
+前に書かれたファイルは、どの行が変わったかを示せないので拒否されます。作り直すまで `status` は
+exit 2 を返し、想起は走査を使います (答えは同じで、速さだけが無い状態です)。
 
 ## 変わった挙動 { #behaviour-that-changed }
 

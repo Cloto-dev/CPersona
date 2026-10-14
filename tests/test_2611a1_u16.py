@@ -165,6 +165,7 @@ async def test_the_contiguous_index_applies_the_same_boundary(db, tmp_path):
         blob = np.random.default_rng(n).standard_normal(6).astype(np.float32).tobytes()
         await _insert(db, agent, content, uid, embedding=blob)
     path = str(tmp_path / "memories.index")
+    await vector_index.start_logging()
     built = await vector_index.build_index(db, "memories", path)
     assert built["built"], built
     index = vector_index.load_index("memories", path)

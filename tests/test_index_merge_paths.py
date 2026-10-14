@@ -53,6 +53,7 @@ async def index(fake_embedding_client):
             ),
         )
     await db.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     built = vector_index.load_index("memories")
     assert built is not None and built.count == 10

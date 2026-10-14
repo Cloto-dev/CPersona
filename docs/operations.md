@@ -304,6 +304,15 @@ index is a projection of it and is treated the way a cache is treated: not
 backed up, never repaired, safe to delete at any time. If anything about it
 looks wrong, delete the file and build again.
 
+**It is read through a change log.** A row the file holds can change after the
+build: `update_memory` replaces its text and vector, the missing-embedding repair
+fills its vector, a re-tag moves it, a repair rewrites a time, or it is deleted.
+Triggers log the id of every such row, and a query reads those rows from the
+database instead of the file, so the answer is the one the scan gives. The log
+runs only while an index file exists: `build` turns it on, and the server turns
+it off at startup when no file is left. An index file written before the log
+existed is refused as unusable; build it again after upgrading.
+
 `delete_agent_data` removes it along with the rows it held, but only when the
 caller's grant covers every agent (always, with no ACL): the file holds every
 agent's rows, so a grant on one agent does not reach it. After a purge under
@@ -327,24 +336,27 @@ python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" --table episodes status
 
 `--table` selects the file (`memories` is the default).
 
-`build` reads the database — it never writes to it — and replaces the index
-atomically. The server picks the new file up on its next query, with no
+`build` reads the rows without writing them and replaces the index
+atomically. Its one write is the change log's switch: it turns the log on before
+it reads, and afterwards drops the log rows every index file present already
+holds. The server picks the new file up on its next query, with no
 restart. It exits 0 when built, and 1 when it declined, printing why: a corpus
-with no embedded rows, or one that carries two embedding widths at once (the
+with no embedded rows, one that carries two embedding widths at once (the
 transient state of a model change; build again when the re-embedding has
-finished).
+finished), or a database no server has migrated yet (start the server once).
 
 `status` reports whether an index is present and usable, how many rows it
-holds, and how many rows have been written since it was built. It also reports
+holds, and how many rows have been written and changed since it was built. It also reports
 how many rows every query reads from the database instead of the index
-(`rows_read_exactly`). That count includes the rows written since the build,
+(`rows_read_exactly`). That count includes the rows written or changed since the build,
 and the rows the build named because it could not hold them: rows whose
 `created_at` is not in the standard form (`excluded`), and rows with no
 embedding yet (`unembedded`). A named row costs a read only once it has an
 embedding, and filling missing embeddings is what `check_health` with
 `fix=true` does. So after that repair, `rows_read_exactly` can grow while
 `rows_since_build` stays at 0. It exits 1 when there is no index, and 2 when
-the file exists but cannot be used. Add `--json` to either for a
+the file exists but cannot be used, which includes a change log that can no
+longer vouch for it. Add `--json` to either for a
 machine-readable line.
 
 **For memories, `build` also writes the coarse index**, a second derived file
@@ -366,7 +378,7 @@ index reads the stored vector of every one of those records from the database:
 the answer is the same, and the cost grows with the store instead of the window.
 `check_health` raises `coarse_index_absent` (with the records past the window and
 the bytes a recall reads), `coarse_index_unusable`, `coarse_index_dimension_drift`
-or `coarse_index_rows_missing` as warnings, and `coarse_index_tail_grown` as an
+or `coarse_index_log_refused` as warnings, and `coarse_index_tail_grown` as an
 observation, and says nothing while both settings are off or the store fits the
 window.
 
@@ -385,7 +397,8 @@ finding leads to the repair is the monitor's decision, not the server's.
 **What happens between builds.** The index knows the highest row id that
 existed when it was built. Rows written after that are not in it, and are not
 lost: every query reads them from the database exactly as the scan always did,
-and merges them with the indexed rows.
+and merges them with the indexed rows. Rows it holds that changed since are read
+the same way, through the change log.
 
 So a late rebuild never changes an answer. It only grows the part of each query
 that is still read row by row, until latency drifts back toward the unindexed
@@ -396,14 +409,16 @@ Nightly is a reasonable default, hourly for a corpus that grows fast, and
 **When the index is not used.** The scan the index replaces is still there,
 and is the fallback. Recall falls back to it — slower, and still correct — when
 the file is missing, when it fails its own integrity check, when the query
-vector's width does not match the index, and when a row the index holds has
-since lost its embedding under a maintenance repair.
+vector's width does not match the index, and when the change log cannot vouch
+for the file: the log was turned off or restarted since the build, a later build
+dropped changes this file needs, or the schema changed since.
 
 Each of these is reported where an operator reads health. `check_health` raises
 `vector_index_absent` (with the count of rows it would cover) when there is no
-index, and `vector_index_unusable` when the file cannot be trusted — one line
-per table, each naming its `table` — and the server logs a warning on every
-query it had to hand back to the scan.
+index, `vector_index_unusable` when the file cannot be trusted, and
+`vector_index_log_refused` (with the `reason`) when the change log cannot vouch
+for it — one line per table, each naming its `table` — and the server logs a
+warning on every query it had to hand back to the scan.
 
 An index that had been unusable for a week without anyone noticing would
 otherwise read as "somehow not faster", which is the failure the reporting

@@ -4591,13 +4591,13 @@
       "version": "2.5.12b1",
       "fixed_in": "2.5.12b2",
       "file": "cpersona/checks.py",
-      "pattern": "vector_index_rows_missing",
+      "pattern": "\"type\": \"vector_index_log_refused\"",
       "expected": "present",
       "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Count indexed ids that no longer resolve to a live row, alongside the tail, and let the delete path mark the index stale the way the embedding-clearing path does; hydration already knows which candidates vanished, so it can also over-fetch to refill the window.",
       "note": "The deletion counterpart of bug-278 and bug-279, which cover a row gaining and losing its embedding after the build. Distinct seam: those rows still exist and can be probed by predicate, this one cannot.",
-      "fix_note": "Two halves. Detection: check_vector_index now also counts how many rows the index holds that the database still has, and reports vector_index_rows_missing when that shrank -- the tail count only ever saw staleness that GREW. Correctness: rather than make the recall hot path ask a more expensive question (an early attempt rewrote the lost-embedding probe as a COUNT and broke the partial-index plan tests/test_bug285_probe_bound.py pins), the index path falls back to the scan when hydration returns fewer rows than the index promised -- the branch this design already has for an index that cannot promise the same rows, at the cost of one length comparison on the healthy path. Applied to the episode path too, which had the same shape."
+      "fix_note": "Two halves. Detection: check_vector_index now also counts how many rows the index holds that the database still has, and reports vector_index_rows_missing when that shrank -- the tail count only ever saw staleness that GREW. Correctness: rather than make the recall hot path ask a more expensive question (an early attempt rewrote the lost-embedding probe as a COUNT and broke the partial-index plan tests/test_bug285_probe_bound.py pins), the index path falls back to the scan when hydration returns fewer rows than the index promised -- the branch this design already has for an index that cannot promise the same rows, at the cost of one length comparison on the healthy path. Applied to the episode path too, which had the same shape. Re-anchored with bug-514: a deleted row is now named by the vector change log and read through it, so the detection half (vector_index_rows_missing) gave way to the report of a log that cannot vouch for the file, the state in which a query is handed back to the scan."
     },
     {
       "id": "bug-316",
@@ -5710,13 +5710,13 @@
       "discovered": "2026-09-06T10:00:00Z",
       "version": "2.5.12b1",
       "file": "cpersona/vector_index.py",
-      "pattern": "read_exactly = await rows_read_exactly\\(db, index, table, iso\\)",
+      "pattern": "read_exactly = await rows_read_exactly\\(db, index, table, iso, changed\\)",
       "expected": "present",
       "status": "fixed",
       "fixed_in": "2.6.0b2",
       "category": "index-observability",
       "note": "Deferred out of the frozen 2.5 line: the fix adds counters to the `status` and build results, which is a change to a documented response shape, and a fix release on this line does not add keys a consumer may then depend on. It belongs with the next feature line beside the same omission in the health check (`vector_index_tail_grown`, checks.py:2318-2332), which counts the same partial row set under a hint about the tail being read on every query -- so both get one definition of \"behind\" rather than two. The row groups and the query answers are correct; what is wrong is only what is reported about them. Re-judged against the freeze conditions in 2.5.12b3 and the deferral holds, for a reason worth recording so it is not re-opened: the tempting cheap fix is to leave the keys alone and make `rows_since_build` count all three groups, but docs/operations.md makes two claims about `status` -- that it reports how many rows have been WRITTEN SINCE the build, and that it shows how far behind the index is -- and the excluded and unembedded rows were written BEFORE it. Widening that number satisfies the second sentence by making the first false, which is a redefinition rather than a restoration. So the fix really is new counters, and it belongs with the health check's identical omission so that 'behind' gets one definition.",
-      "fix_note": "Fixed with new counters, as the note above says the fix has to be; rows_since_build keeps its meaning. vector_index.rows_read_exactly is the one definition of how far behind an index is: the rows every query reads from the table instead of the file, counted with the query path's own predicate -- (id > watermark OR id IN the named holes) AND embedding IS NOT NULL. `status` now reports it as rows_read_exactly, beside excluded and unembedded (the two hole counts the build named), and the human line says how many rows each query reads exactly. build_index reports unembedded next to excluded. The health check's vector_index_tail_grown compares rows_read_exactly, not the tail alone, against the rebuild ratio, and carries it beside rows_past_watermark, so both surfaces answer with the same number. tests/test_bug388_index_behind.py reproduces the entry (3 embedded rows, 5 without, build, fill the 5): rows_since_build stays 0, rows_read_exactly is 5, and the query path's tail read returns 5; the health check that said nothing now raises vector_index_tail_grown with rows_past_watermark 0 and rows_read_exactly 5. A test with all three groups at once holds the count equal to the rows vector._index_tail_rows reads. A hole that still has no embedding counts nothing, since the query path skips it. Mutants M132 and M133 (drop one hole group from the count) and M134 (the health check back on the tail alone) are in scripts/mutation-proof.py."
+      "fix_note": "Fixed with new counters, as the note above says the fix has to be; rows_since_build keeps its meaning. vector_index.rows_read_exactly is the one definition of how far behind an index is: the rows every query reads from the table instead of the file, counted with the query path's own predicate -- (id > watermark OR id IN the named holes) AND embedding IS NOT NULL. `status` now reports it as rows_read_exactly, beside excluded and unembedded (the two hole counts the build named), and the human line says how many rows each query reads exactly. build_index reports unembedded next to excluded. The health check's vector_index_tail_grown compares rows_read_exactly, not the tail alone, against the rebuild ratio, and carries it beside rows_past_watermark, so both surfaces answer with the same number. tests/test_bug388_index_behind.py reproduces the entry (3 embedded rows, 5 without, build, fill the 5): rows_since_build stays 0, rows_read_exactly is 5, and the query path's tail read returns 5; the health check that said nothing now raises vector_index_tail_grown with rows_past_watermark 0 and rows_read_exactly 5. A test with all three groups at once holds the count equal to the rows vector._index_tail_rows reads. A hole that still has no embedding counts nothing, since the query path skips it. Mutants M132 and M133 (drop one hole group from the count) and M134 (the health check back on the tail alone) are in scripts/mutation-proof.py. bug-514 added a fourth group to the same definition: the rows the change log names, read by id like the holes."
     },
     {
       "id": "bug-389",
@@ -7629,12 +7629,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/vector.py",
-      "pattern": "lost = await _index_rows_lost_embedding\\(",
+      "pattern": "changed, refusal = await vector_index\\.changed_since_build\\(db, index, table\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Give the index read path a freshness signal for rows re-embedded in place, either a per-row embedding fingerprint or generation recorded at build time and compared by the probe, or have the in-place re-embed writers mark the id stale since the build, so the row falls back to the scan or is scored from its live blob. `check_vector_index` and `check_coarse_index` should report the same condition.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; the contiguous-index case was reproduced, the coarse-index case confirmed by reading. Extends bug-279 (which covers only the NULL case); related: bug-315, bug-011."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; the contiguous-index case was reproduced, the coarse-index case confirmed by reading. Extends bug-279 (which covers only the NULL case); related: bug-315, bug-011.",
+      "fix_note": "A change log kept by triggers (schema 20, VECTOR_LOG_SQL in cpersona/database.py) names every row the index files hold that changed since their build: an UPDATE that changes a column a file copies (embedding, agent_id, project_id, channel, created_at, and for records source and timestamp), an id change (both ids), and a DELETE. Each file records the log's generation, head and schema cookie at its build (contiguous format 3, coarse format 2); a read takes the ids logged since (vector_index.changed_since_build), leaves them out of the file's selection before the window limit, and reads them from the live table with the rows past the watermark, so the merge sees each as it is now. A log that was turned off, restarted, pruned past the file, behind the file, or changed by a schema change sends the read to the scan, and check_vector_index / check_coarse_index report it as vector_index_log_refused / coarse_index_log_refused. A build turns the log on before its first row and prunes what every file present holds; logging runs only while a file exists (vector_index.on_startup). The same log closes the re-tagging gap docs/CONTIGUOUS_INDEX_DESIGN.md section 7 used to accept, keeps a deleted row from sending the query to the scan (bug-588's fallback), and moves a record whose timestamp was rewritten to its new period in the coarse index. Reverting the exclusion turns tests/test_bug514_index_change_log.py::test_an_edited_memory_is_scored_by_its_new_vector red."
     },
     {
       "id": "bug-515",
@@ -8157,12 +8158,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "f\"SELECT COUNT\\(\\*\\) FROM \\{table\\} WHERE id <= \\? AND embedding IS NOT NULL\"",
-      "expected": "present",
-      "status": "open",
+      "pattern": "WHERE id <= \\? AND embedding IS NOT NULL",
+      "expected": "absent",
+      "status": "fixed",
       "category": "health-check",
       "fix_sketch": "Count live rows among the ids the index actually holds, for example by subtracting the live rows in excluded_ids and unembedded_ids or by checking index.ids for existence in bounded chunks, in both checks. Make check_coarse_index's fix=true rebuild even when no issue is found, as its docstring states.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced with a control on fresh databases. The anchor is the vector_index count; the coarse twin is the same query on `memories` in check_coarse_index. Related: bug-315 (the detection this completes), bug-642 (the same counts are not agent-scoped)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced with a control on fresh databases. The anchor is the vector_index count; the coarse twin is the same query on `memories` in check_coarse_index. Related: bug-315 (the detection this completes), bug-642 (the same counts are not agent-scoped).",
+      "fix_note": "Fixed by removal with bug-514. Neither check compares index.count with a live count any more: a deleted row is named by the vector change log and read through it, so it no longer sends a read to the scan or the live store, and the state in which a read is sent there -- a log that cannot vouch for the file -- is reported as vector_index_log_refused / coarse_index_log_refused, which the build's named holes cannot mask. check_coarse_index's docstring no longer claims that fix rebuilds in a state it does not report."
     },
     {
       "id": "bug-550",
@@ -9499,12 +9501,12 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "rows_read_exactly\\(db, index, \"memories\", all_axes\\)",
+      "pattern": "rows_read_exactly\\(db, index, \"memories\", all_axes, changed\\)",
       "expected": "present",
       "status": "open",
       "category": "isolation",
       "fix_sketch": "Compute the live and tail counts with the caller's isolation scope (as check_vector_index's tail already does), or withhold the store-wide figures from agent-scoped callers and report them only on the global sweep. index.count is inherently store-wide, so it should be omitted for scoped callers.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-058 and bug-062 (agent-scoped counts), bug-549 (the same count is also miscomputed)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-058 and bug-062 (agent-scoped counts), bug-549 (the same count is also miscomputed). Re-anchored with bug-514, which removed rows_still_present (and the counts behind it) from both findings; coarse_index_tail_grown still reports indexed_rows and rows_read_exactly over every agent."
     },
     {
       "id": "bug-643",

@@ -114,6 +114,7 @@ def taken(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_two_paths_agree_across_a_valid_to_null_transition(corpus, taken):
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "memories")
     assert result["built"], result
 

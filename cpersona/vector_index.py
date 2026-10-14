@@ -30,6 +30,7 @@ built is the file's mtime, which is where that belongs.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import struct
 from dataclasses import dataclass
@@ -41,12 +42,17 @@ from cpersona import fileperms
 from cpersona.isolation import isolation_where, source_id_matches
 from cpersona.utils import SCORING_VERSION
 
+logger = logging.getLogger(__name__)
+
 MAGIC = b"CPXIDX01"
 # 2 (bug-278): the header gained unembedded_ids. A sidecar written by the previous
 # builder has no record of the rows it skipped for a NULL embedding, so a new reader
 # cannot make it correct — it can only be rebuilt. Bumping the version turns those
 # files into IndexUnusable, which the query path already answers by using the scan.
-FORMAT_VERSION = 2
+# 3 (bug-514): the header gained the change log's generation, head and schema
+# cookie at the build. A file without them cannot say which of its rows changed
+# since, so it is refused for the same reason and rebuilt.
+FORMAT_VERSION = 3
 HEADER_ALIGN = 64
 
 # `created_at` is TEXT with a one-second-resolution default. Fixed-width ASCII in
@@ -118,6 +124,271 @@ def purged_since(purges_at_start: int) -> bool:
 SUPERSEDED_REASON = "an agent purge dropped the index files while this build read its rows; build again"
 
 
+# --------------------------------------------------------------------------------------
+# The change log (VECTOR_LOG_SQL in database.py, design §5).
+# --------------------------------------------------------------------------------------
+
+#: The change log's name for each indexed table's rows.
+LOG_KINDS = {"memories": "mem", "episodes": "ep"}
+
+#: The logging triggers a build requires, by their names in `checks._EXPECTED_OBJECTS`.
+LOG_TRIGGERS = (
+    "memories_vector_log_au",
+    "memories_vector_log_ak",
+    "memories_vector_log_ad",
+    "episodes_vector_log_au",
+    "episodes_vector_log_ak",
+    "episodes_vector_log_ad",
+)
+
+#: Rows changed since a build that a read takes from the live table before it gives
+#: the file up and scans. The same number as the build's cap on the holes it names,
+#: and for the same reason: each is read by id on every query, through the same
+#: statement, and past this many the file stops being cheaper than the scan. Bound
+#: here once, so a test can steer it by patching this name.
+MAX_CHANGED_IDS = config.VECTOR_INDEX_MAX_EXCLUDED_IDS
+
+#: Why a build cannot vouch for its rows without the log, worded for an operator.
+LOG_MISSING_REASON = "the database has no vector change log; start the server once to migrate it to schema 20"
+LOG_OFF_REASON = "the vector change log is off; a build turns it on before it reads any row (build again)"
+
+
+async def log_clock(db) -> tuple[int, int, int, int] | None:
+    """(logging, generation, head, pruned_through), or None before schema 20."""
+    import sqlite3
+
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT logging, generation, head, pruned_through FROM vector_log_clock WHERE id = 0"
+        )
+    except sqlite3.OperationalError:
+        # An operator tool opens the database without migrating it.
+        return None
+    return tuple(rows[0]) if rows else None
+
+
+async def start_logging_on(db) -> int | None:
+    """Turn the change log on, on the caller's transaction; the generation it runs under.
+
+    For a build that runs inside a transaction of its own (a repair run). The
+    rows that build reads are read on the same transaction, so a write the log
+    misses cannot land between the two.
+    """
+    clock = await log_clock(db)
+    if clock is None:
+        return None
+    if clock[0] == 1:
+        return clock[1]
+    await db.execute("UPDATE vector_log_clock SET logging = 1, generation = generation + 1 WHERE id = 0")
+    return clock[1] + 1
+
+
+async def start_logging() -> int | None:
+    """Turn the change log on, in a commit of its own; the generation it runs under.
+
+    Committed before a build reads its snapshot, so every write after that
+    snapshot is logged. A write between this commit and the snapshot is logged
+    and is in the file too, which costs nothing: reading a row live that the file
+    holds unchanged gives the same row.
+    """
+    from cpersona.database import transaction
+
+    async with transaction(scope_stats_neutral=True) as db:
+        return await start_logging_on(db)
+
+
+async def stop_logging(db) -> bool:
+    """Turn the change log off and empty it, on the caller's transaction.
+
+    A file is refused while logging is off, and after logging is next turned on
+    its generation no longer matches, so no file built before the gap is read.
+    """
+    clock = await log_clock(db)
+    if clock is None or clock[0] != 1:
+        return False
+    await db.execute("UPDATE vector_log_clock SET logging = 0, pruned_through = head WHERE id = 0")
+    await db.execute("DELETE FROM record_vector_changes")
+    return True
+
+
+async def log_triggers_differ(db) -> list[str]:
+    """The logging triggers that are missing or not as the schema defines them.
+
+    A build refuses while any is: comparing the schema cookie later only notices
+    a change made after the build, not a build that began without complete
+    logging, and the writes such a gap missed would never be read live.
+    """
+    from cpersona import checks
+
+    rows = await db.execute_fetchall(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name IN ('memories', 'episodes')"
+    )
+    actual = {r[0]: r[1] or "" for r in rows}
+    return [
+        name
+        for name in LOG_TRIGGERS
+        if checks._normalize_sql(actual.get(name, "")) != checks._normalize_sql(checks._EXPECTED_OBJECTS[name]["sql"])
+    ]
+
+
+async def log_position(db) -> dict | str:
+    """Where the change log stands for a build about to read its rows on ``db``.
+
+    Read before the first row, on the connection the rows are read on: a write
+    that commits after this read carries a higher number than the head returned
+    here, so a reader of the file takes that row from the live table whatever the
+    file holds for it. Read after the rows instead, a write between the two would
+    be in neither. A string is the reason the build cannot vouch for its rows.
+    """
+    clock = await log_clock(db)
+    if clock is None:
+        return LOG_MISSING_REASON
+    if clock[0] != 1:
+        return LOG_OFF_REASON
+    differ = await log_triggers_differ(db)
+    if differ:
+        return (
+            f"the vector change log's triggers are missing or changed ({', '.join(differ)}); "
+            "repair them with check_health(checks=['schema_objects'], fix=true)"
+        )
+    cookie = (await db.execute_fetchall("PRAGMA schema_version"))[0][0]
+    return {"generation": int(clock[1]), "built_seq": int(clock[2]), "schema_cookie": int(cookie)}
+
+
+def _changes_statement() -> str:
+    """The log's clock, the schema cookie, and the ids changed since a build, in one statement.
+
+    One statement is one snapshot: the ids and the clock they are checked against
+    cannot come from two states of the database. The clock is the left side of the
+    outer join, so the statement returns a row when nothing changed.
+    """
+    return (
+        "SELECT c.logging, c.generation, c.head, c.pruned_through,"
+        " (SELECT schema_version FROM pragma_schema_version), d.record_id"
+        " FROM vector_log_clock AS c LEFT JOIN ("
+        "SELECT DISTINCT record_id FROM record_vector_changes WHERE seq > ? AND kind = ? LIMIT ?"
+        ") AS d ON 1 WHERE c.id = 0"
+    )
+
+
+async def changed_since_build(db, index, table: str) -> tuple[np.ndarray | None, str]:
+    """The ids of `table` the log says changed since `index` was built, or why it cannot say.
+
+    ``(ids, "")`` when the file can be read with those rows taken from the live
+    table, ``(None, reason)`` when it cannot answer for its rows exactly and the
+    caller must scan. ``index`` is a contiguous or a coarse index: both carry the
+    generation, head and schema cookie of their build.
+    """
+    import sqlite3
+
+    try:
+        rows = await db.execute_fetchall(
+            _changes_statement(), (index.built_seq, LOG_KINDS[table], MAX_CHANGED_IDS + 1)
+        )
+    except sqlite3.OperationalError:
+        return None, "no_log"
+    if not rows:
+        return None, "no_log"
+    logging_on, generation, head, pruned_through, cookie = rows[0][:5]
+    if logging_on != 1:
+        return None, "logging_off"
+    if generation != index.generation:
+        return None, "generation"
+    if index.built_seq > head:
+        return None, "newer_than_snapshot"
+    if pruned_through > index.built_seq:
+        return None, "pruned"  # changes it would need are gone
+    if cookie != index.schema_cookie:
+        return None, "schema_changed"  # a trigger dropped and recreated could have missed writes
+    ids = [r[5] for r in rows if r[5] is not None]
+    if len(ids) > MAX_CHANGED_IDS:
+        return None, "too_many_changes"
+    return np.array(sorted(int(i) for i in ids), dtype=np.int64), ""
+
+
+#: What each refusal of `changed_since_build` means, for the health check and `status`.
+LOG_REFUSALS = {
+    "no_log": "the database has no vector change log",
+    "logging_off": "the vector change log was turned off since the build",
+    "generation": "the vector change log was restarted since the build",
+    "newer_than_snapshot": "the file claims changes the database has not logged",
+    "pruned": "a later build pruned changes this file needs",
+    "schema_changed": "the schema changed since the build, so a change may have gone unlogged",
+    "too_many_changes": f"more than {MAX_CHANGED_IDS} rows changed since the build",
+}
+
+
+def _header_log_position(src: str, magic: bytes) -> tuple[int, int] | None:
+    """(generation, built_seq) from an index file's header, or None when it has none to give."""
+    try:
+        with open(src, "rb") as fh:
+            head = fh.read(len(magic) + 4)
+            if len(head) < len(magic) + 4 or head[: len(magic)] != magic:
+                return None
+            header_len = struct.unpack("<I", head[len(magic):])[0]
+            header = json.loads(fh.read(header_len).decode("utf-8"))
+        return int(header["generation"]), int(header["built_seq"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _log_readers() -> list[tuple[str, bytes]]:
+    """Every file that reads the change log: (path, magic)."""
+    from cpersona import coarse_index
+
+    paths = [(index_path(table), MAGIC) for table in INDEXED_TABLES]
+    paths += [(coarse_index.index_path(table), coarse_index.MAGIC) for table in coarse_index.COARSE_TABLES]
+    return paths
+
+
+async def prune_log_on(db) -> int | None:
+    """Drop the log rows every file present holds, on the caller's transaction; the new mark.
+
+    The mark is the lowest head among the files of the running generation: a file
+    still needs every change after its own head. A file of another generation, or
+    one that does not read, is refused by every reader already and holds nothing
+    back. The mark only rises (`max`): a slower, older build finishing second must
+    not lower it again, or a file whose changes were pruned would be read as current.
+    A build still reading its rows is not a file yet, so a prune can pass its head;
+    that file is then refused as pruned, and building it again makes it current.
+    """
+    clock = await log_clock(db)
+    if clock is None or clock[0] != 1:
+        return None
+    heads = []
+    for path, magic in _log_readers():
+        position = _header_log_position(path, magic) if os.path.exists(path) else None
+        if position is not None and position[0] == clock[1]:
+            heads.append(position[1])
+    if not heads:
+        return None
+    mark = min(heads)
+    await db.execute("DELETE FROM record_vector_changes WHERE seq <= ?", (mark,))
+    await db.execute(
+        "UPDATE vector_log_clock SET pruned_through = max(pruned_through, ?) WHERE id = 0", (mark,)
+    )
+    return mark
+
+
+async def prune_log() -> int | None:
+    """`prune_log_on` in a transaction of its own, for a build that read its rows on a snapshot."""
+    from cpersona.database import transaction
+
+    async with transaction() as db:
+        return await prune_log_on(db)
+
+
+async def on_startup() -> None:
+    """Stop the change log when no file reads it: a log nobody reads charges every write a row."""
+    from cpersona.database import transaction
+
+    if any(os.path.exists(path) for path, _magic in _log_readers()):
+        return
+    async with transaction() as db:
+        if await stop_logging(db):
+            logger.info("no vector index file is present: stopped the vector change log")
+
+
 @dataclass(frozen=True)
 class VectorIndex:
     """A validated index file, memory-mapped (read into memory on Windows, see _maps_files)."""
@@ -130,6 +401,11 @@ class VectorIndex:
     #: ids at or below the watermark that had no embedding when the index was
     #: built. Read exactly, like excluded_ids — see bug-278.
     unembedded_ids: tuple[int, ...]
+    #: The change log at the build (bug-514): the rows logged after `built_seq`
+    #: under `generation` are read exactly, like the two lists above.
+    generation: int
+    built_seq: int
+    schema_cookie: int
     embedding_model: str
     scoring_version: str
     ids: np.ndarray  # int64[count]
@@ -362,11 +638,21 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     The index spans every agent (the axes ride as columns, and the authority is
     re-applied when the caller hydrates), so this is a deliberate global scan,
     spelled the way the isolation gate requires one to be spelled.
+
+    The change log must be on before ``db`` reads its first row (bug-514): the
+    file records the log's head, and a reader takes every row logged after it
+    from the live table. ``start_logging`` turns it on in a commit of its own,
+    before a snapshot is opened; ``start_logging_on`` on the transaction a build
+    runs in. Without it the build declines, and the caller prunes the log after
+    the file is published (``prune_log``).
     """
     out = path or index_path(table)
     # Read before any row: a purge counted after this may have committed after the
     # rows below were read, and its files must not come back with them.
     purges_at_start = purges()
+    position = await log_position(db)
+    if isinstance(position, str):
+        return {"built": False, "reason": position}
     plan = await plan_rows(db, table)
     if isinstance(plan, dict):
         return plan
@@ -383,6 +669,7 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
         "watermark": watermark,
         "excluded_ids": excluded,
         "unembedded_ids": unembedded,
+        **position,
         "fingerprint": {
             # The dimension is the part that actually guards. This codebase
             # already treats EMBEDDING_MODEL as a label that can be stale or
@@ -446,6 +733,8 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
         # sum of both, and both are read by id on every query, so reporting one
         # of them made a build with thousands of holes look like a build with none.
         "unembedded": len(unembedded),
+        "generation": position["generation"],
+        "built_seq": position["built_seq"],
         "bytes": os.path.getsize(out),
     }
 
@@ -599,6 +888,11 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
     created = _map(off, f"S{CREATED_AT_WIDTH}", (count,))
 
     fingerprint = header.get("fingerprint", {})
+    try:
+        generation, built_seq = int(header["generation"]), int(header["built_seq"])
+        schema_cookie = int(header["schema_cookie"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise IndexUnusable(f"{src}: header lacks the change log's position ({exc!r})") from exc
     return VectorIndex(
         path=src,
         dim=dim,
@@ -606,6 +900,9 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
         watermark=int(header["watermark"]),
         excluded_ids=tuple(int(i) for i in header.get("excluded_ids", ())),
         unembedded_ids=tuple(int(i) for i in header.get("unembedded_ids", ())),
+        generation=generation,
+        built_seq=built_seq,
+        schema_cookie=schema_cookie,
         embedding_model=str(fingerprint.get("embedding_model", "")),
         scoring_version=str(fingerprint.get("scoring_version", "")),
         ids=ids,
@@ -652,9 +949,10 @@ def _build_parser():
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser(
         "build",
-        help="Write the index from the database (read-only against it), and for "
-        "memories the coarse index too. Exit 0 when every file was built, 1 when a "
-        "builder declined (the reason is printed), 2 on error.",
+        help="Write the index from the database, and for memories the coarse index "
+        "too. The rows are only read; the one write is the change log's switch, turned "
+        "on before the rows are read, and its pruning after. Exit 0 when every file was "
+        "built, 1 when a builder declined (the reason is printed), 2 on error.",
     )
     sub.add_parser(
         "status",
@@ -664,7 +962,7 @@ def _build_parser():
     return ap
 
 
-async def rows_read_exactly(db, index: VectorIndex, table: str, iso) -> int:
+async def rows_read_exactly(db, index: VectorIndex, table: str, iso, changed=()) -> int:
     """How far behind the database `index` is: the rows every query reads from the
     table instead of from the index file.
 
@@ -682,8 +980,11 @@ async def rows_read_exactly(db, index: VectorIndex, table: str, iso) -> int:
     together). ``status`` and the health check both call this, so "behind" has
     one definition. ``iso`` is the caller's isolation filter: global for the
     operator's ``status``, the checked agent's for the health check.
+
+    ``changed`` is the fourth group (bug-514): the rows the change log says
+    changed since the build (``changed_since_build``), read by id like the holes.
     """
-    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids)
+    holes_ids = tuple(index.excluded_ids) + tuple(index.unembedded_ids) + tuple(int(i) for i in changed)
     holes = " OR id IN (SELECT value FROM json_each(?))" if holes_ids else ""
     holes_params = (json.dumps([int(i) for i in holes_ids]),) if holes_ids else ()
     rows = await db.execute_fetchall(
@@ -719,17 +1020,25 @@ async def _status(table: str) -> dict:
     # first number would make it answer the second question by misstating the first.
     iso = isolation_where(agent_id=None)
     async with connection() as db:
+        changed, refusal = await changed_since_build(db, index, table)
+        if changed is None:
+            return {
+                "table": table, "path": path, "present": True, "usable": False,
+                "reason": LOG_REFUSALS[refusal],
+                "hint": "build again; every query reads the live table until then",
+            }
         row = await db.execute_fetchall(
             f"SELECT COUNT(*) FROM {table} WHERE id > ? AND embedding IS NOT NULL{iso.and_clause}",
             (index.watermark, *iso.params),
         )
-        read_exactly = await rows_read_exactly(db, index, table, iso)
+        read_exactly = await rows_read_exactly(db, index, table, iso, changed)
     st = os.stat(path)
     return {
         "table": table,
         "path": path,
         "present": True,
         "usable": True,
+        "rows_changed_since_build": len(changed),
         "rows": index.count,
         "dim": index.dim,
         "watermark": index.watermark,
@@ -761,7 +1070,8 @@ def _render(result: dict, as_json: bool) -> str:
         return f"unusable index at {result['path']}: {result['reason']} -- {result['hint']}"
     return (
         f"index at {result['path']}: {result['rows']} rows x {result['dim']} dims, "
-        f"watermark {result['watermark']}, {result['rows_since_build']} rows written since "
+        f"watermark {result['watermark']}, {result['rows_since_build']} rows written and "
+        f"{result['rows_changed_since_build']} changed since "
         f"the build, {result['rows_read_exactly']} rows read exactly on every query "
         f"({result['excluded'] + result['unembedded']} named at the build), "
         f"built {result['built_at']}"
@@ -805,6 +1115,10 @@ def main(argv: list | None = None) -> int:
                 # above: the snapshot's private connection would create a missing file.
                 async with connection():
                     pass
+                # The change log goes on in a commit of its own, before the snapshot
+                # opens, so every write the snapshot does not see is logged (bug-514).
+                # On a database no server has migrated yet, the builders decline.
+                await start_logging()
                 async with read_snapshot() as db:
                     result = await build_index(db, args.table)
                     if args.table in coarse_index.COARSE_TABLES:
@@ -812,6 +1126,8 @@ def main(argv: list | None = None) -> int:
                         # builds one index is not left to discover the other.
                         result["coarse"] = await coarse_index.build_coarse_index(db, args.table)
                 built = [result] + ([result["coarse"]] if "coarse" in result else [])
+                if any(r.get("built") for r in built):
+                    await prune_log()
                 code = 0 if all(r.get("built") for r in built) else 1
             else:
                 result = await _status(args.table)
@@ -886,6 +1202,7 @@ def select(
     channel: str,
     source_id: str,
     limit: int,
+    exclude_ids=None,
 ) -> np.ndarray:
     """Positions of the rows a scan with these axes would rank, newest first.
 
@@ -898,8 +1215,17 @@ def select(
 
     Positions come back in the file's canonical order — `created_at` DESC, then
     `id` ASC — which is the tie-break the caller's answer depends on.
+
+    `exclude_ids` are the rows the change log says changed since the build
+    (bug-514). What the file holds for them is out of date, so they are left out
+    before the limit is taken -- the caller reads them from the live table and
+    merges them in, and a limit taken first would leave the selection one row
+    short for every changed row inside it.
     """
     mask = index.agent_code == _code_of(index.agents, agent_id)
+
+    if exclude_ids is not None and len(exclude_ids):
+        mask &= ~np.isin(index.ids, np.asarray(exclude_ids, dtype=np.int64))
 
     if project_id is not None:
         # γ semantics: 'X' is the union of 'X' and the global pool, '' is the
