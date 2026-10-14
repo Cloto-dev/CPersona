@@ -100,9 +100,17 @@ def test_scheduled_ci_run_does_not_share_the_push_concurrency_group():
 
 
 def test_every_ci_dependency_sync_refuses_a_stale_lock():
-    text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-    syncs = [line.strip() for line in text.splitlines() if re.search(r"\buv sync\b", line)]
-    assert syncs, "ci.yml runs no uv sync — the check has no subject"
+    # Every workflow, not only ci.yml: publish.yml runs the suite on the tagged
+    # commit before the upload, and an unlocked sync there tests what a stale lock
+    # re-resolves to rather than what the release ships with.
+    syncs = [
+        f"{path.name}: {line.strip()}"
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if re.search(r"\buv sync\b", line)
+    ]
+    assert any(s.startswith("ci.yml:") for s in syncs), "ci.yml runs no uv sync — the check has no subject"
+    assert any(s.startswith("publish.yml:") for s in syncs), "publish.yml runs no uv sync — the check has no subject"
     unlocked = [line for line in syncs if "--locked" not in line.split()]
     assert not unlocked, (
         "these syncs re-resolve a lock that disagrees with pyproject instead of failing, "
