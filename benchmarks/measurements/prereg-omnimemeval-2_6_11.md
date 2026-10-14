@@ -234,6 +234,24 @@ candidate commit.
   - LongMemEval-S's net does not fail;
   - the cap.
 
+## Amendment, 2026-10-14: the code that ships
+
+Recorded after the LongMemEval-S test and before any LoCoMo answer or any
+search of the private pack's test.
+
+- Fixes that are not part of this check (crash, isolation and repair fixes)
+  ship first, as the pre-release 2.6.11a1 on top of 2.6.10. The candidate
+  `a613114` does not change, and every search this registration describes is
+  still made at `a613114`.
+- 2.6.11 is then the candidate merged with those fixes. Before it ships, the
+  merged commit repeats the test searches of all three tests (LongMemEval-S,
+  LoCoMo and the private pack; searches only, with no answer model or judge),
+  and every question's context must be identical to the candidate's. The
+  merged commit is named here when it exists.
+- If any context differs, 2.6.11 does not ship as the code measured here: the
+  differing questions are reported and the release waits for that decision.
+- None of the rules above changes.
+
 ## What it does not say
 
 - That 2.6.11 improves accuracy on either benchmark. The claim the places are
