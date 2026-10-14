@@ -2230,6 +2230,34 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             return {"action": "restored", "embedding_dim": state.get("embedding_dim")}
         logger.info("Calibration sidecar has no recall-gate signal; calibrating the gate.")
 
+    # bug-184 follow-on: skipping the restore drops the operator's knob-3 precision
+    # overrides along with the measurements, and the recalibration below then (a) measures
+    # every gate at the DEFAULT beta instead of the configured one and (b) persists an
+    # empty agent_betas — so the boot would silently and permanently delete a setting the
+    # operator chose. Betas are not measurements: they are policy INPUTS the measurement
+    # consumes (_calibrate_fused_gate reads _get_precision_beta), and neither a scoring
+    # change, an embedding change, nor auto-calibration invalidates a stated preference.
+    # Thresholds and gates are deliberately NOT preloaded here — those are exactly the
+    # stale measurements being re-derived.
+    #
+    # The condition is "nothing was restored", not a list of triggers: the three ways to
+    # recalibrate (stale fingerprint, dimension change, AUTO_CALIBRATE) all bypass
+    # _restore_calibration_state, and AUTO_CALIBRATE is the worst of them — it wipes the
+    # overrides on EVERY boot, not just an upgrade one. Keying on the triggers would make
+    # the invariant hold or fail depending on an unrelated config flag. It also runs
+    # BEFORE the no-recalibration return below: a stale boot with recalibration disabled
+    # restores nothing either, so without the preload the overrides were not applied for
+    # the life of the process, and the next calibrate_threshold — the documented repair
+    # for that state — wrote the sidecar from the empty dict and deleted them.
+    if not restored and state is not None:
+        vector._agent_betas.update(state.get("agent_betas") or {})
+        # Claim the beta axis ONLY. This process now holds every stored beta, so a
+        # later clear of one is a real deletion and must reach disk; it holds none of
+        # the thresholds and gates deliberately left behind above, so those stay
+        # carried into the sidecar until this boot's recalibration replaces them.
+        for stored_agent_id in state.get("agent_betas") or {}:
+            vector._claim_agent_calibration(stored_agent_id, "agent_betas")
+
     if not restored and not (
         auto_calibrate
         or (on_model_change and (state is None or dim_changed or scoring_stale))
@@ -2250,31 +2278,6 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
                 _live_fingerprint(),
             )
         return {"action": "noop"}
-
-    # bug-184 follow-on: skipping the restore drops the operator's knob-3 precision
-    # overrides along with the measurements, and the recalibration below then (a) measures
-    # every gate at the DEFAULT beta instead of the configured one and (b) persists an
-    # empty agent_betas — so the boot would silently and permanently delete a setting the
-    # operator chose. Betas are not measurements: they are policy INPUTS the measurement
-    # consumes (_calibrate_fused_gate reads _get_precision_beta), and neither a scoring
-    # change, an embedding change, nor auto-calibration invalidates a stated preference.
-    # Thresholds and gates are deliberately NOT preloaded here — those are exactly the
-    # stale measurements being re-derived.
-    #
-    # The condition is "we are about to recalibrate and nothing was restored", not a list
-    # of triggers: the three ways to get here (stale fingerprint, dimension change,
-    # AUTO_CALIBRATE) all bypass _restore_calibration_state, and AUTO_CALIBRATE is the
-    # worst of them — it wipes the overrides on EVERY boot, not just an upgrade one.
-    # Keying on the triggers would make the invariant hold or fail depending on an
-    # unrelated config flag.
-    if not restored and state is not None:
-        vector._agent_betas.update(state.get("agent_betas") or {})
-        # Claim the beta axis ONLY. This process now holds every stored beta, so a
-        # later clear of one is a real deletion and must reach disk; it holds none of
-        # the thresholds and gates deliberately left behind above, so those stay
-        # carried into the sidecar until this boot's recalibration replaces them.
-        for stored_agent_id in state.get("agent_betas") or {}:
-            vector._claim_agent_calibration(stored_agent_id, "agent_betas")
 
     # A staleness recalibration is about to replace the only record of the
     # values that gated recall until this boot. Back the sidecar up first (evidence for

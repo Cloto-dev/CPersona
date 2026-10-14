@@ -3715,6 +3715,7 @@ async def main():
     # expensive, with the same failure posture as the ACL table below.
     config.validate_reconstruct_counts()
     config.validate_block_gates()
+    config.validate_content_caps()
 
     # ACL mode (docs/ACL_DESIGN.md): load and validate the grant table before
     # anything expensive, failing closed on any defect — the server refuses to

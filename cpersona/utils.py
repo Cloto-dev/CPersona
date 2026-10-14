@@ -26,6 +26,7 @@ from cpersona.config import (
     RECENT_RECALL_WINDOW_MIN,
     REFERENCE_HOURS,
     RESOLVED_DECAY_FACTOR,
+    require_positive_cap,
 )
 
 
@@ -97,7 +98,10 @@ def _sanitize_with_cap(content: str, cap: int) -> tuple[str, bool]:
 
 def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
     """Sanitize a memory/episode write, and report whether the cap cut anything."""
-    return _sanitize_with_cap(content, MAX_CONTENT_LENGTH)
+    # The server refuses a non-positive cap at startup; this keeps a library
+    # caller from storing every text emptied or shortened under one.
+    cap = require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
+    return _sanitize_with_cap(content, cap)
 
 
 def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
@@ -108,7 +112,8 @@ def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
     and is never preview-trimmed (bug-117), so its bound cannot be inherited from
     a constant that a later line intends to relax; see config.MAX_PROFILE_LENGTH.
     """
-    return _sanitize_with_cap(profile, MAX_PROFILE_LENGTH)
+    cap = require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
+    return _sanitize_with_cap(profile, cap)
 
 
 def _sanitize_content(content: str) -> str:

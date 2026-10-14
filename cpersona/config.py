@@ -64,7 +64,10 @@ def parse_float(env_key: str, default: float) -> float:
     return _parse_float(env_key, default)
 
 
-DB_PATH = os.environ.get("CPERSONA_DB_PATH", "data/cpersona.db")
+# An empty value is an unset value, the rule the bug-133 parsers above apply.
+# Taken literally, '' is SQLite's private temporary database -- a different one
+# for every connection -- so the server migrated one and read from empty others.
+DB_PATH = os.environ.get("CPERSONA_DB_PATH") or "data/cpersona.db"
 # Per-subject alias ledger (docs/OAUTH_DESIGN.md §12). Defaults beside the
 # database rather than beside the ACL file on purpose: the server writes this
 # file (first connection issues an alias), while the grant table's directory is
@@ -487,6 +490,32 @@ MAX_CONTENT_LENGTH = _parse_int("CPERSONA_MAX_CONTENT_LENGTH", 16000)
 # tree) would silently unbound the profile too. The number is unchanged —
 # 2000 is right for the profile, and small is the point — only its ownership is.
 MAX_PROFILE_LENGTH = _parse_int("CPERSONA_MAX_PROFILE_LENGTH", 2000)
+
+
+# A write cap below 1 is not a cap. Every consumer slices with it, so 0 keeps
+# nothing and a negative value drops the tail of every write, and the
+# oversized-row repairs rewrite every row through the same slice -- deleting the
+# memories that then collide on the content unique index. 0 does not mean
+# "unlimited" for these two, unlike the preview and excerpt caps, so it is refused
+# rather than reinterpreted. Not clamped either: a clamp to 1 would honour the
+# setting by keeping one character of everything.
+def require_positive_cap(env_key: str, value: int) -> int:
+    """Return *value*, or raise when it cannot bound a write (below 1)."""
+    if value < 1:
+        raise ValueError(
+            f"{env_key}={value} must be at least 1: it is the length stored text is "
+            "cut to, so 0 or a negative value would empty or shorten every write and "
+            "every oversized-row repair (there is no 'unlimited' value)"
+        )
+    return value
+
+
+def validate_content_caps() -> None:
+    """Refuse a write cap that would cut every write and repair (startup check)."""
+    require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
+    require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
+
+
 # 2.5.2b1 (audit C12): the JSON sidecar fields — source and metadata — reach the
 # row with no bound at all, so one call could park an arbitrarily large blob per
 # memory (content has been capped since 2.1; these never were). They are cheap
@@ -601,8 +630,10 @@ FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
 # generic key shared across Cloto MCP servers (matches the CScheduler convention
 # and the marketplace catalog, which sets EMBEDDING_MODE / EMBEDDING_HTTP_URL).
 # Without the generic fallback a catalog-installed cpersona ran with embeddings
-# silently off (recall degraded to FTS-only) — bug-001.
-EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE") or os.environ.get("EMBEDDING_MODE", "none")
+# silently off (recall degraded to FTS-only) — bug-001. An empty value at
+# either step is unset, so an empty chain ends at the documented default rather
+# than at '', which the startup check refuses as an unsupported mode.
+EMBEDDING_MODE = os.environ.get("CPERSONA_EMBEDDING_MODE") or os.environ.get("EMBEDDING_MODE") or "none"
 
 # The values the client can act on. Anything else reaches every embed as a
 # per-call failure that never leaves the process (bug-275), which recall then had
