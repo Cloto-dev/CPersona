@@ -1545,18 +1545,26 @@ async def _corpus_embedding_dim() -> int | None:
     agreement, because the legacy rows are the oldest and a plain scan reaches them
     first, so the same wrong answer came back every boot.
 
-    Asking for the modal width makes this the same question calibration answers.
+    Asking for the modal width makes this the same question calibration answers, and
+    calibration persists this value (``_corpus_embedding_dim_on``) rather than the width
+    of its own sample: a per-agent sample's modal width is that agent's, and an agent
+    already re-embedded by the new model then flipped every later boot to "changed".
     """
     async with connection() as db:
-        # Deliberately global: the width is a property of the corpus the embedding model
-        # produced, not of one agent's data (the bug-062 rule is about sizes and
-        # contents). The typed no-filter helper call replaces the old waiver comment.
-        iso = isolation_where(agent_id=None)
-        rows = await db.execute_fetchall(
-            f"SELECT length(embedding), COUNT(*) FROM memories "
-            f"WHERE embedding IS NOT NULL{iso.and_clause} GROUP BY length(embedding)",
-            iso.params,
-        )
+        return await _corpus_embedding_dim_on(db)
+
+
+async def _corpus_embedding_dim_on(db) -> int | None:
+    """``_corpus_embedding_dim`` on a connection the caller already holds."""
+    # Deliberately global: the width is a property of the corpus the embedding model
+    # produced, not of one agent's data (the bug-062 rule is about sizes and
+    # contents). The typed no-filter helper call replaces the old waiver comment.
+    iso = isolation_where(agent_id=None)
+    rows = await db.execute_fetchall(
+        f"SELECT length(embedding), COUNT(*) FROM memories "
+        f"WHERE embedding IS NOT NULL{iso.and_clause} GROUP BY length(embedding)",
+        iso.params,
+    )
     counts = {int(width): int(n) for width, n in rows if width}
     if not counts:
         return None
@@ -1959,7 +1967,13 @@ async def do_calibrate_threshold(
             pos_sims=pos_sims,
         )
         new_threshold = stats["threshold"]
-        embedding_dim = int(vecs.shape[1])
+        sample_dim = int(vecs.shape[1])
+        # The sidecar is fingerprinted with the corpus's modal width, the quantity the
+        # startup guard compares it with. This sample's width answers for one agent (or
+        # one random draw); persisted, it made a mixed-width corpus look changed on every
+        # boot and dropped every other agent's carried entries as "another width". The
+        # response still reports the width this calibration measured.
+        embedding_dim = await _corpus_embedding_dim_on(db) or sample_dim
         # mean + z*std has a floor but no ceiling, and on a narrow null distribution a
         # z well inside the clamp lands above 1.0 -- a cosine no vector can reach, so
         # the agent's vector arm would return nothing. Refuse it before it is applied.
@@ -2081,7 +2095,7 @@ async def do_calibrate_threshold(
         "method": cal_method,
         "z_factor": z,
         "percentile": cal_percentile,
-        "embedding_dim": embedding_dim,
+        "embedding_dim": sample_dim,
         "embedding_model": config.reported_embedding_model(),
         "distribution": {
             "mean": stats["mean"],
@@ -2115,7 +2129,7 @@ async def do_calibrate_threshold(
         stats["mean"],
         stats["std"],
         stats["null_admit_rate"],
-        embedding_dim,
+        sample_dim,
     )
     return result
 
