@@ -37,7 +37,7 @@ was built from. This script reads that manifest back off the live site:
     was built from.
   * they differ -> the line is *lagging*. Byte differences and missing pages are
     expected, and are not reported as faults. What is checked instead is how
-    long the unpublished commit has been waiting: past the bound, publishing has
+    long the oldest unpublished commit has been waiting: past the bound, publishing has
     stopped rather than merely not caught up yet.
   * the site does not list the line at all -> it is *absent*. Declaring a line
     and never serving it is not a lag, it is a site that does not have what the
@@ -140,6 +140,29 @@ def commit_age_hours(commit: str, now: dt.datetime | None = None) -> float | Non
     when = dt.datetime.fromisoformat(result.stdout.strip())
     now = now or dt.datetime.now(dt.timezone.utc)
     return (now - when).total_seconds() / 3600.0
+
+
+def waiting_age_hours(local: str, published: str, now: dt.datetime | None = None) -> float | None:
+    """Hours the oldest commit the site does not have has been waiting.
+
+    That is the commit right after the published one, not the branch head the
+    local manifest records: while commits keep landing the head stays young, so
+    measuring it would report a publisher that stopped weeks ago as an ordinary
+    lag on every run.
+
+    When the clone cannot order the two commits (the published one is absent,
+    or is not an ancestor of the local one) the head's age is used: it is a
+    lower bound on how long anything has waited, so it can miss a stall but
+    never invents one.
+    """
+    result = subprocess.run(
+        ("git", "rev-list", "--reverse", f"{published}..{local}"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    unpublished = result.stdout.split() if result.returncode == 0 else []
+    return commit_age_hours(unpublished[0] if unpublished else local, now)
 
 
 def line_of(relative: str, ids: set[str], current: str) -> str:
@@ -293,8 +316,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"::warning::could not read {base}{MANIFEST_NAME} ({error}) — comparing without provenance")
 
+    published_commits = {
+        version.get("id"): version.get("commit", "")
+        for version in (published.get("versions", []) if isinstance(published, dict) else [])
+    }
     ages = {
-        version["id"]: commit_age_hours(version.get("commit", ""))
+        version["id"]: waiting_age_hours(version["commit"], published_commits[version["id"]])
+        if published_commits.get(version["id"])
+        else commit_age_hours(version["commit"])
         for version in local["versions"]
         if version.get("commit")
     }

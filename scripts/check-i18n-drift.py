@@ -93,7 +93,10 @@ def record(
 def main() -> int:
     strict = "--strict" in sys.argv
     as_json = "--json" in sys.argv
-    for ja in sorted((ROOT / "docs").glob("*.ja.md")):
+    # rglob, not glob: docs/research/ and docs/design/ translations are published
+    # like any other page and carry the same marker, so a top-level walk left
+    # them stale behind their English source with this gate green.
+    for ja in sorted((ROOT / "docs").rglob("*.ja.md")):
         rel = ja.relative_to(ROOT)
         en_rel = str(rel).replace(".ja.md", ".md")
         en = ROOT / en_rel

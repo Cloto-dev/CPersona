@@ -29,7 +29,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is part of the group because a scheduled run's ref is master, the
+  # same ref a push to master runs on. Sharing one group, the scheduled run
+  # cancels the push run in progress, and it skips every gate except
+  # wheel-smoke and container itself, so that commit never gets test, lint or
+  # mutation results while its newest run reads green. Successive pushes to one
+  # ref still share a group, which is what cancel-in-progress is for.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -114,7 +120,11 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies (incl. test toolchain)
-        run: uv sync --dev --python ${{ matrix.python-version }}
+        # --locked on every sync in this file: a plain `uv sync` re-resolves a
+        # lock that disagrees with pyproject and carries on, so a PR that moves
+        # a bound without re-locking would test fresh versions, merge green and
+        # leave the committed lock stale for everyone installing with --frozen.
+        run: uv sync --locked --dev --python ${{ matrix.python-version }}
       - name: Run tests
         run: uv run pytest
 
@@ -134,7 +144,7 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies (incl. test toolchain)
-        run: uv sync --dev --python 3.13
+        run: uv sync --locked --dev --python 3.13
       - name: Run the index tests
         # pyproject's timeout_method is "signal", which needs SIGALRM; Windows has none.
         run: uv run pytest tests/test_vector_index_rebuild_while_loaded.py tests/test_vector_index_builder.py tests/test_claude_code_hook_example.py -q -o timeout_method=thread
@@ -164,7 +174,7 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies (pytest needed for case collection)
-        run: uv sync --dev --python 3.13
+        run: uv sync --locked --dev --python 3.13
       - name: Check docs facts against source
         run: uv run python scripts/check-docs-facts.py
 
@@ -252,7 +262,7 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies (incl. test toolchain)
-        run: uv sync --dev --python 3.13
+        run: uv sync --locked --dev --python 3.13
       - name: Mutation proof (2.5.2 refactor seams)
         run: uv run --frozen python scripts/mutation-proof.py
 
@@ -288,7 +298,7 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies (test toolchain + cosmic-ray)
-        run: uv sync --group dev --group mutation --python 3.13
+        run: uv sync --locked --group dev --group mutation --python 3.13
       - name: Mutation-diff (advisory)
         env:
           MUTATION_DIFF_BASE: origin/${{ github.base_ref }}

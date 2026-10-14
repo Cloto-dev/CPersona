@@ -53,7 +53,20 @@ const FENCE = /```mermaid\n([\s\S]*?)\n```/g;
 let blocks = 0;
 const failures = [];
 
-for (const name of readdirSync(docs).filter((n) => n.endsWith(".md")).sort()) {
+// Every page under docs/, subdirectories included: docs/research/ is published
+// like a top-level page, and a top-level walk left its diagrams unparsed.
+// Names stay relative to docs/ so each message points at the source file.
+function pages(dir, prefix = "") {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const name = prefix + entry.name;
+    if (entry.isDirectory()) out.push(...pages(`${dir}/${entry.name}`, `${name}/`));
+    else if (entry.name.endsWith(".md")) out.push(name);
+  }
+  return out;
+}
+
+for (const name of pages(docs).sort()) {
   const text = readFileSync(`${docs}/${name}`, "utf8");
   // Line number of each block, so the message points at the source and not at
   // an ordinal the reader then has to count out by hand.
