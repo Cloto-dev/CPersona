@@ -510,7 +510,14 @@ async def plan_rows(db, table: str = "memories", *, extra_columns: tuple = ()) -
     re-applied when a caller hydrates.
     """
     iso = isolation_where(agent_id=None)
-    src_expr = ", json_extract(source, '$.id')" if table == "memories" else ""
+    # json_valid first: json_extract raises on a source that is not JSON, and this
+    # statement reads every embedded row of every agent, so one such row would stop
+    # both index files from being built at all -- for good when the row is locked,
+    # because the JSON repair leaves locked rows alone. The row is indexed with no
+    # source id instead, which matches no per-user filter, as NULL matches nothing.
+    src_expr = (
+        ", CASE WHEN json_valid(source) THEN json_extract(source, '$.id') END" if table == "memories" else ""
+    )
     extra_expr = "".join(f", {column}" for column in extra_columns)
 
     row = await db.execute_fetchall(f"SELECT MAX(id) FROM {table}{iso.where}", iso.params)
@@ -815,9 +822,12 @@ def _maps_files() -> bool:
     is still mapped — ``PermissionError: [WinError 5]`` at the ``os.replace`` in
     ``build_index`` — so on Windows every rebuild failed while any process held the
     index, which is whenever the server had searched since it started (a production
-    report; reproduced in CI). Reading the arrays costs what the scan already touches
-    on every query, and it leaves no handle open. POSIX allows the replace, so it keeps
-    the mapping.
+    report; reproduced in CI). Reading the arrays leaves no handle open, and it is not
+    free: the whole file -- every agent's rows, the float32 matrix included -- stays
+    resident for as long as the server keeps the index, where the scan it replaces holds
+    one chunk of one agent's window at a time. ``cached_index`` lets go of the index a
+    rebuild replaced before it reads the new one, so a reload does not hold two copies.
+    POSIX allows the replace, so it keeps the mapping, which the OS pages in and out.
     """
     return os.name != "nt"
 
@@ -833,20 +843,57 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
     src = path or index_path(table)
     if not os.path.exists(src):
         return None
-
-    size = os.path.getsize(src)
+    # One open for the header, the size check and every array: a rebuild moves a new
+    # file over this path, and a loader that reopened it by path for each array would,
+    # when the move landed between two of them, pair this header's offsets and counts
+    # with the other file's bytes -- and nothing would raise when that file is larger.
     with open(src, "rb") as fh:
-        head = fh.read(len(MAGIC) + 4)
-        if len(head) < len(MAGIC) + 4 or head[: len(MAGIC)] != MAGIC:
-            raise IndexUnusable(f"{src}: bad magic")
-        header_len = struct.unpack("<I", head[len(MAGIC):])[0]
-        raw = fh.read(header_len)
-        if len(raw) != header_len:
-            raise IndexUnusable(f"{src}: header truncated")
-        try:
-            header = json.loads(raw.decode("utf-8"))
-        except ValueError as exc:
-            raise IndexUnusable(f"{src}: header is not JSON ({exc})") from exc
+        return _load_open(fh, src)
+
+
+def _read_header(fh, src: str, magic: bytes = MAGIC) -> tuple[dict, int, int]:
+    """The header of the open index file: `(header, base, size)`.
+
+    `base` is where the arrays begin. `size` is the size of the file this handle
+    holds, not of whatever the path names by now, so it is checked against the
+    same file the arrays are read from. `magic` is the file kind's own.
+    """
+    size = os.fstat(fh.fileno()).st_size
+    head = fh.read(len(magic) + 4)
+    if len(head) < len(magic) + 4 or head[: len(magic)] != magic:
+        raise IndexUnusable(f"{src}: bad magic")
+    header_len = struct.unpack("<I", head[len(magic):])[0]
+    raw = fh.read(header_len)
+    if len(raw) != header_len:
+        raise IndexUnusable(f"{src}: header truncated")
+    try:
+        header = json.loads(raw.decode("utf-8"))
+    except ValueError as exc:
+        raise IndexUnusable(f"{src}: header is not JSON ({exc})") from exc
+    return header, len(magic) + 4 + header_len, size
+
+
+def _array_reader(fh):
+    """`read(offset, dtype, shape)`: one array of the open file `fh`.
+
+    Mapped (POSIX) or read into memory (Windows, see `_maps_files`), and from the
+    handle either way: a mapping made from it outlives the handle, and a read
+    from it reads the file the header came from.
+    """
+    mapped = _maps_files()
+
+    def read(offset: int, dtype: str, shape) -> np.ndarray:
+        if mapped:
+            return np.memmap(fh, dtype=dtype, mode="r", offset=offset, shape=shape)
+        items = int(np.prod(shape))
+        fh.seek(offset)
+        return np.fromfile(fh, dtype=dtype, count=items).reshape(shape)
+
+    return read
+
+
+def _load_open(fh, src: str) -> VectorIndex:
+    header, base, size = _read_header(fh, src)
 
     if header.get("format") != FORMAT_VERSION:
         raise IndexUnusable(f"{src}: format {header.get('format')} != {FORMAT_VERSION}")
@@ -859,7 +906,6 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
         # Raising KeyError/ValueError instead would escape the caller's guard —
         # the same shape of hole as the unguarded select() call (bug-276).
         raise IndexUnusable(f"{src}: header lacks a usable dim/count ({exc!r})") from exc
-    base = len(MAGIC) + 4 + header_len
     expect = base + count * (8 + dim * 4 + 4 * len(_AXIS_FIELDS) + CREATED_AT_WIDTH)
     if size != expect:
         # The one check that catches a build killed halfway, a truncated copy, and
@@ -870,13 +916,7 @@ def load_index(table: str = "memories", path: str | None = None) -> VectorIndex 
     # re-viewed: a view across a slice has to satisfy numpy's alignment rules for
     # the target dtype, and expressing the offsets here keeps the layout in the
     # code that reads it instead of in a chain of pointer arithmetic.
-    mapped = _maps_files()
-
-    def _map(offset: int, dtype: str, shape) -> np.ndarray:
-        if mapped:
-            return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)
-        items = int(np.prod(shape))
-        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)
+    _map = _array_reader(fh)
 
     off = base
     ids = _map(off, "<i8", (count,))
@@ -1186,6 +1226,10 @@ def cached_index(table: str = "memories", path: str | None = None) -> VectorInde
     hit = _cache.get(src)
     if hit is not None and hit[0] == key:
         return hit[1]
+    # Let go of the replaced index before reading its successor. On Windows the
+    # arrays are read into memory (`_maps_files`), so holding the old entry through
+    # the load would keep two copies of the whole corpus resident at once.
+    _cache.pop(src, None)
     index = load_index(table, src)
     _cache[src] = (key, index)
     return index

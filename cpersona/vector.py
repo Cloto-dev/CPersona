@@ -515,6 +515,21 @@ async def _drop_rejected_labels(db: aiosqlite.Connection, rows: list[dict]) -> l
     return [row for row in rows if row.get("_rid", ("mem", row["id"])) not in rejected]
 
 
+def _remote_score(value) -> float:
+    """A remote hit's score as the cosine the gates compare, or ValueError.
+
+    Checked here, inside the remote search's fallback `try`, because the value is
+    returned as `_cosine` and nothing compares it until the quality gate -- outside
+    any guard -- so a string from the service raised TypeError there and took the
+    whole recall down instead of falling back to the local scan. A bool is not a
+    score although Python counts it as an int, and a NaN or an infinity is not a
+    cosine: NaN fails every comparison and infinity passes every one.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"remote hit carries a non-numeric score: {value!r}")
+    return float(value)
+
+
 async def _search_vector_remote(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -591,7 +606,7 @@ async def _search_vector_remote(
         ordered: list[tuple[str, int, float]] = []
         for hit in data["results"]:
             raw_id = hit["id"]
-            score = hit["score"]
+            score = _remote_score(hit["score"])
             if raw_id.startswith("mem:"):
                 ordered.append(("mem", int(raw_id[4:]), score))
             elif raw_id.startswith("ep:"):
@@ -2097,6 +2112,19 @@ async def _scan_episodes_local(
     return candidates
 
 
+async def _change_stamp(db: aiosqlite.Connection) -> tuple[int, int]:
+    """What changes when anything is written that a read of `db` could see.
+
+    `PRAGMA data_version` moves when another connection commits; `total_changes`
+    counts the rows this connection's own statements changed, which data_version
+    does not report. Equal stamps around two reads mean no row they could see was
+    written in between. A change to another table also moves it, and costs one
+    re-read.
+    """
+    row = await db.execute_fetchall("PRAGMA data_version")
+    return int(row[0][0]), db.total_changes
+
+
 async def _search_vector_far(
     db: aiosqlite.Connection,
     *,
@@ -2338,40 +2366,39 @@ async def _search_vector(
     # MAX_MEMORIES rows regardless of how many the caller asked to receive.
     scan_limit = MAX_MEMORIES
 
-    # Memories first, then episodes: nlargest is stable, so this order is what
-    # breaks a tie between a memory and an episode of equal similarity. The memory
-    # scan already returns at most `limit` candidates (bug-249) -- it applies this
-    # same cut, with this same tie-break, before paying to read their text.
-    candidates = await _scan_memories_local(
-        db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim,
-        agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
-    )
-    candidates += await _scan_episodes_local(
-        db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
-        limit=limit, agent_id=agent_id, project_id=project_id,
-    )
-
-    top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
-
     # The far list, and the one place "off" is decided on this path. Asked here
     # rather than only inside the call, so that at the default there is no call
     # at all: a far scan that ran and returned nothing would still cost a
     # statement, a matrix and a merge on every recall the server answers, and
     # this setting has to be a guard rather than an empty scan.
-    if far_out is not None and far_list_enabled():
-        # bug-334: the two windows are two statements on a shared autocommit
-        # connection, and scan position is defined over the live table — so an
-        # insert committed between them shifts every position by one and the row
-        # at the near window's last position reappears at the far window's first.
-        # Measured: that row then took two reciprocal-rank votes from a single
-        # retriever and sorted ahead of rows that outrank it, and the legacy
-        # quality gate rescales its threshold by a per-row maximum of three votes
-        # that a duplicate can exceed. Disjointness by position is the reason the
-        # far list needs no de-duplicating pass; when the premise does not hold,
-        # the invariant the fusion is owed still has to. `_rid` is the identity
-        # the fusion itself keys on, so this drops exactly what it would have
-        # double-counted and nothing else.
-        near_rids = {row["_rid"] for _score, row in top_k if "_rid" in row}
+    wants_far = far_out is not None and far_list_enabled()
+
+    # The near and far windows are two reads of a live table, cut by position. A
+    # delete committed between them moves the far window's first row into the near
+    # window's last place after the near window has been read, so neither list
+    # scans it (the bug-334 de-duplication below handles the insert direction, and
+    # nothing can restore a skipped row). So the pair is read again, once, when the
+    # database changed while it was being read; a second change in that window is
+    # left to the de-duplication and logged, rather than retried without bound.
+    for attempt in (1, 2):
+        stamp = await _change_stamp(db) if wants_far else None
+
+        # Memories first, then episodes: nlargest is stable, so this order is what
+        # breaks a tie between a memory and an episode of equal similarity. The memory
+        # scan already returns at most `limit` candidates (bug-249) -- it applies this
+        # same cut, with this same tie-break, before paying to read their text.
+        candidates = await _scan_memories_local(
+            db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim,
+            agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
+        )
+        candidates += await _scan_episodes_local(
+            db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
+            limit=limit, agent_id=agent_id, project_id=project_id,
+        )
+
+        top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
+        if not wants_far:
+            break
         far_rows = await _search_vector_far(
             db,
             iso=iso,
@@ -2387,6 +2414,28 @@ async def _search_vector(
             channel=channel,
             source_id=source_id,
         )
+        if await _change_stamp(db) == stamp:
+            break
+        if attempt == 2:
+            logger.warning(
+                "The database changed while the near and far scan windows were read, "
+                "twice; a row at the boundary between them may be in neither list"
+            )
+
+    if wants_far:
+        # bug-334: the two windows are two statements on a shared autocommit
+        # connection, and scan position is defined over the live table — so an
+        # insert committed between them shifts every position by one and the row
+        # at the near window's last position reappears at the far window's first.
+        # Measured: that row then took two reciprocal-rank votes from a single
+        # retriever and sorted ahead of rows that outrank it, and the legacy
+        # quality gate rescales its threshold by a per-row maximum of three votes
+        # that a duplicate can exceed. Disjointness by position is the reason the
+        # far list needs no de-duplicating pass; when the premise does not hold,
+        # the invariant the fusion is owed still has to. `_rid` is the identity
+        # the fusion itself keys on, so this drops exactly what it would have
+        # double-counted and nothing else.
+        near_rids = {row["_rid"] for _score, row in top_k if "_rid" in row}
         overlap = [row for row in far_rows if row.get("_rid") in near_rids]
         if overlap:
             logger.warning(
