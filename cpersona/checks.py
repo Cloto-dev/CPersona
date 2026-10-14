@@ -335,11 +335,15 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     surplus = f"{covered} AND locked = 0"
     deletable = (await db.execute_fetchall(f"SELECT COUNT(*) {surplus}", iso.params))[0][0]
     if fix:
-        # A deleted copy's declarations move to its group's survivor, which holds the
-        # same text; the delete trigger would otherwise take them with the copy. Only
-        # rows something declares about are read.
+        # A deleted copy's declarations move to the row that covers it, which holds the
+        # same text; the delete trigger would otherwise take them with the copy. That
+        # row is the oldest channel '' copy when there is one, and otherwise the oldest
+        # copy in the deleted row's own channel -- never a sibling channel's copy,
+        # which no reader of this row's channel sees. Only rows something declares
+        # about are read.
         for row_id, agent, keep in await db.execute_fetchall(
-            "SELECT id, agent_id, (SELECT COALESCE(MIN(CASE WHEN k.channel = '' THEN k.id END), MIN(k.id))"
+            "SELECT id, agent_id, (SELECT COALESCE(MIN(CASE WHEN k.channel = '' THEN k.id END),"
+            " MIN(CASE WHEN k.channel = memories.channel THEN k.id END))"
             " FROM memories k WHERE k.agent_id = memories.agent_id AND k.project_id = memories.project_id"
             f" AND k.content = memories.content) {surplus} AND {associations.names_memory_sql('memories.id')}",
             iso.params,

@@ -373,6 +373,46 @@ async def test_duplicate_content_repair_moves_declarations_to_the_survivor(db):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_content_repair_keeps_declarations_in_the_deleted_rows_channel(db):
+    """With no channel '' copy, a same-channel duplicate is covered by the oldest copy in
+    its own channel. A copy in a sibling channel survives the repair too, but readers of
+    this channel do not see it, so the declarations must not move there."""
+    text = "Kenji leads the payments rewrite"
+    await db.execute("DROP INDEX IF EXISTS idx_memories_dedup_content")
+    try:
+        ids = {}
+        for name, channel in (("sibling", "b"), ("older", "a"), ("newer", "a")):
+            cur = await db.execute(
+                "INSERT INTO memories (agent_id, channel, content, source, timestamp) "
+                "VALUES (?, ?, ?, '{}', '2026-01-01T00:00:00+00:00')",
+                (SRC, channel, text),
+            )
+            ids[name] = cur.lastrowid
+        await db.commit()
+        await server.do_declare_associations_boundary(
+            SRC,
+            associations={"entities": [{"name": "Kenji"}]},
+            anchor_ref=f"mem:{ids['newer']}", channel="a",
+        )
+        r = await maintenance_handlers.do_check_health(agent_id=SRC, fix=True, checks=["duplicate_content"])
+        assert [i["type"] for i in r["issues"]] == ["duplicate_content"], r
+        survivors = await db.execute_fetchall("SELECT id FROM memories WHERE agent_id = ? ORDER BY id", (SRC,))
+        assert survivors == [(ids["sibling"],), (ids["older"],)], survivors
+        mentions = await db.execute_fetchall(
+            "SELECT m.ref FROM entity_mentions m JOIN entities e ON e.id = m.entity_id WHERE e.agent_id = ?",
+            (SRC,),
+        )
+        assert mentions == [(f"mem:{ids['older']}",)], mentions
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = ?", (SRC,))
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup_content "
+            "ON memories(agent_id, project_id, channel, content)"
+        )
+        await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_rewrite_collision_moves_declarations_to_the_row_it_collided_with(db):
     """A content-rewriting fixer deletes the row whose cleaned text already exists."""
     await db.execute(

@@ -2787,7 +2787,8 @@ def import_file_agents(input_path: str) -> set[str]:
         rtype = record.get("_type")
         if rtype == "header":
             agents.add(_header_agent(record))
-        elif rtype in ("memory", "episode", "profile"):
+        elif rtype in ("memory", "episode", "profile", "entity", "relation"):
+            # A declared-graph record is its agent's data as much as a memory is.
             aid = record.get("agent_id")
             if isinstance(aid, str):
                 if aid:

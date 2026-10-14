@@ -292,6 +292,28 @@ def test_import_demand_names_every_agent_in_the_file(tmp_path, monkeypatch):
     assert demands({"input_path": two_agents, "target_agent_id": ALPHA}) == [("*", acl.PERM_WRITE)]
 
 
+def test_import_demand_names_the_agents_of_declared_graph_records(tmp_path, monkeypatch):
+    """An entity or relation record is another agent's data as much as a memory is:
+    restoring it names that agent's entities and what it declared about them."""
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    demands = acl.ACL_CLASSIFICATION["import_memories"]
+    graph = _write_jsonl(
+        exports / "graph.jsonl",
+        [
+            {"_type": "header", "agent_id": ALPHA, "memory_count": 0, "episode_count": 0},
+            {"_type": "entity", "id": 1, "agent_id": BETA, "name": "Kenji", "declared_by": "agent"},
+            {"_type": "relation", "id": 1, "agent_id": GAMMA, "predicate": "leads"},
+        ],
+    )
+    monkeypatch.setattr(config, "EXPORT_DIR", str(exports))
+    assert demands({"input_path": graph, "target_agent_id": ALPHA}) == [
+        (ALPHA, acl.PERM_WRITE),
+        (BETA, acl.PERM_READ),
+        (GAMMA, acl.PERM_READ),
+    ]
+
+
 # ==========================================================================
 # 2. JSON null in a NOT NULL column (bug-527).
 # ==========================================================================
