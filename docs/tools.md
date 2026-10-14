@@ -107,7 +107,17 @@ client's config (`uvx cpersona@latest`). A source checkout that is **not on a
 branch** — a clone parked at a release tag, which is a normal way to deploy one
 — is declined too: `git pull` has nothing to fast-forward from a detached
 `HEAD`. The tool refuses before running anything and answers with the
-`git fetch --tags && git checkout <tag>` form to use instead.
+`git fetch --tags && git checkout <tag>` form to use instead. The command shown
+on `recall`, in `check_health` and by `check_update` is already that form for
+such a checkout.
+
+One `apply` runs at a time. A second is refused while the first is still
+installing, including one whose call was cancelled: a cancelled call stops
+waiting, but the installer step it started runs to the end.
+
+A `refresh=true` whose fetch fails keeps the verdict already known (its
+`checked_at` does not move). Being offline does not make a withdrawn release
+any less withdrawn.
 
 `CPERSONA_UPDATE_CHECK=false` disables the feature entirely, including the one
 outbound request ([what it sends](architecture.md#transports)).

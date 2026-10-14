@@ -2711,7 +2711,8 @@ registry.auto_tool(
     "arguments, so the update belongs in your client's config (uvx cpersona@latest), "
     "and an install here would be discarded on the next launch. A checkout parked at "
     "a tag (detached HEAD) is likewise refused before anything runs, and answers with "
-    "the `git fetch --tags && git checkout <tag>` form to use instead. "
+    "the `git fetch --tags && git checkout <tag>` form to use instead (`install.command` "
+    "shows it too). One apply runs at a time; a second is refused until it ends. "
     "Updating is NEVER automatic and never a side effect of any other call. "
     "A RESTART IS ALWAYS REQUIRED afterwards: this process keeps serving the old "
     "code until it is replaced. "
@@ -2726,7 +2727,9 @@ registry.auto_tool(
             "refresh": {
                 "type": "boolean",
                 "description": "Fetch the package index now instead of reading the "
-                "cached verdict (3s budget; a failure answers state=unknown).",
+                "cached verdict (3s budget). A failed fetch keeps the verdict already "
+                "known, so `checked_at` does not move; with none known it answers "
+                "state=unknown.",
                 "default": False,
             },
             "apply": {
