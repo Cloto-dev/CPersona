@@ -277,9 +277,19 @@ _global_calibration_authority: set[str] = set()
 # So the entries this process has CHANGED since its last successful sidecar write are
 # tracked separately. Only those are authoritative over the file; an owned entry that is
 # not pending here is refreshed from the file before the write instead of overwriting it.
-# Loading does not mark anything pending -- only measuring, overriding or removing does.
+# Loading does not mark anything pending -- only measuring or removing does. A precision
+# override is written to the sidecar in the same step it enters process memory, so it is
+# claimed without ever being pending.
 _calibration_pending: dict[str, set[str]] = {axis: set() for axis in _CALIBRATION_AGENT_AXES}
 _global_calibration_pending: set[str] = set()
+
+# How many times each agent's calibration has been purged in this process. A calibration
+# awaits for seconds to minutes between reading an agent's corpus and writing what it
+# measured, and a delete_agent_data that lands in between removes the agent's entries
+# once, at that instant. The calibration notes the count before its first await and
+# discards its result when the count moved, or it writes a threshold and gate measured
+# on a corpus that no longer exists back into memory and onto disk.
+_calibration_purges: dict[str, int] = {}
 
 
 def _claim_agent_calibration(agent_id: str, *axes: str) -> None:
@@ -294,17 +304,6 @@ def _claim_agent_calibration(agent_id: str, *axes: str) -> None:
         _calibration_authority[axis].add(agent_id)
 
 
-def _release_agent_calibration(agent_id: str, *axes: str) -> None:
-    """Give up ownership of *agent_id*'s entry on each named per-agent axis.
-
-    Used when a write is rolled back to a state this process never loaded: after
-    the rollback the dict's silence means "unknown" again, so the stored entry must
-    be carried rather than dropped.
-    """
-    for axis in axes:
-        _calibration_authority[axis].discard(agent_id)
-
-
 def _claim_global_calibration(*axes: str) -> None:
     """Record that this process owns the named global calibration axes."""
     for axis in axes:
@@ -316,7 +315,7 @@ def _claim_global_calibration(*axes: str) -> None:
 def _record_agent_calibration_change(agent_id: str, *axes: str) -> None:
     """Claim *agent_id*'s entry on each axis AND mark it changed since the last write.
 
-    The path for a measurement, an override or a removal; a restore only claims.
+    The path for a measurement or a removal; a restore only claims.
     """
     _claim_agent_calibration(agent_id, *axes)
     for axis in axes:
@@ -327,6 +326,16 @@ def _record_global_calibration_change(*axes: str) -> None:
     """The global-axis companion of ``_record_agent_calibration_change``."""
     _claim_global_calibration(*axes)
     _global_calibration_pending.update(axes)
+
+
+def _note_agent_calibration_purge(agent_id: str) -> None:
+    """Record that *agent_id*'s calibration was purged (see ``_calibration_purges``)."""
+    _calibration_purges[agent_id] = _calibration_purges.get(agent_id, 0) + 1
+
+
+def _agent_calibration_purges(agent_id: str) -> int:
+    """How many times *agent_id*'s calibration has been purged in this process."""
+    return _calibration_purges.get(agent_id, 0)
 
 
 def _clear_calibration_pending() -> None:
