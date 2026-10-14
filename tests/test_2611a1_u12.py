@@ -1,4 +1,4 @@
-"""Regression tests for the calibration-state fixes in 2.6.12.
+"""Regression tests for the calibration-state fixes in 2.6.11a1.
 
 Calibration state lives in one JSON sidecar next to the database, shared by every
 server process on that database. These tests pin five ways that state could be lost
@@ -21,7 +21,7 @@ or poisoned:
 import os
 import tempfile
 
-os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_2612a1_u12.db"))
+os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_2611a1_u12.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
 import errno  # noqa: E402

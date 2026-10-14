@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import tempfile
 
-os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_2612a1_u04.db"))
+os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_2611a1_u04.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
 import pytest  # noqa: E402

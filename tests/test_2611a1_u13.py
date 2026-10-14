@@ -24,7 +24,7 @@ import sqlite3
 import tempfile
 from datetime import datetime
 
-os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_2612a1_u13.db"))
+os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_2611a1_u13.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
 
 import httpx  # noqa: E402
