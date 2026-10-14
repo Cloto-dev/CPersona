@@ -3709,8 +3709,12 @@ async def _assert_no_reserved_agent_ids() -> None:
     (bug-267): they are the server's own prior issuance, and refusing them
     meant every restart after the first mint failed here — measured in
     production, 2026-08-31. A collision is a configuration error, not a
-    migration: the operator either renames the colliding agents
-    (merge_memories) or does not enable per_subject on this database.
+    migration. The common cause is a restore that brought the database back
+    without the ledger file beside it, so the refusal names that file and
+    offers restoring it first: renaming the agents (merge_memories) or
+    dropping per_subject would leave every signed-in subject with a fresh
+    alias and none of the memory it stored. Those two are the remedy only for
+    ids the server never issued.
     """
     from cpersona import database
     from cpersona.isolation import isolation_where
@@ -3727,12 +3731,18 @@ async def _assert_no_reserved_agent_ids() -> None:
     known_aliases = ledger.issued_aliases() if ledger is not None else frozenset()
     collisions = acl.reserved_agent_id_collisions(agent_ids, known_aliases)
     if collisions:
+        ledger_path = ledger.path if ledger is not None else config.alias_ledger_path()
         raise RuntimeError(
             "per_subject is configured but the database already uses reserved "
             f"agent ids: {', '.join(collisions)}. The @me sentinel and the "
             f"{acl.ALIAS_PREFIX!r} prefix belong to subject aliasing "
-            "(docs/OAUTH_DESIGN.md §12), and the alias ledger records none of "
-            "these ids as issued; rename those agents (merge_memories) "
+            f"(docs/OAUTH_DESIGN.md §12), and the alias ledger at {ledger_path} "
+            "records none of these ids as issued. If this database was restored "
+            "from a backup, restore the alias ledger saved with it to that path "
+            "(alias_ledger.json beside the database, or CPERSONA_ALIAS_LEDGER_FILE) "
+            "and start again: the two remedies that follow would leave every signed-in "
+            "subject with a fresh alias and none of the memory it stored. Only "
+            "for ids the server never issued: rename those agents (merge_memories) "
             "or remove per_subject from the ACL file"
         )
 

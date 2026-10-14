@@ -8,8 +8,14 @@ name: Publish to PyPI
 #
 # Guardrail: the tag version and pyproject.toml version must agree, or the run
 # fails loud before building — a mistyped tag can never publish a mismatched
-# artifact. The "verify green -> tag -> publish" discipline is upstream of this:
-# tags are only cut on merged, CI-green master.
+# artifact.
+#
+# Test gate: the upload job needs the `test` job, which runs the suite on the
+# very commit the tag names. Nothing upstream can be relied on to have done it:
+# a maintenance line (2.4.x, 2.5.x) takes backports and version bumps by direct
+# push, and a master run can be cancelled by the push that follows it. A wheel
+# on PyPI cannot be replaced once uploaded, so the check that it works happens
+# here, before the upload, not in a run that may never have finished.
 #
 # Authentication: OIDC Trusted Publishing. PyPI must have a trusted publisher
 # registered for this project (owner Cloto-dev, repo CPersona, workflow
@@ -30,13 +36,13 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  resolve:
+    # One answer to "which commit is being released", read by both jobs below,
+    # so the commit tested and the commit uploaded cannot differ.
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/cpersona
-    permissions:
-      id-token: write # OIDC token for Trusted Publishing
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+      tag_version: ${{ steps.ref.outputs.tag_version }}
     steps:
       - name: Resolve target ref
         id: ref
@@ -51,9 +57,45 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
 
+  test:
+    needs: resolve
+    runs-on: ubuntu-latest
+    # Same ceiling as the CI test job: the suite finishes in seconds, so
+    # anything past 15 minutes is a hang.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.ref.outputs.ref }}
+          ref: ${{ needs.resolve.outputs.ref }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Ruff
+        run: uvx ruff@0.15.21 check .
+      - name: Verify issue registry
+        run: bash scripts/verify-issues.sh
+      - name: Sync dependencies (incl. test toolchain)
+        run: uv sync --dev --python ${{ matrix.python-version }}
+      - name: Run tests
+        run: uv run pytest
+
+  publish:
+    needs: [resolve, test]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/cpersona
+    permissions:
+      id-token: write # OIDC token for Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -70,7 +112,7 @@ jobs:
         # nothing, and the explicit emptiness check covers a match with no capture.
         run: |
           source_version=$(grep -m1 '^__version__ = ' cpersona/__init__.py | sed -E 's/__version__ = "(.*)"/\1/')
-          tag_version="${{ steps.ref.outputs.tag_version }}"
+          tag_version="$TAG_VERSION"
           if [ -z "$source_version" ]; then
             echo "::error::could not read __version__ from cpersona/__init__.py — this guard is broken, not the tag"
             exit 1
@@ -80,6 +122,8 @@ jobs:
             exit 1
           fi
           echo "version match: $source_version"
+        env:
+          TAG_VERSION: ${{ needs.resolve.outputs.tag_version }}
 
       - name: Build sdist + wheel
         run: uv build

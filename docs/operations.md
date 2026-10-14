@@ -65,10 +65,19 @@ the backup forms above touch:
   — the operator instructions served to every client.
 - The ACL file, if `CPERSONA_ACL_FILE` is set. Restoring without it changes
   who may connect.
+- **The alias ledger**, if any ACL row sets `per_subject`:
+  `alias_ledger.json` beside the database, or the file
+  `CPERSONA_ALIAS_LEDGER_FILE` names. The server writes it when a subject
+  first signs in, and it is the only record of which `u-` agent belongs to
+  which person. Restore the database without it and the server refuses to
+  start, naming those agents. Restore the ledger to that path, then start the
+  server again. Do not rename the agents or remove `per_subject` instead:
+  either one leaves every signed-in subject with a fresh alias and none of the
+  memory it stored.
 - **The external vector index**, under `CPERSONA_VECTOR_SEARCH_MODE=remote`
   with `CPERSONA_STORE_BLOB=false`. In that configuration the embeddings exist
-  only in the remote index, so restoring the database and all three files
-  above still comes back with no vector arm. `check_health` reports it as
+  only in the remote index, so restoring the database and every file above
+  still comes back with no vector arm. `check_health` reports it as
   `no_local_vector_fallback`. Back the index up on the same schedule, or keep
   `STORE_BLOB=true` so the `.db` stays self-sufficient.
 - **Not** `<CPERSONA_DB_PATH>.memories.vecindex` or `.episodes.vecindex`, the

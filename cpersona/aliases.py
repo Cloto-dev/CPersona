@@ -201,6 +201,11 @@ class AliasLedger:
         self._unreadable = None
         self._issued = None
 
+    @property
+    def path(self) -> str:
+        """The file this ledger follows: what an operator restores or edits."""
+        return self._path
+
     def peek(self, issuer: str, subject: str) -> str | None:
         """The alias issued for this pair as the file now records it, or None.
 

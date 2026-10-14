@@ -1,6 +1,8 @@
 name: CI
 
-# Runs the full test suite on every PR and every push to master. This is the hard gate
+# Runs the full test suite on every PR, every push to master and every push to a
+# maintenance line (2.4.x, 2.5.x, ...). Those lines take backports and version
+# bumps by direct push, with no PR to run CI on. This is the hard gate
 # the project previously lacked: the suite was run by hand (and rarely), which is how
 # embedding-path regressions reached production. The suite is hermetic and bounded
 # (see conftest.py + [tool.pytest.ini_options] in pyproject.toml), so it needs no
@@ -8,7 +10,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, '[0-9]+.[0-9]+.x']
   pull_request:
   # Every job below except wheel-smoke resolves dependencies from uv.lock, so an
   # upstream release that breaks one of this package's requirements is invisible
