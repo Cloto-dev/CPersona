@@ -62,8 +62,8 @@ matters when you tighten `limit`.
 
 | Tool | What it does |
 |---|---|
-| `export_memories` | Write memories, episodes, profiles and the declared associations (entities, aliases, mentions, relations) to JSONL. It is schema-version independent, so it doubles as a logical backup ([backup runbook](operations.md#backup-and-restore)) |
-| `import_memories` | Read that JSONL back, with the declared associations pointed at the restored records. Idempotent, though not by one key: memories dedup on `msg_id` **and** on identical content within the project/channel scope, while episodes dedup on an identical summary (they carry no `msg_id`) |
+| `export_memories` | Write memories, episodes, profiles and the declared associations (entities, aliases, mentions, relations) to JSONL. It is schema-version independent, so it doubles as a logical backup ([backup runbook](operations.md#backup-and-restore)). A `source` or `metadata` value that is not JSON is carried as its own text and restored as it was |
+| `import_memories` | Read that JSONL back, with the declared associations pointed at the restored records. Idempotent, though not by one key: memories dedup on `msg_id` **and** on identical content within the project/channel scope, while episodes dedup on an identical summary (they carry no `msg_id`). A line with a value it cannot store is refused and reported in `errors`; the rest of the file is restored. An export written by 2.4.37 or earlier carries no project or channel axis, so its rows are restored into the global pool, and `errors` says how many |
 | `merge_memories` | Move or copy one agent's data into another, declared associations included, atomically and with deduplication |
 | `migrate_channel_axis` | Re-channel bridge-type memories onto their concrete channel, together with the associations declared about them. A one-time repair, not a routine operation |
 

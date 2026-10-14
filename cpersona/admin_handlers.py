@@ -58,11 +58,12 @@ from cpersona.database import background_connection, connection, read_snapshot, 
 from cpersona.utils import (
     _clamp_limit,
     _parse_timestamp_utc,
-    _try_parse_json,
+    content_cap,
     error_response,
     fits_sqlite_integer,
     future_timestamp_issue,
     json_dumps_finite,
+    profile_cap,
     sanitize_content_with_flag,
     sanitize_profile_with_flag,
 )
@@ -2914,8 +2915,12 @@ def _confine_io_path(path: str) -> str | None:
     backups); the destructiveHint tool annotation makes the host confirm the write.
 
     bug-130: import uses the same confinement as export.
+
+    A path holding a NUL byte names no file. Every filesystem call raises
+    ValueError on it rather than OSError, which the handlers and the ACL guard's
+    file readers do not catch, so it is refused here, before any of them runs.
     """
-    if not path:
+    if not path or "\x00" in path:
         return None
     if config.EXPORT_DIR:
         root = os.path.realpath(config.EXPORT_DIR)
@@ -3032,6 +3037,26 @@ def export_file_owner(output_path: str) -> str | None:
     return _header_agent(header)
 
 
+def _export_json_column(text) -> tuple[object, str | None]:
+    """A stored JSON column as an export record carries it: (value, verbatim text).
+
+    A column holding JSON is written as the value it parses to, and the text is
+    None. One holding text that is not JSON -- a legacy attribution string, a hand
+    edit -- used to be written as {} with nothing to say so, and the restore stored
+    '{}' in its place, locked rows included, which the invalid-JSON repair leaves
+    alone on purpose. That text now travels verbatim beside the {} (as
+    ``source_text`` / ``metadata_text``), and the import stores it back as it was.
+    A reader that does not know the extra key still sees the {} it always saw.
+    """
+    if not text:
+        return {}, None
+    try:
+        return json.loads(text), None
+    except (ValueError, TypeError, RecursionError):
+        # Only text can be written into the file; anything else keeps the old {}.
+        return {}, text if isinstance(text, str) else None
+
+
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
     """Export memories, episodes, profiles and the declared graph to a JSONL file.
 
@@ -3143,15 +3168,17 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 )
                 while rows := await cur.fetchmany(500):
                     for row in rows:
+                        source, source_text = _export_json_column(row[4])
+                        metadata, metadata_text = _export_json_column(row[6])
                         record: dict = {
                             "_type": "memory",
                             "id": row[0],
                             "agent_id": row[1],
                             "msg_id": row[2],
                             "content": row[3],
-                            "source": _try_parse_json(row[4]) if row[4] else {},
+                            "source": source,
                             "timestamp": row[5],
-                            "metadata": _try_parse_json(row[6]) if row[6] else {},
+                            "metadata": metadata,
                             "created_at": row[8],
                             "project_id": row[9],
                             "channel": row[10],
@@ -3159,6 +3186,10 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                             "recall_count": int(row[12]) if row[12] else 0,
                             "last_recalled_at": row[13],
                         }
+                        if source_text is not None:
+                            record["source_text"] = source_text
+                        if metadata_text is not None:
+                            record["metadata_text"] = metadata_text
                         if include_embeddings and row[7]:
                             record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
                             # The label travels with the vector it describes, and only with it.
@@ -3331,6 +3362,16 @@ class _ImportTally:
     # not the seam that gets to say no.
     future_timestamps: int = 0
     errors: _ImportErrors = field(default_factory=_ImportErrors)
+    # Rows restored from records that carry no project_id key. An export written
+    # before the project and channel axes were exported looks like that, and its rows
+    # land in the global pool whatever project they lived in, so the import says how
+    # many. Its header carries the same version string a later export's does, so the
+    # records are the only witness.
+    axisless_memories: int = 0
+    axisless_episodes: int = 0
+    # The (agent_id, user_id) key of each profile this file has restored, and the
+    # line it came from. Several agents imported into one target share that key.
+    profile_lines: dict[tuple[str, str], int] = field(default_factory=dict)
     # bug-091: track the header and the per-type record counts actually present in
     # the file, so a truncated backup (mid-export crash, partial copy) is rejected
     # instead of silently restoring a partial corpus with ok:true.
@@ -3448,7 +3489,31 @@ def _validate_import_preconditions(
     return confined, None
 
 
-def _null_as_empty(record: dict, key: str):
+class _FieldRefused(ValueError):
+    """A record value the import cannot store; its line is refused, not the file."""
+
+
+def _bindable_text(key: str, value) -> str:
+    """``value`` if it is text SQLite can bind, else _FieldRefused naming ``key``.
+
+    A value bound as whatever JSON type the file held -- an object, a list, a
+    number where text belongs -- or a string holding a lone surrogate (which
+    JSON escapes can spell and UTF-8 cannot encode) raised at the INSERT. That
+    aborted and rolled back the whole restore over one line, and only on the real
+    run: the preview binds nothing and answered ok:true for the same file. Every
+    value is checked here, on both arms, before the dry_run split, so a bad line
+    is refused and reported the way an invalid JSON line is.
+    """
+    if not isinstance(value, str):
+        raise _FieldRefused(f"{key} is not a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise _FieldRefused(f"{key} is not valid UTF-8 text") from None
+    return value
+
+
+def _null_as_empty(record: dict, key: str) -> str:
     """A record field, with JSON null read as the empty value a missing key gets.
 
     bug-527: these fields land in NOT NULL columns. A null bound straight in was
@@ -3458,7 +3523,65 @@ def _null_as_empty(record: dict, key: str):
     dry_run split, as bug-094 does for keywords.
     """
     value = record.get(key)
-    return "" if value is None else value
+    return "" if value is None else _bindable_text(key, value)
+
+
+def _optional_text(record: dict, key: str) -> str | None:
+    """A nullable text field (a stamp the INSERT defaults or leaves NULL)."""
+    value = record.get(key)
+    return None if value is None else _bindable_text(key, value)
+
+
+def _recall_count(record: dict) -> int:
+    """The record's recall_count as an integer SQLite can bind.
+
+    The values the old ``int(...)`` accepted -- an integer, a numeric string, a
+    float -- still are. One it raised on, or one past SQLite's integer range,
+    is refused for its line instead of aborting the restore.
+    """
+    value = record.get("recall_count")
+    if not value:
+        return 0
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise _FieldRefused("recall_count is not a whole number") from None
+    if not fits_sqlite_integer(count):
+        raise _FieldRefused("recall_count is out of range")
+    return count
+
+
+def _record_agent(record: dict, kind: str, target_agent_id: str, tally: "_ImportTally", line_num: int) -> str | None:
+    """The agent a record is restored into, or None when its line is passed over."""
+    aid = target_agent_id or record.get("agent_id", "")
+    if not aid:
+        tally.errors.append(f"Line {line_num}: {kind} missing agent_id")
+        return None
+    try:
+        aid = _bindable_text("agent_id", aid)
+    except _FieldRefused as e:
+        tally.errors.append(f"Line {line_num}: {kind} {e}; it was not imported")
+        return None
+    if tally.refuses_agent(aid, kind, line_num):
+        return None
+    return aid
+
+
+async def _import_line(handler, db, record: dict, aid: str, tally: "_ImportTally", line_num: int, kind: str) -> None:
+    """Run one record handler; a value it cannot store refuses this line only.
+
+    The handlers read and check every value before they count or write anything,
+    so a refusal leaves nothing half-done for this line, and the preview refuses
+    exactly what the real run does.
+    """
+    try:
+        await handler(db, record, aid, tally, line_num)
+    except _FieldRefused as e:
+        if kind == "memory":
+            tally.skipped_memories += 1
+        elif kind == "episode":
+            tally.skipped_episodes += 1
+        tally.errors.append(f"Line {line_num}: {kind} {e}; it was not imported")
 
 
 async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
@@ -3482,19 +3605,9 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         tally.skipped_memories += 1
         return
 
-    content, truncated = sanitize_content_with_flag(content)
-    if not content:
-        tally.skipped_memories += 1
-        tally.errors.append(f"Line {line_num}: memory is empty after sanitisation; it was not imported")
-        return
-    if truncated:
-        # The number is the text that was actually kept, not a second read of the
-        # constant: len(content) after a truncation IS the cap.
-        tally.errors.append(
-            f"Line {line_num}: memory content exceeded the {len(content)}-character cap "
-            "and was truncated"
-        )
-
+    # Every value is read and checked before anything is counted or written: a
+    # _FieldRefused raised here refuses the line (see _import_line).
+    content = _bindable_text("content", content)
     msg_id = _null_as_empty(record, "msg_id")
     pid = _null_as_empty(record, "project_id")
     chan = _null_as_empty(record, "channel")
@@ -3502,9 +3615,22 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     # report below parses it on both, so a value that is not a string aborted the
     # preview and the restore alike. It is refused for this line instead.
     timestamp = _null_as_empty(record, "timestamp")
-    if not isinstance(timestamp, str):
+    # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;
+    # written back as bare tokens they are JSON SQLite rejects (see
+    # json_dumps_finite), so the restore writes null in their place. A column the
+    # export carried as text (see _export_json_column) is stored back verbatim.
+    source = json_dumps_finite(record.get("source", {}))
+    metadata = json_dumps_finite(record.get("metadata", {}))
+    source = _optional_text(record, "source_text") or source
+    metadata = _optional_text(record, "metadata_text") or metadata
+    recall_count = _recall_count(record)
+    last_recalled_at = _optional_text(record, "last_recalled_at")
+    created_at = _optional_text(record, "created_at")
+
+    content, truncated = sanitize_content_with_flag(content)
+    if not content:
         tally.skipped_memories += 1
-        tally.errors.append(f"Line {line_num}: memory timestamp is not a string; it was not imported")
+        tally.errors.append(f"Line {line_num}: memory is empty after sanitisation; it was not imported")
         return
 
     # bug-044: dedup on the full identity (agent_id, project_id,
@@ -3541,12 +3667,16 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         tally.map_record("mem", record, await _equal_memory_id(db, aid, pid, chan, content) if dup else None)
         return
 
+    if truncated:
+        # Reported only for a row that is stored: a skipped line kept nothing, so
+        # nothing of it was cut. The number is the cap the sanitiser cut at, read
+        # through the same accessor, so the message cannot disagree with the cut.
+        tally.errors.append(
+            f"Line {line_num}: memory content exceeded the {content_cap()}-character cap "
+            "and was truncated"
+        )
+
     if not tally.dry_run:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;
-        # written back as bare tokens they are JSON SQLite rejects (see
-        # json_dumps_finite), so the restore writes null in their place.
-        source = json_dumps_finite(record.get("source", {}))
-        metadata = json_dumps_finite(record.get("metadata", {}))
         # bug-016: carry the project_id / channel γ-axes, the locked
         # flag and the embedding through, and INSERT OR IGNORE so a
         # collision with the v12 dedup UNIQUE index is a counted skip
@@ -3572,9 +3702,9 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
                 blob,
                 _imported_label(record, blob),
                 1 if record.get("locked") else 0,
-                int(record.get("recall_count") or 0),
-                record.get("last_recalled_at"),
-                record.get("created_at"),
+                recall_count,
+                last_recalled_at,
+                created_at,
             ),
         )
         if cur.rowcount == 0:
@@ -3615,7 +3745,25 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     # `future_timestamp` health check, which can name and repair the rows.
     if future_timestamp_issue(timestamp):
         tally.future_timestamps += 1
+    if _lacks_isolation_axes(record):
+        tally.axisless_memories += 1
     tally.imported_memories += 1
+
+
+def _is_export_header(header: dict | None) -> bool:
+    """Whether an import file's header is one an export of this server wrote."""
+    version = header.get("version") if header else None
+    return isinstance(version, str) and version.startswith("cpersona-export/")
+
+
+def _lacks_isolation_axes(record: dict) -> bool:
+    """Whether a record predates the export of the project and channel axes.
+
+    The exporter has written project_id on every memory and episode since those
+    axes were first exported, '' for the global pool included, so a record without
+    the key came from an older export and is restored into the global pool.
+    """
+    return "project_id" not in record
 
 
 async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
@@ -3634,17 +3782,6 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     if not summary:
         return
 
-    summary, truncated = sanitize_content_with_flag(summary)
-    if not summary:
-        tally.skipped_episodes += 1
-        tally.errors.append(f"Line {line_num}: episode summary is empty after sanitisation; it was not imported")
-        return
-    if truncated:
-        tally.errors.append(
-            f"Line {line_num}: episode summary exceeded the {len(summary)}-character cap "
-            "and was truncated"
-        )
-
     # bug-094: coerce field types on BOTH paths — a JSON-array
     # keywords value (the natural hand-authored format) reached
     # db.execute as a Python list and aborted the whole import
@@ -3656,8 +3793,21 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     else:
         keywords = str(keywords or "")
 
+    # As for memories, every value is checked before anything is counted or written.
+    summary = _bindable_text("summary", summary)
+    keywords = _bindable_text("keywords", keywords)
     ep_pid = _null_as_empty(record, "project_id")
     ep_chan = _null_as_empty(record, "channel")
+    start_time = _optional_text(record, "start_time")
+    end_time = _optional_text(record, "end_time")
+    created_at = _optional_text(record, "created_at")
+
+    summary, truncated = sanitize_content_with_flag(summary)
+    if not summary:
+        tally.skipped_episodes += 1
+        tally.errors.append(f"Line {line_num}: episode summary is empty after sanitisation; it was not imported")
+        return
+
     # bug-220: dedup against what is already stored. The dry_run arm carries the
     # within-file set for the same reason the memory path does (bug-070): a
     # preview has no INSERT of its own to collide against, while a real run sees
@@ -3672,6 +3822,13 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
         tally.map_record("ep", record, existing[0][0] if existing else None)
         return
 
+    if truncated:
+        # As for memories: only a row that is stored can have been cut.
+        tally.errors.append(
+            f"Line {line_num}: episode summary exceeded the {content_cap()}-character cap "
+            "and was truncated"
+        )
+
     if not tally.dry_run:
         blob = _decode_embedding(record, tally, line_num, "episode")
         cur = await db.execute(
@@ -3685,12 +3842,12 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
                 ep_chan,
                 summary,
                 keywords,
-                record.get("start_time"),
-                record.get("end_time"),
+                start_time,
+                end_time,
                 1 if record.get("resolved") else 0,
                 blob,
                 _imported_label(record, blob),
-                record.get("created_at"),
+                created_at,
             ),
         )
         tally.queue_remote(aid, f"ep:{cur.lastrowid}", summary)
@@ -3698,6 +3855,8 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     else:
         tally.seen_episode.add((aid, ep_pid, ep_chan, summary))
         tally.map_record("ep", record, None)
+    if _lacks_isolation_axes(record):
+        tally.axisless_episodes += 1
     tally.imported_episodes += 1
 
 
@@ -3731,22 +3890,31 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
         tally.errors.append(f"Line {line_num}: profile has no content; the existing profile was kept")
         return
 
+    # As for memories, every value is checked before anything is counted or written.
+    content = _bindable_text("content", content)
+    user_id = _null_as_empty(record, "user_id")
+    project_id = _null_as_empty(record, "project_id")
+    stamp = _optional_text(record, "updated_at")
+
     content, truncated = sanitize_profile_with_flag(content)
     if not content:
         tally.errors.append(
             f"Line {line_num}: profile is empty after sanitisation; the existing profile was kept"
         )
         return
-    if truncated:
-        # The number comes from the text that was actually kept, not
-        # from a second read of the constant. A message that quotes its own cap
-        # can disagree with the cut; len(content) after a truncation IS the cap.
-        tally.errors.append(
-            f"Line {line_num}: profile exceeded the {len(content)}-character profile cap "
-            "and was truncated"
-        )
 
-    user_id = _null_as_empty(record, "user_id")
+    # Several agents' profiles imported into one target all land on the target's
+    # (agent_id, user_id) key, and the upsert below let each replace the one before:
+    # only the last in file order survived, reported as profile_updated. The first
+    # one this file restores to a key is kept and every later one is reported, the
+    # way merge_memories skips a profile its target already has.
+    first = tally.profile_lines.get((aid, user_id))
+    if first is not None:
+        tally.errors.append(
+            f"Line {line_num}: a profile for agent {aid!r} and user_id {user_id!r} was already "
+            f"restored from line {first}; this one was not imported"
+        )
+        return
     # bug-528: a restore does not move a profile backwards. The upsert below
     # replaces the stored row with the file's, so an older backup imported over a
     # live store -- a restore drill -- replaced newer text, moved updated_at back
@@ -3754,8 +3922,7 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
     # there; a profile has no content key to deduplicate on, so its stamp decides.
     # Asked on both arms so the preview says what the real run will do. A file
     # stamp that does not parse makes no claim to be older, and is applied.
-    stamp = record.get("updated_at")
-    file_time = _parse_timestamp_utc(stamp) if isinstance(stamp, str) else None
+    file_time = _parse_timestamp_utc(stamp) if stamp is not None else None
     if file_time is not None:
         stored = await db.execute_fetchall(
             "SELECT updated_at FROM profiles WHERE agent_id = ? AND user_id = ?",
@@ -3770,6 +3937,15 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             )
             return
 
+    if truncated:
+        # Reported only for a profile that is applied, against the cap the
+        # sanitiser cut at, read through the same accessor.
+        tally.errors.append(
+            f"Line {line_num}: profile exceeded the {profile_cap()}-character profile cap "
+            "and was truncated"
+        )
+
+    tally.profile_lines[(aid, user_id)] = line_num
     if not tally.dry_run:
         # bug-223: carry the record's own updated_at, as memories and episodes carry
         # created_at (bug-092). A restore that re-stamps every profile with import time
@@ -3783,7 +3959,7 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             "   updated_at = excluded.updated_at",
             (
                 aid,
-                _null_as_empty(record, "project_id"),
+                project_id,
                 user_id,
                 content,
                 stamp,
@@ -3922,8 +4098,13 @@ async def do_import_memories(
 
                 try:
                     record = json.loads(line)
-                except json.JSONDecodeError as e:
+                except (json.JSONDecodeError, RecursionError) as e:
                     tally.errors.append(f"Line {line_num}: invalid JSON: {e}")
+                    continue
+                # A line that parses to something other than an object is no
+                # record; reading a field from it raised and aborted the restore.
+                if not isinstance(record, dict):
+                    tally.errors.append(f"Line {line_num}: not a JSON object")
                     continue
 
                 rtype = record.get("_type", "")
@@ -3937,33 +4118,24 @@ async def do_import_memories(
                     # counter _validate_file_header compares against, so it must
                     # count records PRESENT in the file, not records accepted.
                     tally.file_memories += 1
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        tally.errors.append(f"Line {line_num}: memory missing agent_id")
+                    aid = _record_agent(record, "memory", target_agent_id, tally, line_num)
+                    if aid is None:
                         continue
-                    if tally.refuses_agent(aid, "memory", line_num):
-                        continue
-                    await _import_memory_record(db, record, aid, tally, line_num)
+                    await _import_line(_import_memory_record, db, record, aid, tally, line_num, "memory")
 
                 elif rtype == "episode":
                     tally.file_episodes += 1
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        tally.errors.append(f"Line {line_num}: episode missing agent_id")
+                    aid = _record_agent(record, "episode", target_agent_id, tally, line_num)
+                    if aid is None:
                         continue
-                    if tally.refuses_agent(aid, "episode", line_num):
-                        continue
-                    await _import_episode_record(db, record, aid, tally, line_num)
+                    await _import_line(_import_episode_record, db, record, aid, tally, line_num, "episode")
 
                 elif rtype == "profile":
                     tally.file_profiles += 1
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        tally.errors.append(f"Line {line_num}: profile missing agent_id")
+                    aid = _record_agent(record, "profile", target_agent_id, tally, line_num)
+                    if aid is None:
                         continue
-                    if tally.refuses_agent(aid, "profile", line_num):
-                        continue
-                    await _import_profile_record(db, record, aid, tally, line_num)
+                    await _import_line(_import_profile_record, db, record, aid, tally, line_num, "profile")
 
                 elif rtype in ("entity", "mention", "relation"):
                     _collect_graph_record(record, rtype, target_agent_id, tally, line_num)
@@ -3976,6 +4148,16 @@ async def do_import_memories(
             # rather than commit a partial restore (bug-091).
             _validate_file_header(tally)
             await _import_graph(db, tally)
+            # Said only of a file that presents itself as an export. A hand-written
+            # file without the key means the global pool; an export without it means
+            # the axis was never written, whatever project the rows lived in.
+            if (tally.axisless_memories or tally.axisless_episodes) and _is_export_header(tally.file_header):
+                tally.errors.append(
+                    f"{tally.axisless_memories} memory and {tally.axisless_episodes} episode records "
+                    "carry no project_id, as an export written before the project and channel axes "
+                    "were exported does not; they were restored into the global pool, which every "
+                    "project reads"
+                )
 
     except Exception as e:
         # bug-110: keep the per-line diagnostics (a torn last line lands in

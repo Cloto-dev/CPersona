@@ -160,9 +160,9 @@ MUTATIONS: list[Mutation] = [
         # `if not dry_run:` appears six times; anchor on the memory-record body
         # that follows it so the match is unambiguous.
         find="""    if not tally.dry_run:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
         replace="""    if True:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
         # This entry has been classified three times, and the history is the
         # useful part — it is a record of an invariant gaining a layer.
         #
@@ -212,9 +212,9 @@ MUTATIONS: list[Mutation] = [
         also=(
             (
                 """    if not tally.dry_run:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
                 """    if True:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
             ),
         ),
         breaks="dry_run both runs on the WRITE seam AND executes its INSERTs — the preview commits real rows",

@@ -102,20 +102,95 @@ def _sanitize_with_cap(content: str, cap: int) -> tuple[str, bool]:
     and update_memory's description promises the flag marks a real cap hit. The
     decision belongs where the cut happens, so the flag is returned with it.
     """
-    content = _MEMORY_ANNOTATION_PATTERN.sub("", content)
+    content = _strip_annotations(content)
     content = content.strip()
     truncated = len(content) > cap
     if truncated:
-        content = content[:cap]
+        # The cut can expose whitespace the strip above already removed from the
+        # end; trimming it here keeps a second pass from shortening the text again.
+        content = content[:cap].rstrip()
     return content, truncated
+
+
+_ANNOTATION_OPEN = "[Memory from "
+
+
+def _strip_annotations(content: str) -> str:
+    """``content`` with every ``[Memory from ...]`` annotation removed, to a fixed point.
+
+    One ``sub`` pass can assemble a new annotation out of the text on either side
+    of the one it removed ('[Memory fr[Memory from a] om b] x' becomes
+    '[Memory from b] x'). A store keeps that one-pass text, and every later pass
+    over it -- an import re-sanitising a backup, the annotation repair -- changes it
+    again, so a round trip altered the text and a re-import missed the dedup probe
+    and added a second row. The result here holds no annotation, so sanitising it
+    again leaves it as it is.
+
+    Ordinary content is a fixed point after one pass and gets exactly that pass's
+    text. Otherwise the text is reduced in one left-to-right scan rather than by
+    repeating the pass: each repeat removes as little as one nested layer, which
+    makes the repetition quadratic in a text built of many layers.
+    """
+    original = content
+    content = _MEMORY_ANNOTATION_PATTERN.sub("", content)
+    if not _MEMORY_ANNOTATION_PATTERN.search(content):
+        return content
+    # An annotation ends at the first ']' after its opening, so the text is scanned
+    # one ']'-terminated piece at a time into `kept`. `region` is where the kept
+    # text after its last ']' begins: an annotation can only start there. That text
+    # never holds a whole opening, so one can only start in its last `reach`
+    # characters and run on into the next piece.
+    reach = len(_ANNOTATION_OPEN) - 1
+    kept: list[str] = []
+    region = 0
+    after_removal = False
+    pieces = original.split("]")
+    for i, piece in enumerate(pieces):
+        if after_removal:
+            # The pattern's trailing \s* goes with the annotation it follows.
+            piece = piece.lstrip()
+            after_removal = False
+        if i == len(pieces) - 1:
+            kept.extend(piece)
+            break
+        base = max(region, len(kept) - reach)
+        carried = len(kept) - base
+        look = "".join(kept[base:]) + piece
+        start = look.find(_ANNOTATION_OPEN)
+        if start != -1 and start + len(_ANNOTATION_OPEN) < len(look):
+            # The earliest opening with a non-empty body closes at this ']':
+            # drop it and everything after it up to here.
+            if start < carried:
+                del kept[base + start:]
+            else:
+                kept.extend(piece[: start - carried])
+            after_removal = True
+        else:
+            kept.extend(piece)
+            kept.append("]")
+            region = len(kept)
+    return "".join(kept)
+
+
+def content_cap() -> int:
+    """The memory/episode cap ``sanitize_content_with_flag`` cuts at.
+
+    A message about a cut quotes this rather than the kept text's length: the cut
+    trims the whitespace it exposes, so the kept text can be shorter than the cap.
+    """
+    # The server refuses a non-positive cap at startup; this keeps a library
+    # caller from storing every text emptied or shortened under one.
+    return require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
+
+
+def profile_cap() -> int:
+    """The profile cap ``sanitize_profile_with_flag`` cuts at (see content_cap)."""
+    return require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
 
 
 def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
     """Sanitize a memory/episode write, and report whether the cap cut anything."""
-    # The server refuses a non-positive cap at startup; this keeps a library
-    # caller from storing every text emptied or shortened under one.
-    cap = require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
-    return _sanitize_with_cap(content, cap)
+    return _sanitize_with_cap(content, content_cap())
 
 
 def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
@@ -126,8 +201,7 @@ def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
     and is never preview-trimmed (bug-117), so its bound cannot be inherited from
     a constant that a later line intends to relax; see config.MAX_PROFILE_LENGTH.
     """
-    cap = require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
-    return _sanitize_with_cap(profile, cap)
+    return _sanitize_with_cap(profile, profile_cap())
 
 
 def _sanitize_content(content: str) -> str:
