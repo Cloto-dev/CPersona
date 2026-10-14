@@ -11,7 +11,7 @@ import math
 import struct
 
 import aiosqlite
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, redact_urls
 from cpersona.isolation import IsolationFilter, isolation_where, source_id_where
 
 from cpersona import config
@@ -541,7 +541,9 @@ async def _search_vector_remote(
                     )
         return results
     except Exception as e:
-        logger.warning("Remote vector search failed, falling back to local: %s", e)
+        # httpx quotes the request URL in its exception text, and the base URL here
+        # is cut from the configured embedding URL, userinfo and all.
+        logger.warning("Remote vector search failed, falling back to local: %s", redact_urls(str(e)))
         return None
 
 

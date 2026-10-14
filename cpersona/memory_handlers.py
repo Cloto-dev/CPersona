@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 import httpx
+from cpersona._vendored_mcp_common.embedding_client import redact_urls
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
@@ -388,13 +389,15 @@ async def do_store(
             # not in the index, and a corpus that answers recalls with silence is
             # the one symptom that does not look like a fault. Still non-fatal,
             # still ok:true -- what changes is that the shortfall is said once, at
-            # a level that is on, naming the row and the namespace.
+            # a level that is on, naming the row and the namespace. The exception
+            # text quotes the request URL, which carries any userinfo or query the
+            # embedding URL was configured with, so it is redacted first.
             logger.warning(
                 "Remote index push failed for mem:%s in namespace cpersona:%s "
                 "(non-fatal; the row is stored but will not be found by remote search): %s",
                 mem_id,
                 agent_id,
-                e,
+                redact_urls(str(e)),
             )
 
     result = {

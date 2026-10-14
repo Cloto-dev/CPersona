@@ -25,6 +25,47 @@ from cpersona.utils import error_response
 
 logger = logging.getLogger(__name__)
 
+# Rows per remote /remove or /index request, the width the other bulk remote posts use.
+_REMOTE_SYNC_CHUNK = 128
+
+
+async def _sync_remote_index(effects: list) -> None:
+    """Post a committed repair run's deletes and rewrites to the remote index (bug-539).
+
+    ``effects`` is what the repairs recorded in ``checks.remote_index_effects``, in
+    the order they wrote it; the last entry for a row is its state after the commit.
+    Posted through the same helper the delete and update handlers use, so a refusal
+    or a connection failure is non-fatal and said once at WARNING, as there.
+    """
+    from cpersona.admin_handlers import _post_remote_side_effect
+
+    final: dict[tuple[str, int], str | None] = {}
+    for owner, row_id, text in effects:
+        final[(owner, row_id)] = text
+    by_namespace: dict[str, tuple[list, list]] = {}
+    for (owner, row_id), text in final.items():
+        removed, indexed = by_namespace.setdefault(f"cpersona:{owner}", ([], []))
+        if text is None:
+            removed.append(f"mem:{row_id}")
+        else:
+            indexed.append({"id": f"mem:{row_id}", "text": text})
+    base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+    for namespace, (removed, indexed) in by_namespace.items():
+        for start in range(0, len(removed), _REMOTE_SYNC_CHUNK):
+            await _post_remote_side_effect(
+                f"{base_url}/remove",
+                {"namespace": namespace, "ids": removed[start : start + _REMOTE_SYNC_CHUNK]},
+                action="removal",
+                namespace=namespace,
+            )
+        for start in range(0, len(indexed), _REMOTE_SYNC_CHUNK):
+            await _post_remote_side_effect(
+                f"{base_url}/index",
+                {"namespace": namespace, "items": indexed[start : start + _REMOTE_SYNC_CHUNK]},
+                action="update",
+                namespace=namespace,
+            )
+
 
 async def do_check_health(
     agent_id: str = "", fix: bool = False, checks: list | None = None, session_key: str = ""
@@ -146,10 +187,20 @@ async def do_check_health(
     # empty `checks` list means "everything" to run_health_checks, so this must
     # not reach it as one.
     if locked_checks:
-        async with (transaction() if fix else connection()) as db:
-            issues, severity_summary = await checks_registry.run_health_checks(
-                db, agent_id=agent_id, fix=fix, checks=locked_checks, embedding_cache=embedding_cache
-            )
+        # bug-539: the repairs record the rows they delete or rewrite, and the remote
+        # index is told after the commit -- never under the write lock, and never for
+        # a run that rolled back.
+        remote_effects = [] if fix and checks_registry._remote_vector_arm_armed() else None
+        token = checks_registry.remote_index_effects.set(remote_effects)
+        try:
+            async with (transaction() if fix else connection()) as db:
+                issues, severity_summary = await checks_registry.run_health_checks(
+                    db, agent_id=agent_id, fix=fix, checks=locked_checks, embedding_cache=embedding_cache
+                )
+        finally:
+            checks_registry.remote_index_effects.reset(token)
+        if remote_effects:
+            await _sync_remote_index(remote_effects)
     if scan_issues:
         # Registry order, as if one run had produced them. The scan findings are
         # NOT added to severity_summary here: the split only happens under
@@ -354,8 +405,17 @@ async def do_deep_check(
         async with connection() as db:
             await _run(db, reporting)
     if writing:
-        async with transaction() as db:
-            await _run(db, writing)
+        # bug-539: as in do_check_health, deleted rows leave the remote index after
+        # the commit.
+        remote_effects = [] if checks_registry._remote_vector_arm_armed() else None
+        token = checks_registry.remote_index_effects.set(remote_effects)
+        try:
+            async with transaction() as db:
+                await _run(db, writing)
+        finally:
+            checks_registry.remote_index_effects.reset(token)
+        if remote_effects:
+            await _sync_remote_index(remote_effects)
 
     out = {
         "agent_id": agent_id,

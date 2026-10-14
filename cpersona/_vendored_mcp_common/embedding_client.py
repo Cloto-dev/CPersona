@@ -14,6 +14,7 @@ the relevant server's startup code.
 import hashlib
 import logging
 import math
+import re
 import struct
 import time
 from collections import OrderedDict
@@ -95,6 +96,71 @@ def _safe_endpoint(url: str) -> str:
     if parts.port:
         host = f"{host}:{parts.port}"
     return urlunsplit((parts.scheme, host, parts.path, "", "")) or "<unset>"
+
+
+# A URL as it appears inside free text: a scheme, then everything up to whitespace or
+# a quote. httpx quotes the URL in its messages and percent-encodes spaces and quotes
+# inside it, so the match ends where the URL does.
+_URL_IN_TEXT = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"<>]+")
+
+
+def _redact_one_url(match: re.Match) -> str:
+    url = match.group(0)
+    try:
+        parts = urlsplit(url)
+        if parts.username is None and parts.password is None and not parts.query and not parts.fragment:
+            return url
+        return _safe_endpoint(url)
+    except ValueError:
+        return "<unparsable>"
+
+
+def redact_urls(text: str, *configured: str) -> str:
+    """Strip userinfo and query from every URL inside ``text``.
+
+    Replacing only the configured spelling of an endpoint is not enough: httpx
+    quotes its own normalised form of the request URL in its messages -- host
+    lower-cased, a default port dropped, userinfo and query percent-encoded -- so
+    a credential configured in any other spelling passed straight through. Every
+    URL in the text is cleaned structurally instead. The configured strings, when
+    given, are replaced first, so a spelling the pattern cannot delimit (a raw
+    space or quote) is still caught where it appears verbatim.
+    """
+    for url in configured:
+        if url:
+            text = text.replace(url, _safe_endpoint(url))
+    return _URL_IN_TEXT.sub(_redact_one_url, text)
+
+
+class _RedactURLFilter(logging.Filter):
+    """Pass every record, with the URLs in its message stripped of credentials."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - a malformed record is the handler's to report
+            return True
+        cleaned = redact_urls(message)
+        if cleaned != message:
+            record.msg = cleaned
+            record.args = None
+        return True
+
+
+def install_httpx_log_redaction() -> None:
+    """Keep endpoint credentials out of httpx's own request log line.
+
+    httpx logs every request at INFO as ``HTTP Request: POST <url> ...`` with the
+    URL exactly as sent, userinfo and query included, on success as well as on
+    failure. A host that logs at INFO (as a server's basicConfig usually does)
+    therefore wrote a credential configured in the endpoint URL into every line,
+    through a logger none of this client's sanitising reaches. The filter sits on
+    the ``httpx`` logger itself, which is the logger those records are emitted on,
+    so it applies whatever handlers the host installs. Idempotent.
+    """
+    httpx_logger = logging.getLogger("httpx")
+    if not any(isinstance(f, _RedactURLFilter) for f in httpx_logger.filters):
+        httpx_logger.addFilter(_RedactURLFilter())
 
 
 @dataclass(frozen=True)
@@ -306,6 +372,7 @@ class EmbeddingClient:
 
     async def initialize(self):
         """Create persistent HTTP client."""
+        install_httpx_log_redaction()
         self._client = httpx.AsyncClient(timeout=self._timeout)
         logger.info(
             "EmbeddingClient initialized (mode=%s, cache=%d, ttl=%ds, timeout=%ds)",
@@ -406,10 +473,9 @@ class EmbeddingClient:
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
             safe = _safe_endpoint(url)
             # Either configured form of the URL can appear in the exception text, and
-            # both carry the same userinfo and query string.
-            detail = (
-                str(e).replace(url, safe).replace(self._http_url, _safe_endpoint(self._http_url))
-            )
+            # both carry the same userinfo and query string -- and so does httpx's own
+            # normalised spelling of it, which redact_urls cleans as well.
+            detail = redact_urls(str(e), url, self._http_url)
             hint = ""
             if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
                 hint = " (the server predates the capability report)"
@@ -472,11 +538,10 @@ class EmbeddingClient:
         except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
             safe = _safe_endpoint(url)
             # Either configured form of the URL can appear in the exception text, and
-            # both carry the same userinfo and query string. The log gets the cleaned
-            # line too: httpx puts the request URL in its own message.
-            detail = (
-                str(e).replace(url, safe).replace(self._http_url, _safe_endpoint(self._http_url))
-            )
+            # both carry the same userinfo and query string -- and so does httpx's own
+            # normalised spelling of it, which redact_urls cleans as well. The log gets
+            # the cleaned line too: httpx puts the request URL in its own message.
+            detail = redact_urls(str(e), url, self._http_url)
             hint = ""
             if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
                 hint = " (the server predates the token report)"
@@ -716,15 +781,13 @@ class EmbeddingClient:
 
         The exception text is included because it is what distinguishes a refused
         connection from a timeout from a 500, which is the whole value of the
-        evidence. Any occurrence of the raw endpoint inside it is replaced by the
-        stripped form first, so a credential embedded in a configured URL does not
-        re-enter through the message.
+        evidence. Every URL inside it is stripped of userinfo and query first
+        (:func:`redact_urls`), whatever spelling httpx rendered it in, so a credential
+        embedded in a configured URL does not re-enter through the message.
         """
         raw = self._endpoint()
         safe = _safe_endpoint(raw)
-        detail = str(exc)
-        if raw:
-            detail = detail.replace(raw, safe)
+        detail = redact_urls(str(exc), raw)
         return f"mode={self.mode} / POST {safe} failed: {type(exc).__name__}: {detail}"
 
     async def _embed_via_http(self, texts: list[str]) -> list[list[float]] | None:

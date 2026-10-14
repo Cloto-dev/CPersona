@@ -76,6 +76,7 @@ the counting stays in the runner and only the verdict moves:
 """
 
 import contextlib
+import contextvars
 import datetime
 import json
 import logging
@@ -145,6 +146,32 @@ _STALE_PROFILE_DAYS = 30
 # ---------------------------------------------------------------------------
 
 
+# bug-539: in remote vector mode every memory row is also a vector in the remote
+# index (namespace cpersona:<owner>, id mem:<id>). The user-facing delete and update
+# handlers post /remove and /index for what they change; the repairs below delete
+# and rewrite rows too, and posted nothing, so a deleted row kept a ghost vector
+# that takes a top-K slot and rehydrates to nothing, and a rewritten row kept being
+# scored on text it no longer holds (the local NULL-and-re-embed of bug-028 never
+# reaches the remote arm). The repairs run inside the write transaction, where no
+# network call belongs, so they only record what they wrote here; the handler
+# posts it after the commit. None (the default) means nobody is collecting: a
+# report-only run, a local-mode run, or a direct runner call in a test.
+#
+# Each entry is (owner agent_id, row id, new text) with None as the text for a
+# delete, appended only after the statement ran, so the list is exactly what the
+# run wrote. Order matters: a row rewritten by one check and deleted by a later
+# one ends deleted.
+remote_index_effects: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "remote_index_effects", default=None
+)
+
+
+def _note_remote(owner: str, row_id: int, text: str | None) -> None:
+    effects = remote_index_effects.get()
+    if effects is not None:
+        effects.append((owner, row_id, text))
+
+
 # bug-028: the content-rewriting fixers below (annotation/mention/oversized)
 # must NULL the embedding alongside the content edit. The BLOB still encodes the
 # OLD text, and no other fixer repairs a content/embedding mismatch
@@ -157,11 +184,16 @@ _STALE_PROFILE_DAYS = 30
 # duplicate, so keep the existing row and never touch locked rows.
 async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> None:
     """Rewrite content for re-embedding, or delete an unlocked dedup collision."""
+    owner = None
+    if remote_index_effects.get() is not None:
+        found = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (row_id,))
+        owner = found[0][0] if found else None
     try:
-        await db.execute(
+        cursor = await db.execute(
             "UPDATE memories SET content = ?, embedding = NULL, embedding_model = '' WHERE id = ? AND locked = 0",
             (new_content, row_id),
         )
+        written = new_content
     except sqlite3.IntegrityError:
         # The rewritten text already exists in this agent, project and channel (the
         # dedup index), and that row is kept. The declarations about this row move to
@@ -174,7 +206,10 @@ async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> 
         )
         if survivor:
             await associations.repoint(db, survivor[0][1], {f"mem:{row_id}": f"mem:{survivor[0][0]}"})
-        await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
+        cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
+        written = None
+    if owner is not None and cursor.rowcount:
+        _note_remote(owner, row_id, written)
 
 
 # The three content-rewriting checks below share one shape: match a pattern,
@@ -292,7 +327,14 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
             iso.params,
         ):
             await associations.repoint(db, agent, {f"mem:{row_id}": f"mem:{keep}"})
+        # The same predicate, read under the same transaction just before the
+        # DELETE, is the set the DELETE removes (bug-539).
+        doomed = []
+        if remote_index_effects.get() is not None:
+            doomed = await db.execute_fetchall(f"SELECT agent_id, id {surplus}", iso.params)
         await db.execute(f"DELETE {surplus}", iso.params)
+        for owner, row_id in doomed:
+            _note_remote(owner, row_id, None)
     return [
         {
             "type": "duplicate_content",
@@ -2338,10 +2380,18 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
         )
     )[0][0]
     if fix:
+        doomed = []
+        if remote_index_effects.get() is not None:
+            doomed = await db.execute_fetchall(
+                f"SELECT agent_id, id FROM memories WHERE {_EMPTY_CONTENT_WHERE} AND locked = 0{iso.and_clause}",
+                iso.params,
+            )
         await db.execute(
             f"DELETE FROM memories WHERE {_EMPTY_CONTENT_WHERE} AND locked = 0{iso.and_clause}",
             iso.params,
         )
+        for owner, row_id in doomed:
+            _note_remote(owner, row_id, None)
     return [{"type": "empty_content", "count": empty, "repairable": repairable}]
 
 
@@ -3678,6 +3728,8 @@ async def run_health_checks(
         savepoint = f"health_check_{check.name}" if fix else None
         if savepoint:
             await db.execute(f'SAVEPOINT "{savepoint}"')
+        effects = remote_index_effects.get()
+        effects_mark = len(effects) if effects is not None else 0
         try:
             if embedding_cache is not None and check.name in _EMBEDDING_CHECKS:
                 found = await check.runner(db, agent_id, fix, embedding_cache=embedding_cache)
@@ -3690,6 +3742,10 @@ async def run_health_checks(
                 # row this rolls back to.
                 with contextlib.suppress(Exception):
                     await db.execute(f'ROLLBACK TO "{savepoint}"')
+                # The rows this check noted for the remote index are back as they
+                # were, so its notes go too (bug-539).
+                if effects is not None:
+                    del effects[effects_mark:]
             logger.warning("health check %s crashed: %s", check.name, e)
             found = [{"type": "check_crashed", "check_name": check.name, "detail": str(e), "severity": "warn"}]
         finally:
@@ -3861,6 +3917,11 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
         for start in range(0, len(ids), _SHORT_CONTENT_DELETE_CHUNK):
             chunk = ids[start : start + _SHORT_CONTENT_DELETE_CHUNK]
             placeholders = ",".join("?" * len(chunk))
+            doomed = []
+            if remote_index_effects.get() is not None:
+                doomed = await db.execute_fetchall(
+                    f"SELECT id FROM memories WHERE id IN ({placeholders}) AND locked = 0", chunk
+                )
             # Never delete locked rows (bug-015 / the bug-007 invariant): a memory the
             # user explicitly locked must survive maintenance even when it is short.
             # rowcount (not len(chunk)) so the reported count excludes the survivors.
@@ -3868,6 +3929,9 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
                 f"DELETE FROM memories WHERE id IN ({placeholders}) AND locked = 0", chunk
             )
             fixed_count += cur.rowcount
+            # The rows were selected by agent_id, so that is their namespace (bug-539).
+            for (row_id,) in doomed:
+                _note_remote(agent_id, row_id, None)
     result = {"count": len(rows)}
     if fix:
         result["fixed"] = fixed_count
