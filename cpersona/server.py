@@ -2208,6 +2208,8 @@ registry.auto_tool(
     "it is capped at the content length limit (the response carries truncated:true "
     "when the cap bit) and [Memory from ...] annotations are stripped, so content "
     "consisting only of those is refused rather than written as an empty row. A new "
+    "text that another memory in the same agent, project and channel already holds is "
+    "refused with ok:false naming that memory, since one copy is kept per bucket. A new "
     "text that runs past the embedding window gets nodes:{status:'queued'}, as on store.",
     {
         "type": "object",

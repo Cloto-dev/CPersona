@@ -15,6 +15,7 @@ import json
 import logging
 import math
 import os
+import sqlite3
 import stat
 import tempfile
 from dataclasses import dataclass, field
@@ -45,6 +46,7 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
+    REMOTE_INDEX_TIMEOUT_SECS,
     STORE_BLOB,
     local_blobs_stored,
     TASK_MAX_RETRIES,
@@ -365,7 +367,7 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
     return result
 
 
-async def _post_remote_side_effect(path: str, payload: dict, *, action: str, namespace: str) -> None:
+async def _post_remote_side_effect(path: str, payload: dict, *, action: str, namespace: str) -> bool:
     """Post one index side effect, and say so when it does not land.
 
     bug-323: these four posts (delete, update, purge, episode delete) kept the
@@ -381,9 +383,29 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
     leaves is the one that does not look like a fault: an orphaned remote vector
     keeps taking a top-K slot until the by-id rehydrate finds nothing, and a
     stale index entry keeps serving pre-edit text against a post-edit row.
+
+    The post states the index deadline every other call to this service states.
+    Without it each one inherited the embedding client's own request timeout
+    (30 s by default), so a service that accepts connections and stops answering
+    held every delete and edit three times longer than it holds a store.
+
+    Returns True when the post timed out, so a caller posting in chunks can stop
+    instead of spending the same deadline again on every remaining chunk.
     """
     try:
-        response = await vector._embedding_client._client.post(path, json=payload)
+        response = await vector._embedding_client._client.post(
+            path, json=payload, timeout=REMOTE_INDEX_TIMEOUT_SECS
+        )
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Remote index %s timed out after %ss for %s (non-fatal, local change already "
+            "committed; the index is now out of step with the database): %s",
+            action,
+            REMOTE_INDEX_TIMEOUT_SECS,
+            namespace,
+            e,
+        )
+        return True
     except Exception as e:  # noqa: BLE001 - non-fatal by contract, reported by design
         logger.warning(
             "Remote index %s failed for %s (non-fatal, local change already committed; "
@@ -392,7 +414,7 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
             namespace,
             e,
         )
-        return
+        return False
     # A non-2xx answer is a refusal the service chose to give; it raises nothing,
     # so without this it was indistinguishable from success. Read defensively: the
     # local change is already committed, and a client that hands back something
@@ -406,6 +428,7 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
             namespace,
             status,
         )
+    return False
 
 
 def _by_id_refusal(memory_id: int, agent_id: str, unscoped: str) -> dict:
@@ -491,6 +514,34 @@ async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str 
     return {"ok": True, "deleted_id": memory_id}
 
 
+async def _same_bucket_holder(db, memory_id: int, content: str) -> int | None:
+    """The id of another row in this row's (agent, project, channel) holding ``content``.
+
+    That bucket is exactly what the content unique index covers, so this is the
+    row an UPDATE of ``memory_id`` to ``content`` would collide with.
+    """
+    bucket = await db.execute_fetchall(
+        "SELECT agent_id, project_id, channel FROM memories WHERE id = ?", (memory_id,)
+    )
+    if not bucket:
+        return None
+    found = await db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ?"
+        " AND content = ? AND id != ? LIMIT 1",
+        (*bucket[0], content, memory_id),
+    )
+    return found[0][0] if found else None
+
+
+def _held_elsewhere_refusal(memory_id: int, holder_id: int) -> dict:
+    # Named, because the holder is in the caller's own agent bucket and is the
+    # row to edit or delete instead; the raw constraint error named only columns.
+    return error_response(
+        f"Memory {memory_id} was not edited: memory {holder_id} in the same agent, "
+        "project and channel already holds this content, and one copy is kept per bucket"
+    )
+
+
 async def do_update_memory(
     memory_id: int, content: str, agent_id: str = "", session_key: str = ""
 ) -> dict:
@@ -534,6 +585,15 @@ async def do_update_memory(
         # rather than writing an empty row (do_store's "empty after sanitization").
         return error_response("Content cannot be empty after sanitization")
 
+    # The content unique index keeps one copy of a text per bucket, so an edit into
+    # text another row there holds cannot land. Asked before the embedding round
+    # trip, which would otherwise be spent on a write that is then refused; the
+    # UPDATE below still catches a copy that lands after this read.
+    async with connection() as db:
+        holder_id = await _same_bucket_holder(db, memory_id, content)
+    if holder_id is not None:
+        return _held_elsewhere_refusal(memory_id, holder_id)
+
     # bug-011: recompute the embedding for the new text with the same policy as
     # do_store. On failure (or no client) the BLOB is NULLed rather than left
     # stale, so recall stops matching the old wording and check_health's
@@ -559,13 +619,38 @@ async def do_update_memory(
     # must not be overwritten, and a raced no-op must not report success or push
     # the new text to the remote index.
     # bug-042/043: transaction() serialises the UPDATE+commit behind the shared lock.
+    holder_id = None
+    still_there = None
     async with transaction() as db:
-        cursor = await db.execute(
-            "UPDATE memories SET content = ?, embedding = ?, embedding_model = ? WHERE id = ? AND locked = 0",
-            (content, embedding_blob, embedding_label, memory_id),
-        )
+        try:
+            cursor = await db.execute(
+                "UPDATE memories SET content = ?, embedding = ?, embedding_model = ? WHERE id = ? AND locked = 0",
+                (content, embedding_blob, embedding_label, memory_id),
+            )
+        except sqlite3.IntegrityError:
+            # A copy of this text landed in the bucket during the embedding await
+            # (a concurrent store or edit). Answered as the refusal above, not as
+            # a raw constraint error that carries no ok:false.
+            holder_id = await _same_bucket_holder(db, memory_id, content)
+            if holder_id is None:
+                raise
+        else:
+            if cursor.rowcount == 0:
+                # Read under the same write lock as the UPDATE: a lock_memory that
+                # landed after the pre-check is not the only way to match nothing --
+                # a delete or a merge-move may have removed the row, and calling
+                # that "locked" sends the caller to unlock_memory for a row that is gone.
+                still_there = await db.execute_fetchall(
+                    "SELECT locked FROM memories WHERE id = ?", (memory_id,)
+                )
+    if holder_id is not None:
+        return _held_elsewhere_refusal(memory_id, holder_id)
     if cursor.rowcount == 0:
-        return error_response(f"Memory {memory_id} is locked and cannot be edited")
+        if still_there and still_there[0][0]:
+            return _by_id_refusal(
+                memory_id, agent_id, f"Memory {memory_id} is locked and cannot be edited"
+            )
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
 
     # Keep the remote vector entry in step with the new text (same
     # namespace/id scheme as do_store; non-fatal).
@@ -762,12 +847,24 @@ async def _remove_moved_source_vectors(source_agent_id: str, tally: "_MergeTally
     namespace = f"cpersona:{source_agent_id}"
     base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
     for start in range(0, len(refs), 128):
-        await _post_remote_side_effect(
+        timed_out = await _post_remote_side_effect(
             f"{base_url}/remove",
             {"namespace": namespace, "ids": refs[start : start + 128]},
             action="removal",
             namespace=namespace,
         )
+        if timed_out:
+            # A service that let one chunk run out its deadline is not asked for the
+            # next: the wait would multiply by the chunk count (a hundred chunks is a
+            # hundred deadlines) for removals that most likely fail the same way. A
+            # refusal or a refused connection answers at once, so those keep going.
+            logger.warning(
+                "Skipped the remaining remote removals for %s after a timeout; %d more "
+                "moved row(s) stay indexed under the source namespace",
+                namespace,
+                max(0, len(refs) - start - 128),
+            )
+            break
 
 
 def _purge_local_vector_index(counts: dict) -> list:
