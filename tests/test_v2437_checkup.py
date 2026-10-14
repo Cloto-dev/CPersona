@@ -301,8 +301,8 @@ async def test_null_embedding_severity_ladder():
 @pytest.mark.asyncio
 async def test_check_health_subset_runs_only_selected():
     db = await get_db()
-    # A condition duplicate_content would flag (cross-channel exact dupes)...
-    await _insert(db, content="dup", channel="c1")
+    # A condition duplicate_content would flag (a channel copy of a shared row)...
+    await _insert(db, content="dup", channel="")
     await _insert(db, content="dup", channel="c2")
 
     result = await maintenance_handlers.do_check_health(checks=["axis_hygiene"])

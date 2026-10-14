@@ -112,7 +112,11 @@ async def test_a_raising_index_still_returns_the_scans_answer(corpus, monkeypatc
 
 @pytest.mark.asyncio
 async def test_a_numeric_source_id_matches_instead_of_raising(corpus):
-    """The scan's LIKE coerces the number to text; the index must match it."""
+    """The scan compares the number as text; the index must match it.
+
+    The query names the whole id: a value ending in a digit is one id, not a
+    prefix, so "12" no longer reaches the row whose id is 123 on either side.
+    """
     await _store(
         corpus, "row with a numeric source id",
         created_at="2026-03-01 00:00:20",
@@ -122,14 +126,14 @@ async def test_a_numeric_source_id_matches_instead_of_raising(corpus):
     await corpus.commit()
     assert (await vector_index.build_index(corpus, "memories"))["built"]
 
-    with_index = await _search(corpus, source_id="12")
-    without_index = await _answer_without_the_index(corpus, source_id="12")
+    with_index = await _search(corpus, source_id="123")
+    without_index = await _answer_without_the_index(corpus, source_id="123")
 
     assert with_index == without_index, (
         "the index disagreed with the scan on a numeric source id"
     )
     assert with_index, (
-        "the scan's LIKE matches a numeric id coerced to text, so this query is "
+        "the scan matches a numeric id coerced to text, so this query is "
         "expected to return the row — an empty result on both sides would make "
         "the agreement above vacuous"
     )
@@ -176,9 +180,14 @@ def test_select_tolerates_a_numeric_value_already_in_a_built_file():
     """
     index = _index_with_sources((123, 456))
     positions = vector_index.select(
-        index, agent_id=AGENT, project_id=None, channel="", source_id="12", limit=10
+        index, agent_id=AGENT, project_id=None, channel="", source_id="123", limit=10
     )
     assert [int(p) for p in positions] == [0], (
-        "select() must compare a numeric source id the way the scan's LIKE does, "
+        "select() must compare a numeric source id the way the scan does, "
         "not raise on it"
     )
+    # And as one id, not as a prefix: "12" names a different principal.
+    positions = vector_index.select(
+        index, agent_id=AGENT, project_id=None, channel="", source_id="12", limit=10
+    )
+    assert [int(p) for p in positions] == []

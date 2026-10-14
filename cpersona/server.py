@@ -294,14 +294,29 @@ async def do_store_boundary(
     # object argument over as {}, so `is not None` ran an empty declaration on
     # every store and added an `associations` key to every response. An empty
     # object declares nothing and is treated as absent.
+    #
+    # Both riders run after the memory has committed, each in a transaction of its
+    # own. An exception from either one used to replace the whole response, so the
+    # caller was told the store failed for a row that exists (and, when the
+    # associations rider raised, the lock rider never ran). A rider failure is
+    # therefore reported in the rider's own field, next to `result` and `id`.
     if associations and isinstance(result.get("id"), int) and result["id"] > 0:
-        result["associations"] = await associations_module.declare(
-            agent_id,
-            associations,
-            project_id=resolved,
-            channel=channel,
-            anchor_ref=f"mem:{result['id']}",
-        )
+        try:
+            result["associations"] = await associations_module.declare(
+                agent_id,
+                associations,
+                project_id=resolved,
+                channel=channel,
+                anchor_ref=f"mem:{result['id']}",
+            )
+        except Exception as exc:
+            logger.warning("store: associations rider failed for mem:%s: %r", result["id"], exc)
+            result["associations"] = {
+                "entities": [],
+                "mentions": 0,
+                "relations": [],
+                "dropped": [{"item": "associations", "reason": f"declaration failed: {exc}"}],
+            }
     # The lock rider: the same row the associations rider anchors to, for the same
     # reason. A store answered by an existing row is still a request that this
     # memory end up locked. A paused, refused or id-less (unique-index race) store
@@ -310,7 +325,11 @@ async def do_store_boundary(
         row_id = result.get("id")
         locked = False
         if isinstance(row_id, int) and row_id > 0:
-            outcome = await do_lock_memory(row_id, agent_id=agent_id, session_key=session_key)
+            try:
+                outcome = await do_lock_memory(row_id, agent_id=agent_id, session_key=session_key)
+            except Exception as exc:
+                logger.warning("store: lock rider failed for mem:%s: %r", row_id, exc)
+                outcome = {}
             # A paused lock answers ok:true with its id nulled, so the id is the test.
             locked = outcome.get("ok") is True and outcome.get("locked_id") == row_id
         result["locked"] = locked
@@ -1006,8 +1025,9 @@ registry.auto_tool(
     "'stored' (a new row: id, and embedded, whether a vector was kept; truncated:true when "
     "content was shortened to the length cap; nodes:{status:'queued'} when the text runs "
     "past the embedding window and its overflow-tree nodes were queued), "
-    "'skipped' (nothing written and nothing wrong: a duplicate id or content echoes the "
-    "existing row's id, except reason='duplicate (unique index)', a concurrent-write race, "
+    "'skipped' (nothing written and nothing wrong: a duplicate id, or content already stored "
+    "under the same source id, echoes the existing row's id, except reason='duplicate "
+    "(unique index)', a concurrent-write race, "
     "which has none), or "
     "'rejected' (ok:false, nothing written; reason is human-readable, not a stable token). "
     # bug-141: the no-persist branch has its own shape — document it so
@@ -1345,9 +1365,11 @@ registry.auto_tool(
                 "type": "string",
                 "description": (
                     "v2.4.20 per-user source filter. Empty (default) = no filter. "
-                    "Non-empty = prefix match against json_extract(source, '$.id'), "
-                    "e.g. 'discord:12345' to restrict to one Discord user, or "
-                    "'discord:' to scope to all Discord-sourced memories. "
+                    "Non-empty = match against json_extract(source, '$.id'): a value "
+                    "ending in a letter or digit matches that one id exactly, e.g. "
+                    "'discord:12345' to restrict to one Discord user; a value ending in "
+                    "any other character is a prefix, e.g. 'discord:' to scope to all "
+                    "Discord-sourced memories. "
                     # C26 (e): the exception is real behaviour, not an edge case —
                     # the session-start grounding path relies on it.
                     "Episodes carry no per-user source tagging, so they are skipped "
@@ -1737,7 +1759,13 @@ registry.auto_tool(
             "max_evidence": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Maximum retained rows per item, bounding its claims and role targets. A cut is named in bounds.omitted and counted in the item's claims_omitted.",
+                "maximum": associations_module.TRAVERSE_MAX_LIMIT,
+                "description": (
+                    "Maximum retained rows per item, bounding its claims and role targets. A cut "
+                    "is named in bounds.omitted and counted in the item's claims_omitted. At most "
+                    f"{associations_module.TRAVERSE_MAX_LIMIT}, as traverse's limit: a larger value "
+                    "is lowered to it, and bounds.max_evidence then states the value applied."
+                ),
             },
             "deep": {
                 "type": "boolean",
@@ -2239,7 +2267,8 @@ registry.auto_tool(
 
 registry.auto_tool(
     "export_memories",
-    "Export memories, episodes, and profiles to a JSONL file for backup or portability.",
+    "Export memories, episodes, profiles and declared associations (entities, aliases, mentions, relations) "
+    "to a JSONL file for backup or portability.",
     {
         "type": "object",
         "properties": {
@@ -2274,7 +2303,8 @@ registry.auto_tool(
     # bug-220: the claim now matches the code. Episodes were re-inserted on every run
     # while this said "idempotent" and the annotation below said idempotentHint=True,
     # which is what a host acts on when it retries a lost response.
-    "Import memories, episodes, and profiles from a JSONL file. Idempotent: memories deduplicate on "
+    "Import memories, episodes, profiles and declared associations from a JSONL file; the associations are "
+    "pointed at the records they name as restored. Idempotent: memories deduplicate on "
     "msg_id (and on content within a project/channel), episodes on their summary within a project/channel.",
     {
         "type": "object",
@@ -2304,7 +2334,7 @@ registry.auto_tool(
 
 registry.auto_tool(
     "merge_memories",
-    "Merge memories, episodes, and profiles from one agent into another. "
+    "Merge memories, episodes, profiles and declared associations from one agent into another. "
     "Atomic one-shot equivalent of export→import without intermediate files. "
     "Strategy 'skip' deduplicates by msg_id (memories) and summary (episodes).",
     {
@@ -2497,6 +2527,10 @@ registry.auto_tool(
     # C26: rendered from checks.DEEP_FIX_CAPABLE — the prose named only two of
     # the four report-only checks, so fix=true silently no-opped on the others.
     f"fix=true applies repairs for: {', '.join(sorted(checks_module.DEEP_FIX_CAPABLE))}. "
+    # The short_content repair is a DELETE, not a rewrite: an operator who
+    # reads "repairs" as reversible must learn it here, before the call.
+    "The short_content repair deletes every unlocked row it reports; run "
+    "without fix first and read its samples. "
     f"Report-only (fix is accepted and ignored): {', '.join(checks_module.DEEP_REPORT_ONLY)} "
     "— apply those decisions via merge_memories / delete_memory / "
     "calibrate_threshold / update_profile. Use checks parameter to select "
@@ -3709,6 +3743,7 @@ async def main():
     # expensive, with the same failure posture as the ACL table below.
     config.validate_reconstruct_counts()
     config.validate_block_gates()
+    config.validate_content_caps()
 
     # ACL mode (docs/ACL_DESIGN.md): load and validate the grant table before
     # anything expensive, failing closed on any defect — the server refuses to

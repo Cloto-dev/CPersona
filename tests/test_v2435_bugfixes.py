@@ -177,15 +177,25 @@ async def _insert_dup(db, agent_id: str, content: str) -> int:
     """Insert a raw duplicate row, bypassing do_store's content dedup — this is
     exactly the pre-existing duplicate condition check_health is meant to repair.
 
-    Each row gets a distinct channel so the insert passes the v12 UNIQUE dedup
-    index (agent_id, project_id, channel, content) while still being a
-    duplicate under check_health's broader (agent_id, content) grouping —
-    the cross-channel case the index deliberately leaves to check_health."""
+    The first copy of a (agent_id, content) pair goes to the shared channel ''
+    and every later copy to its own named channel, so each insert passes the v12
+    UNIQUE dedup index (agent_id, project_id, channel, content) while every
+    later copy is a true duplicate: a reader of its channel still sees the
+    content through the channel='' row. (Two named-channel copies with no shared
+    row are two memories, not a duplicate — the repair leaves those alone.)"""
     global _DUP_SEQ
-    _DUP_SEQ += 1
+    shared = await db.execute_fetchall(
+        "SELECT 1 FROM memories WHERE agent_id = ? AND content = ? AND channel = ''",
+        (agent_id, content),
+    )
+    if shared:
+        _DUP_SEQ += 1
+        channel = f"ch{_DUP_SEQ}"
+    else:
+        channel = ""
     cur = await db.execute(
         "INSERT INTO memories (agent_id, content, channel, source, timestamp) VALUES (?, ?, ?, '{}', '2026-01-01T00:00:00Z')",
-        (agent_id, content, f"ch{_DUP_SEQ}"),
+        (agent_id, content, channel),
     )
     await db.commit()
     return cur.lastrowid

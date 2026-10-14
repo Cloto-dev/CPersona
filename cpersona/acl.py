@@ -259,6 +259,28 @@ def current_principal() -> Principal | None:
     return _current_principal.get()
 
 
+def caller_holds_every_agent(required: int = PERM_WRITE) -> bool:
+    """Whether the current caller may change state every agent shares.
+
+    For a handler whose own call is authorised on one agent but whose side
+    effect could reach a file holding every agent's records: it asks this
+    before touching that file, so the narrow grant that admitted the call does
+    not also authorise the shared change. With no ACL there is no narrower
+    grant (the process serves one operator), so the answer is yes. A
+    per-subject client is never admitted to an all-agents demand by the guard,
+    so it never holds every agent here either. No principal is a wiring
+    regression the guard already fails closed on; this fails closed too.
+    """
+    config = _active_config
+    if config is None:
+        return True
+    principal = _current_principal.get()
+    if principal is None or principal.client_id in config.per_subject_clients:
+        return False
+    grants = config.grants_by_client.get(principal.client_id, {})
+    return effective_permission(grants, WILDCARD) >= required
+
+
 # The alias ledger (docs/OAUTH_DESIGN.md §12), active only when some client row
 # declared per_subject. Process-wide like the config above, and activated next
 # to it at startup — a per_subject boundary with no ledger to resolve against
@@ -345,34 +367,72 @@ def _scoped(required: int, key: str = "agent_id") -> Demands:
     return demands
 
 
-def _file_io_demands(key: str) -> Demands:
+def _import_file_demands(args: dict) -> list[tuple[str, int]]:
+    """Read on every agent the import file names (header and records)."""
+    from cpersona.admin_handlers import import_file_agents
+
+    agents = import_file_agents(args.get("input_path") or "")
+    if WILDCARD in agents:
+        return [(WILDCARD, PERM_READ)]
+    return [(agent, PERM_READ) for agent in sorted(agents)]
+
+
+def _export_file_demands(args: dict) -> list[tuple[str, int]]:
+    """Write on the agent the file at the destination belongs to, if any."""
+    from cpersona.admin_handlers import export_file_owner
+
+    owner = export_file_owner(args.get("output_path") or "")
+    return [] if owner is None else [(owner, PERM_WRITE)]
+
+
+def _file_io_demands(key: str, file_demands: Demands) -> Demands:
     """export_memories / import_memories: caller-directed file I/O.
 
     With ``CPERSONA_EXPORT_DIR`` unset (the shipped default) the path argument
     is caller-chosen anywhere on the filesystem, so the blast radius is not
     one agent's data — the demand escalates to read-write on ``"*"`` (review
-    finding on PR #112, extending D4). With the confinement configured, the
-    agent-scoped read-write demand of §6 applies.
+    finding on PR #112, extending D4).
+
+    With the confinement configured, the directory is still one namespace
+    shared by every agent, and a file in it belongs to the agents it holds,
+    not to whoever names it. So the agent-scoped read-write demand of §6 is
+    joined by what the file itself demands: import reads every agent the file
+    names, and export replaces the file at its destination, which takes write
+    on the agent that file belongs to. A call already demanding write on
+    ``"*"`` covers both, and the file is not read for it.
     """
 
     def demands(args: dict) -> list[tuple[str, int]]:
         if not config.EXPORT_DIR:
             return [(WILDCARD, PERM_WRITE)]
-        return [(_agent_arg(args, key), PERM_WRITE)]
+        own = _agent_arg(args, key)
+        if own == WILDCARD:
+            return [(WILDCARD, PERM_WRITE)]
+        return [(own, PERM_WRITE)] + [d for d in file_demands(args) if d[0] != own]
 
-    demands._sweep_cause = lambda args: (  # type: ignore[attr-defined]
-        ""
-        if config.EXPORT_DIR
-        else (
-            "CPERSONA_EXPORT_DIR is unset, so the path argument is caller-chosen "
-            "anywhere on the filesystem and the call is not confined to one agent"
-        )
-    )
+    def sweep_cause(args: dict) -> str:
+        if not config.EXPORT_DIR:
+            return (
+                "CPERSONA_EXPORT_DIR is unset, so the path argument is caller-chosen "
+                "anywhere on the filesystem and the call is not confined to one agent"
+            )
+        if any(pattern == WILDCARD for pattern, _ in file_demands(args)):
+            return (
+                "the file at the path belongs to every agent: it is an export of "
+                "every agent, or it is not an export that names its agent"
+            )
+        return ""
+
+    demands._sweep_cause = sweep_cause  # type: ignore[attr-defined]
     return demands
 
 
 def _selected_cross_agent_fixes(args: dict) -> list[str]:
-    """Which of the health checks this call will run repair rows outside its agent.
+    """Which of the health checks this call will run repair beyond its agent.
+
+    A repair reaches beyond it when it writes another agent's rows or changes
+    state every agent shares: a file holding all of them, or the mode of the
+    database the operator chose for the whole deployment.
 
     ``checks`` absent or empty means the whole registry, which is how the
     unqualified ``check_health(fix=True)`` reaches the cross-agent repair.
@@ -410,7 +470,7 @@ def _health_demands(args: dict) -> list[tuple[str, int]]:
 
 
 _health_demands._sweep_cause = lambda args: (  # type: ignore[attr-defined]
-    "this call runs a repair that writes rows under every agent ("
+    "this call runs a repair whose effect reaches every agent ("
     + ", ".join(_selected_cross_agent_fixes(args))
     + "), so no agent_id narrows it — naming the checks you want in `checks` does"
     if _selected_cross_agent_fixes(args)
@@ -526,10 +586,11 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     # Calibration state is per-agent mutable state.
     "calibrate_threshold": _scoped(PERM_WRITE),
     "set_recall_precision": _scoped(PERM_WRITE),
-    # D4 (amended twice): caller-directed file I/O — read-write, escalating to
-    # the wildcard demand while CPERSONA_EXPORT_DIR leaves paths unconfined.
-    "export_memories": _file_io_demands("agent_id"),
-    "import_memories": _file_io_demands("target_agent_id"),
+    # D4 (amended three times): caller-directed file I/O — read-write, escalating
+    # to the wildcard demand while CPERSONA_EXPORT_DIR leaves paths unconfined,
+    # and joined by what the file demands while the directory is shared.
+    "export_memories": _file_io_demands("agent_id", _export_file_demands),
+    "import_memories": _file_io_demands("target_agent_id", _import_file_demands),
     "merge_memories": _merge_demands,
     # Empty agent_id sweeps every agent on these; _scoped maps "" to "*".
     "check_health": _health_demands,
@@ -950,6 +1011,28 @@ def _wrap(name: str, handler):
                     required=required,
                     detail=detail,
                 )
+        creates_under = _ROW_CREATING_SCOPE.get(name)
+        target = arguments.get(creates_under) if creates_under else None
+        if isinstance(target, str) and target and reserved_for_new_rows(target):
+            logger.warning(
+                "ACL denial (reserved agent id): client=%s tool=%s agent=%s",
+                principal.client_id,
+                name,
+                target,
+            )
+            return _denial(
+                name,
+                principal.client_id,
+                agent_id=target,
+                required=PERM_WRITE,
+                detail=(
+                    "per_subject is configured, so the "
+                    f"{ALIAS_PREFIX!r} prefix is subject alias space and only an "
+                    "alias the ledger has issued may receive rows; a name created "
+                    "here would make the next server start refuse — choose another "
+                    "agent_id"
+                ),
+            )
         result = await handler(arguments)
         if resolved_alias and isinstance(result, dict):
             # The @auto idiom (resolved_project_id): a resolution the server
@@ -980,9 +1063,10 @@ def reserved_agent_id_collisions(agent_ids, known_aliases=frozenset()) -> list[s
     tenant's data). ``known_aliases`` — the ledger's issued set — is exempt
     (bug-267): those names ARE issued aliases, and refusing them meant the
     server's own issuance failed its next boot. The ``@me`` sentinel is never
-    exempt; the ledger cannot issue it. Checked at startup, only when some
-    client row declared per_subject: an existing deployment that never opts in
-    keeps every name it has.
+    exempt; the ledger cannot issue it. Checked at startup and before every
+    write that adds rows (``reserved_for_new_rows``), only when some client row
+    declared per_subject: an existing deployment that never opts in keeps every
+    name it has.
     """
     return sorted(
         aid
@@ -990,6 +1074,40 @@ def reserved_agent_id_collisions(agent_ids, known_aliases=frozenset()) -> list[s
         if aid == SELF_SENTINEL
         or (aid.startswith(ALIAS_PREFIX) and aid not in known_aliases)
     )
+
+
+#: The argument naming the agent a tool adds rows under, for every tool whose
+#: rows land in a table the per-subject boot check reads (memories, episodes,
+#: profiles, pending tasks). Deletes, edits and locks are absent on purpose: they
+#: add nothing, and refusing them would stop an operator from clearing out an
+#: alias the ledger no longer records. import_memories also takes agent ids from
+#: the file it reads; its handler asks ``reserved_for_new_rows`` per record.
+_ROW_CREATING_SCOPE = {
+    "store": "agent_id",
+    "archive_episode": "agent_id",
+    "update_profile": "agent_id",
+    "merge_memories": "target_agent_id",
+    "import_memories": "target_agent_id",
+}
+
+
+def reserved_for_new_rows(agent_id: str) -> bool:
+    """Whether a running server must refuse to add rows under ``agent_id``.
+
+    The boot check refuses to start while the database holds a reserved name the
+    alias ledger has not issued. The same predicate is asked before every write
+    that would add rows, under the same condition (only while some client row
+    declares per_subject), so a running server never creates the state its next
+    start refuses.
+    """
+    acl_config = _active_config
+    if acl_config is None or not acl_config.per_subject_clients:
+        return False
+    if agent_id != SELF_SENTINEL and not agent_id.startswith(ALIAS_PREFIX):
+        return False
+    ledger = _active_ledger
+    issued = ledger.issued_aliases() if ledger is not None else frozenset()
+    return bool(reserved_agent_id_collisions([agent_id], issued))
 
 
 def install(registry) -> None:

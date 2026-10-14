@@ -1,0 +1,3 @@
+# The tokenizer vocabulary is checked against a SHA-256 of its bytes, so git must
+# never convert its line endings on checkout (core.autocrlf=true on Windows).
+cpersona/vocab/*.tiktoken -text

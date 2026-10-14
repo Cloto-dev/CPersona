@@ -209,6 +209,13 @@ physical deletion — old rows sink via windows and decay*.
   exact bucket (`agent_id, project_id, channel, content`), while the probe
   that runs first also sees the global pool. Two writers racing into
   *different* project buckets can therefore both land.
+  The skip applies only to a copy stored under the **same `source.id`**. A copy
+  under a different source id belongs to another principal, and answering with
+  it would leave the caller's text unreachable from its own `source_id`-scoped
+  recall. Where that copy sits in the same exact bucket, the store is
+  **rejected** (`ok: false`, no id), because the unique index keeps one copy per
+  bucket. Where it is only visible through the global pool, the caller's copy is
+  written.
 
 The critical consequence: **there is no upsert.** Re-storing *changed*
 content under the *same* `msg_id` does **not** update the stored row — it is

@@ -253,6 +253,11 @@ async def _from_index(db, query_bits, dim, k, path, *, agent_id, project_id, cha
             if low is None or high is None:
                 # SQL compares against NULL and admits nothing; so does this.
                 return _empty("index")
+            if not vector_index._is_canonical(low):
+                # A negative-year lower bound: SQL compares it as text with the
+                # negative-year stamps the file holds as unreadable, and may admit
+                # them, so only the live store can answer this period exactly.
+                return None
             stamps = index.timestamp[selected]
             selected = selected[(stamps >= low.encode("ascii")) & (stamps < high.encode("ascii"))]
 

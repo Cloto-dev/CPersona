@@ -26,7 +26,21 @@ from cpersona.config import (
     RECENT_RECALL_WINDOW_MIN,
     REFERENCE_HOURS,
     RESOLVED_DECAY_FACTOR,
+    require_positive_cap,
 )
+
+
+# SQLite stores INTEGER as a signed 64-bit value, and binding a Python int outside
+# that range raises OverflowError instead of matching nothing. Ids arrive from
+# callers as unbounded JSON integers (or digit runs inside a ref), so every seam
+# that binds one asks this first.
+_SQLITE_INTEGER_MIN = -(2**63)
+_SQLITE_INTEGER_MAX = 2**63 - 1
+
+
+def fits_sqlite_integer(value: int) -> bool:
+    """Whether ``value`` can be bound as an SQLite INTEGER. No row id lies outside it."""
+    return _SQLITE_INTEGER_MIN <= value <= _SQLITE_INTEGER_MAX
 
 
 def _clamp_limit(limit: int, cap: int) -> int:
@@ -97,7 +111,10 @@ def _sanitize_with_cap(content: str, cap: int) -> tuple[str, bool]:
 
 def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
     """Sanitize a memory/episode write, and report whether the cap cut anything."""
-    return _sanitize_with_cap(content, MAX_CONTENT_LENGTH)
+    # The server refuses a non-positive cap at startup; this keeps a library
+    # caller from storing every text emptied or shortened under one.
+    cap = require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
+    return _sanitize_with_cap(content, cap)
 
 
 def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
@@ -108,7 +125,8 @@ def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
     and is never preview-trimmed (bug-117), so its bound cannot be inherited from
     a constant that a later line intends to relax; see config.MAX_PROFILE_LENGTH.
     """
-    return _sanitize_with_cap(profile, MAX_PROFILE_LENGTH)
+    cap = require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
+    return _sanitize_with_cap(profile, cap)
 
 
 def _sanitize_content(content: str) -> str:
@@ -167,7 +185,10 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
-    except (ValueError, OSError):
+    except (ValueError, OSError, OverflowError):
+        # OverflowError: a well-formed stamp at the edge of the range whose offset
+        # carries its UTC instant past year 1 or year 9999 ('0001-01-01T00:00:00+01:00').
+        # No instant can be placed for it, so it reads as unparseable like any other.
         return None
 
 
@@ -425,6 +446,33 @@ def _try_parse_json(s: str) -> dict:
         return json.loads(s)
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+def _finite_json_value(value):
+    """``value`` with every NaN / +-Infinity float replaced by None (JSON null)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _finite_json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite_json_value(v) for v in value]
+    return value
+
+
+def json_dumps_finite(value) -> str:
+    """``json.dumps`` for a JSON column: non-finite floats are written as null.
+
+    The default ``allow_nan=True`` writes them as bare ``NaN`` / ``Infinity``
+    tokens, which RFC 8259 does not admit and SQLite's json_valid() rejects. A row
+    stored that way is then flagged by ``invalid_json``, whose repair can no
+    longer keep the object, and strict JSON readers of an export cannot parse it.
+    null is the value JSON has for a number it cannot represent. Finite input
+    serialises byte-for-byte as before.
+    """
+    try:
+        return json.dumps(value, allow_nan=False)
+    except ValueError:
+        return json.dumps(_finite_json_value(value), allow_nan=False)
 
 
 # Canonical source contract (2.5.2).

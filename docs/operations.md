@@ -30,8 +30,16 @@ Recommended, in order:
 
 3. **Logical backup** (recommended as a low-frequency complement):
    `export_memories` writes JSONL that is independent of the schema version,
-   and `import_memories` is idempotent (duplicates are skipped) — so restore
-   drills are safe to rehearse. Monthly is a reasonable cadence.
+   and `import_memories` is idempotent (memories and episodes already present
+   are skipped). A profile is the one record an import replaces rather than
+   skips: the file's copy replaces the stored one unless the stored one is
+   newer, in which case the stored profile is kept and the line is reported
+   in `errors`. A drill with an older export therefore does not move a
+   profile backwards. Monthly is a reasonable cadence. The file carries the
+   declared associations (entities, aliases, mentions and relations) as well
+   as the records, and a restore points them at the records it restores. A
+   file written by an earlier version has no associations in it and still
+   imports as it always did.
 
 **The `.db` is not the whole instance.** State lives outside it that none of
 the backup forms above touch:
@@ -255,8 +263,10 @@ first).**
 **Pattern B — differential updates with an external content-hash ledger.**
 
 1. `store` each chunk with a stable `msg_id` (for example `path#heading`) and
-   the source document in `source.id`. The `source_id` recall argument
-   (prefix-match) then doubles as a per-document filter.
+   the source document in `source.id`. The `source_id` recall argument then
+   doubles as a per-document filter: a value that ends in a letter or digit
+   (`docs/a.md`) matches that one document exactly, and a value that ends in a
+   delimiter (`docs/`) matches every document under it.
 2. Keep a caller-side ledger of `key → content hash`, and process only chunks
    whose hash changed.
 3. **Changed chunks must go through `update_memory`**, or `delete_memory` plus
@@ -293,6 +303,16 @@ size, so a deployment that builds one should build both.
 index is a projection of it and is treated the way a cache is treated: not
 backed up, never repaired, safe to delete at any time. If anything about it
 looks wrong, delete the file and build again.
+
+`delete_agent_data` removes it along with the rows it held, but only when the
+caller's grant covers every agent (always, with no ACL): the file holds every
+agent's rows, so a grant on one agent does not reach it. After a purge under
+a grant on one agent the file stays until its next build, and the purged rows are not
+served from it in the meantime, because recall reads every candidate back from
+the database. A build the server was running when a purge removed the file
+discards its output rather than put the purged rows back. The `build` command
+runs in a process of its own and is not ordered against a purge, so run it
+again if a purge happened while it ran.
 
 **Building it** is an operator action. Nothing in the running server builds or
 refreshes the index. The entry point is a command, made for a cron job or a
@@ -334,7 +354,7 @@ described in [Binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md): the far
 seats, when turned on, and a time cue's search of its period past the scan
 window, which since 2.6.4 uses the file by default when it exists. It is
 handled like the contiguous index: never backed up, never repaired, safe to
-delete, and removed by a purge along with the rows it held. With both files,
+delete, and removed by a purge under the same rule. With both files,
 `build` exits 0 only when both were built. `status` reports the coarse index
 under `coarse` without changing its own exit code, because nothing reads the
 coarse index unless a setting asks for it.
@@ -400,7 +420,7 @@ derived file, `<database>.blocks.blockindex`, instead of reading up to 250,000
 rows out of SQLite on every recall. The answer is the same either way
 ([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)); only the time
 differs. Like the other two files it is never backed up, never repaired, safe to
-delete, and removed by a purge along with the rows it held.
+delete, and removed by a purge under the same rule.
 
 The file takes 28 bytes per block row plus one bit per dimension of the model:
 124 bytes with a 768-dimension model, 156 with a 1,024-dimension one. On Linux

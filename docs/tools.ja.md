@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:f6b836a0f63d8c2e5ab1fcfeed7a428720513e9a -->
+<!-- i18n-source: docs/tools.md@blob:fc9c3ee10826fade93f5dc118e881ebe9a3043c1 -->
 
 # ツール一覧
 
@@ -65,10 +65,10 @@
 
 | ツール | 何をするか |
 |---|---|
-| `export_memories` | 記憶・エピソード・プロフィールを JSONL に書き出します。スキーマ版に依存しないため論理バックアップも兼ねます ([バックアップ runbook](operations.md#backup-and-restore)) |
-| `import_memories` | その JSONL を読み戻します。冪等ですが鍵は 1 つではありません: 記憶は `msg_id` **と** project/channel スコープ内の同一内容で、エピソードは同一の要約で重複排除されます (エピソードは `msg_id` を持ちません) |
-| `merge_memories` | あるエージェントのデータを別のエージェントへ、原子的かつ重複排除つきで移動/複製します |
-| `migrate_channel_axis` | ブリッジ種別の記憶を具体的なチャネルへ振り直します。日常運用ではなく一度きりの修復です |
+| `export_memories` | 記憶・エピソード・プロフィールと宣言された連想 (entity・別名・言及・関係) を JSONL に書き出します。スキーマ版に依存しないため論理バックアップも兼ねます ([バックアップ runbook](operations.md#backup-and-restore)) |
+| `import_memories` | その JSONL を読み戻し、宣言された連想を復元した記録に向け直します。冪等ですが鍵は 1 つではありません: 記憶は `msg_id` **と** project/channel スコープ内の同一内容で、エピソードは同一の要約で重複排除されます (エピソードは `msg_id` を持ちません) |
+| `merge_memories` | あるエージェントのデータを宣言された連想ごと別のエージェントへ、原子的かつ重複排除つきで移動/複製します |
+| `migrate_channel_axis` | ブリッジ種別の記憶を、それについて宣言された連想とともに具体的なチャネルへ振り直します。日常運用ではなく一度きりの修復です |
 
 ## ヘルスと保守 { #health-and-maintenance }
 

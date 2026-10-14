@@ -7,9 +7,11 @@ implementation shared by the MCP tools, the pytest fixtures, and the
 behaviour live there, response envelopes live here.
 """
 
+import contextlib
 import logging
 
 from cpersona import __version__
+from cpersona import associations
 from cpersona import checks as checks_registry
 from cpersona import config
 from cpersona import findings as findings_seam
@@ -23,6 +25,47 @@ from cpersona.session import resolve_session_key
 from cpersona.utils import error_response
 
 logger = logging.getLogger(__name__)
+
+# Rows per remote /remove or /index request, the width the other bulk remote posts use.
+_REMOTE_SYNC_CHUNK = 128
+
+
+async def _sync_remote_index(effects: list) -> None:
+    """Post a committed repair run's deletes and rewrites to the remote index (bug-539).
+
+    ``effects`` is what the repairs recorded in ``checks.remote_index_effects``, in
+    the order they wrote it; the last entry for a row is its state after the commit.
+    Posted through the same helper the delete and update handlers use, so a refusal
+    or a connection failure is non-fatal and said once at WARNING, as there.
+    """
+    from cpersona.admin_handlers import _post_remote_side_effect
+
+    final: dict[tuple[str, int], str | None] = {}
+    for owner, row_id, text in effects:
+        final[(owner, row_id)] = text
+    by_namespace: dict[str, tuple[list, list]] = {}
+    for (owner, row_id), text in final.items():
+        removed, indexed = by_namespace.setdefault(f"cpersona:{owner}", ([], []))
+        if text is None:
+            removed.append(f"mem:{row_id}")
+        else:
+            indexed.append({"id": f"mem:{row_id}", "text": text})
+    base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
+    for namespace, (removed, indexed) in by_namespace.items():
+        for start in range(0, len(removed), _REMOTE_SYNC_CHUNK):
+            await _post_remote_side_effect(
+                f"{base_url}/remove",
+                {"namespace": namespace, "ids": removed[start : start + _REMOTE_SYNC_CHUNK]},
+                action="removal",
+                namespace=namespace,
+            )
+        for start in range(0, len(indexed), _REMOTE_SYNC_CHUNK):
+            await _post_remote_side_effect(
+                f"{base_url}/index",
+                {"namespace": namespace, "items": indexed[start : start + _REMOTE_SYNC_CHUNK]},
+                action="update",
+                namespace=namespace,
+            )
 
 
 async def do_check_health(
@@ -145,10 +188,20 @@ async def do_check_health(
     # empty `checks` list means "everything" to run_health_checks, so this must
     # not reach it as one.
     if locked_checks:
-        async with (transaction() if fix else connection()) as db:
-            issues, severity_summary = await checks_registry.run_health_checks(
-                db, agent_id=agent_id, fix=fix, checks=locked_checks, embedding_cache=embedding_cache
-            )
+        # bug-539: the repairs record the rows they delete or rewrite, and the remote
+        # index is told after the commit -- never under the write lock, and never for
+        # a run that rolled back.
+        remote_effects = [] if fix and checks_registry._remote_vector_arm_armed() else None
+        token = checks_registry.remote_index_effects.set(remote_effects)
+        try:
+            async with (transaction() if fix else connection()) as db:
+                issues, severity_summary = await checks_registry.run_health_checks(
+                    db, agent_id=agent_id, fix=fix, checks=locked_checks, embedding_cache=embedding_cache
+                )
+        finally:
+            checks_registry.remote_index_effects.reset(token)
+        if remote_effects:
+            await _sync_remote_index(remote_effects)
     if scan_issues:
         # Registry order, as if one run had produced them. The scan findings are
         # NOT added to severity_summary here: the split only happens under
@@ -325,13 +378,42 @@ async def do_deep_check(
     selected = list(dict.fromkeys(checks)) if checks else list(checks_registry.DEEP_CHECK_NAMES)
     results: dict[str, dict] = {}
 
-    async def _run(db, names: list[str]) -> None:
+    async def _run(db, names: list[str], *, savepoints: bool = False) -> None:
+        if savepoints:
+            # The loop below turns a check's exception into an error entry, so
+            # nothing escapes to transaction()'s rollback, and a repair that raised
+            # part way (short_content deletes in chunks, anonymous_source updates
+            # row by row) used to commit the statements that ran before the fault
+            # under a response that reported only the error. Each check gets its
+            # own savepoint instead, as run_health_checks does since bug-361: one
+            # failed repair is undone while the others in the run still commit.
+            # The outer savepoint is never released -- RELEASE of an outermost
+            # savepoint commits -- so transaction() still owns the end of the run.
+            await db.execute("SAVEPOINT deep_run")
         for name in names:
+            savepoint = f"deep_check_{name}" if savepoints else None
+            if savepoint:
+                await db.execute(f'SAVEPOINT "{savepoint}"')
+            effects = checks_registry.remote_index_effects.get()
+            effects_mark = len(effects) if effects is not None else 0
             try:
                 results[name] = await checks_registry.DEEP_CHECKS[name](db, agent_id, fix)
             except Exception as e:
+                if savepoint:
+                    with contextlib.suppress(Exception):
+                        await db.execute(f'ROLLBACK TO "{savepoint}"')
+                    # The rows this check noted for the remote index are back as they
+                    # were, so its notes go too (bug-539), as in run_health_checks.
+                    if effects is not None:
+                        del effects[effects_mark:]
                 logger.warning("deep check %s crashed: %s", name, e)
                 results[name] = {"error": str(e)}
+            finally:
+                if savepoint:
+                    # ROLLBACK TO keeps the savepoint open; RELEASE pops it on both
+                    # paths. Never the outermost one, so this never commits.
+                    with contextlib.suppress(Exception):
+                        await db.execute(f'RELEASE "{savepoint}"')
 
     # bug-324: only the checks declared fix-capable can write, and the whole
     # registry used to run inside the transaction anyway -- so a fix run held the
@@ -353,8 +435,17 @@ async def do_deep_check(
         async with connection() as db:
             await _run(db, reporting)
     if writing:
-        async with transaction() as db:
-            await _run(db, writing)
+        # bug-539: as in do_check_health, deleted rows leave the remote index after
+        # the commit.
+        remote_effects = [] if checks_registry._remote_vector_arm_armed() else None
+        token = checks_registry.remote_index_effects.set(remote_effects)
+        try:
+            async with transaction() as db:
+                await _run(db, writing, savepoints=True)
+        finally:
+            checks_registry.remote_index_effects.reset(token)
+        if remote_effects:
+            await _sync_remote_index(remote_effects)
 
     out = {
         "agent_id": agent_id,
@@ -438,6 +529,11 @@ async def do_migrate_channel_axis(
     Rows whose metadata is not valid JSON are unrecoverable by definition and
     are additionally reported on their own (`invalid_metadata_total` /
     `invalid_metadata_ids`, bug-239) — they used to abort the whole tool.
+
+    The declarations filed in channel 'discord' about a re-channelled memory go
+    with it to its new channel (``associations.follow_rechannelled``): a reader
+    sees its own channel and the global one, so left in 'discord' they would be
+    invisible to every reader of the memory.
     """
     # Under no-persist, force a report-only run so nothing mutates.
     key, _declared = resolve_session_key(session_key)
@@ -509,6 +605,14 @@ async def do_migrate_channel_axis(
         # bug-068: its auto-rollback discards a partial migrate on failure, so a later
         # committer on the shared connection cannot flush half-written rows.
         async with transaction() as db:
+            # The memories something declares about, read before they move so the
+            # declarations can follow (a row the OR IGNORE below skips does not move).
+            declared = await db.execute_fetchall(
+                f"""SELECT id FROM memories
+                   WHERE channel = 'discord'{iso.and_clause}
+                     AND {associations.names_memory_sql("memories.id")}""",
+                iso.params,
+            )
             # bug-021: OR IGNORE — a recovered (agent_id, project_id, channel, content)
             # can collide with an existing row on the v12 idx_memories_dedup_content
             # UNIQUE index. A bare UPDATE would ABORT+rollback the whole statement
@@ -545,6 +649,17 @@ async def do_migrate_channel_axis(
                 # Same rowcount semantics as `migrated` above: a real 0 (full collision)
                 # is authoritative; only None/negative means "count unavailable".
                 globalized = cur2.rowcount if cur2.rowcount is not None and cur2.rowcount >= 0 else unrecoverable_total
+            moved: dict[int, tuple[str, str]] = {}
+            ids = [r[0] for r in declared]
+            for offset in range(0, len(ids), 500):
+                batch = ids[offset:offset + 500]
+                marks = ",".join("?" for _ in batch)
+                for row_id, row_agent, channel in await db.execute_fetchall(
+                    f"SELECT id, agent_id, channel FROM memories WHERE id IN ({marks})", batch
+                ):
+                    if channel != "discord":
+                        moved[row_id] = (row_agent, channel)
+            await associations.follow_rechannelled(db, moved, from_channel="discord")
 
     out = {
         "agent_id": agent_id,

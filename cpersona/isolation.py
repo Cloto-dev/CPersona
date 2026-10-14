@@ -107,7 +107,7 @@ def isolation_where(
 
 
 def source_id_where(source_id: str, *, alias: str = "") -> IsolationFilter:
-    """The per-user ``source_id`` prefix restriction, as a helper-derived fragment.
+    """The per-user ``source_id`` restriction, as a helper-derived fragment.
 
     bug-336: this was a ``LIKE`` prefix predicate, and SQLite folds ASCII case in
     ``LIKE`` unless ``PRAGMA case_sensitive_like`` is set, which nothing in this
@@ -124,6 +124,14 @@ def source_id_where(source_id: str, *, alias: str = "") -> IsolationFilter:
     its side (a Python ``startswith``), so the two arms now answer the same
     question -- they disagreed, and the SQL side was the permissive one.
 
+    A value names one id, or a namespace of ids (see ``source_id_is_namespace``).
+    One id is compared whole: ``discord:12345`` is that user, and ``user:1`` is
+    not also ``user:10``, whose id merely starts with the same characters. Only
+    the namespace form is a prefix. The JSON id is compared as text on both
+    forms, as ``substr`` always did, because ``json_extract`` hands a JSON number
+    back as an integer. The contiguous index applies the same rule through
+    ``source_id_matches``.
+
     Built here rather than at each arm because it is a read-side isolation
     predicate, which is what this module is for, and because four hand-rolled
     copies is how the axis came to be spelled four times and fixed in none.
@@ -133,7 +141,36 @@ def source_id_where(source_id: str, *, alias: str = "") -> IsolationFilter:
     if not source_id:
         return IsolationFilter(clause="", params=())
     pre = f"{alias}." if alias else ""
+    if source_id_is_namespace(source_id):
+        return IsolationFilter(
+            clause=f"substr(json_extract({pre}source, '$.id'), 1, ?) = ?",
+            params=(len(source_id), source_id),
+        )
     return IsolationFilter(
-        clause=f"substr(json_extract({pre}source, '$.id'), 1, ?) = ?",
-        params=(len(source_id), source_id),
+        clause=f"CAST(json_extract({pre}source, '$.id') AS TEXT) = ?",
+        params=(source_id,),
     )
+
+
+def source_id_is_namespace(source_id: str) -> bool:
+    """Whether a non-empty ``source_id`` names a namespace rather than one id.
+
+    The namespace form has always been written with its delimiter at the end
+    (``discord:``, ``docs/``, ``user-``), and a principal's id ends in a letter
+    or a digit, so the last character is what tells the two apart. Asked here
+    once so the SQL arms and the contiguous index cannot draw the line in
+    different places.
+    """
+    return not source_id[-1].isalnum()
+
+
+def source_id_matches(value: Any, source_id: str) -> bool:
+    """The Python form of ``source_id_where`` for a value already read out.
+
+    ``value`` is the row's ``$.id`` as text, or None where the row has none,
+    which no filter admits -- as SQL compares against NULL.
+    """
+    if value is None:
+        return False
+    text = str(value)
+    return text.startswith(source_id) if source_id_is_namespace(source_id) else text == source_id

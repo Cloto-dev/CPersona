@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 import httpx
+from cpersona._vendored_mcp_common.embedding_client import redact_urls
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.isolation import isolation_where, source_id_where
 
@@ -77,11 +78,13 @@ from cpersona.utils import (
     _content_excluded,
     _parse_timestamp_utc,
     episode_timestamp,
+    fits_sqlite_integer,
     future_timestamp_issue,
     _sanitize_content,
     sanitize_content_with_flag,
     _try_parse_json,
     error_response,
+    json_dumps_finite,
     normalize_source,
 )
 from cpersona.vector import _search_vector
@@ -161,6 +164,24 @@ def _store_skipped(reason: str, mem_id: int | None = None) -> dict:
     return body
 
 
+def _declared_source_id(source) -> str | None:
+    """The ``$.id`` a source declares, as text, or None when it declares none.
+
+    Text because that is how the ``source_id`` recall filter compares it: a JSON
+    number id and its decimal spelling are the same principal to every recall.
+    Takes the stored JSON or the already-parsed object.
+    """
+    if isinstance(source, str):
+        try:
+            source = json.loads(source)
+        except ValueError:
+            return None
+    if not isinstance(source, dict):
+        return None
+    value = source.get("id")
+    return None if value is None else str(value)
+
+
 async def do_store(
     agent_id: str,
     message: dict,
@@ -195,9 +216,12 @@ async def do_store(
     # justify (would corrupt attribution and defeat anonymous_source).
     raw_source = message.get("source", {})
     normalized_source, _mapped = normalize_source(raw_source)
-    source = json.dumps(normalized_source if normalized_source is not None else {})
+    # json_dumps_finite: a NaN / Infinity here would be stored as a bare token
+    # SQLite rejects as JSON, and the invalid_json repair would then blank the
+    # whole object.
+    source = json_dumps_finite(normalized_source if normalized_source is not None else {})
     timestamp = message.get("timestamp", datetime.now(timezone.utc).isoformat())
-    metadata = json.dumps(message.get("metadata", {}))
+    metadata = json_dumps_finite(message.get("metadata", {}))
     project_id = coerce_for_write(project_id)
 
     if not raw_content:
@@ -284,15 +308,33 @@ async def do_store(
                 # (e.g. update_memory) without a second lookup.
                 return _store_skipped("duplicate msg_id", row[0][0])
 
-        # Deduplicate by exact content match (γ-visible scope).
+        # Deduplicate by exact content match (γ-visible scope), per source id.
+        # A copy under another source id is a different principal's memory, so
+        # it does not answer this write: a skip tells the caller its text is
+        # already where its own source_id-scoped recall finds it, and the id it
+        # echoes is the row the lock and association riders act on. The probe
+        # reads every visible copy (one per exact bucket at most, so four rows)
+        # and decides from their sources.
         existing = await db.execute_fetchall(
-            f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({proj_in})"
-            f" AND channel IN ({chan_in}) AND content = ? LIMIT 1",
+            f"SELECT id, source, project_id, channel FROM memories WHERE agent_id = ?"
+            f" AND project_id IN ({proj_in}) AND channel IN ({chan_in}) AND content = ?",
             (agent_id, *proj_scope, *chan_scope, content),
         )
-        if existing:
-            # v2.5.2 additive: same id echo as the msg_id branch above.
-            return _store_skipped("duplicate content", existing[0][0])
+        own_source_id = _declared_source_id(normalized_source)
+        for row_id, row_source, _row_project, _row_channel in existing:
+            if _declared_source_id(row_source) == own_source_id:
+                # v2.5.2 additive: same id echo as the msg_id branch above.
+                return _store_skipped("duplicate content", row_id)
+        if any(row[2] == project_id and row[3] == channel for row in existing):
+            # The unique index allows one copy of a text per exact bucket, so
+            # this caller's copy cannot be written beside the other source's.
+            # Refused, not skipped: nothing was stored under this source, and a
+            # skip would have reported the write as harmlessly done.
+            return _store_rejected(
+                "this content is already stored under a different source id in the "
+                "same agent, project and channel; one copy is kept per bucket, so it "
+                "was not stored for this source"
+            )
 
     # Overflow tree (docs/OVERFLOW_TREE_DESIGN.md §3): whether this text runs past
     # the embedding window decides whether its nodes are queued. Asked alongside the
@@ -388,13 +430,15 @@ async def do_store(
             # not in the index, and a corpus that answers recalls with silence is
             # the one symptom that does not look like a fault. Still non-fatal,
             # still ok:true -- what changes is that the shortfall is said once, at
-            # a level that is on, naming the row and the namespace.
+            # a level that is on, naming the row and the namespace. The exception
+            # text quotes the request URL, which carries any userinfo or query the
+            # embedding URL was configured with, so it is redacted first.
             logger.warning(
                 "Remote index push failed for mem:%s in namespace cpersona:%s "
                 "(non-fatal; the row is stored but will not be found by remote search): %s",
                 mem_id,
                 agent_id,
-                e,
+                redact_urls(str(e)),
             )
 
     result = {
@@ -640,6 +684,50 @@ async def _lexical_arms(
     return episodes, memories
 
 
+async def _mark_single_arm_rows(db, lexical: list[tuple[tuple, dict]], query_embedded: bool) -> None:
+    """Flag the fused rows only one retriever could have ranked (``_rrf_single_arm``).
+
+    ``lexical`` holds the (rid, row) pairs of the fused list the vector retriever did
+    not rank.
+
+    A memory can be ranked by the vector retriever and the keyword retriever, an
+    episode by the vector retriever and the episode FTS retriever. The vector
+    retriever ranks nothing when there is no embedding client (mode=none) or the
+    query was not embedded (the backend failed), and its local scan cannot rank a row
+    that has no stored vector. Such a row's reciprocal-rank score tops out at one vote
+    instead of the three the heuristic rrf gate is scaled to (``_apply_quality_gate``),
+    so without the flag even an exact match ranked first could never pass it.
+
+    When the remote vector service may have answered, it ranked from its own index:
+    a missing local vector says nothing about the row there, and nothing is flagged.
+    """
+    if not lexical:
+        return
+    client = vector._embedding_client
+    # The predicate _search_vector_remote gates on, read from the same module.
+    remote_armed = bool(vector.VECTOR_SEARCH_MODE == "remote" and client and client._http_url)
+    if not client or (not query_embedded and not remote_armed):
+        for _rid, r in lexical:
+            r["_rrf_single_arm"] = True
+        return
+    if not query_embedded:
+        return
+    # The local scan ran, so a row it did not rank because it has no stored vector
+    # could not have been ranked by it. Only a row a keyword list ranked first reaches
+    # the one-vote score the gate's cap admits, so only those are looked up.
+    top = [(rid, r) for rid, r in lexical if r["_rrf_score"] >= 1.0 / (RRF_K + 1)]
+    for kind, table in (("mem", "memories"), ("ep", "episodes")):
+        by_id = {rid[1]: r for rid, r in top if rid[0] == kind}
+        if not by_id:
+            continue
+        marks = ",".join("?" * len(by_id))
+        rows = await db.execute_fetchall(
+            f"SELECT id FROM {table} WHERE id IN ({marks}) AND embedding IS NULL", tuple(by_id)
+        )
+        for (row_id,) in rows:
+            by_id[row_id]["_rrf_single_arm"] = True
+
+
 async def _recall_rrf(
     db,
     agent_id: str,
@@ -676,6 +764,10 @@ async def _recall_rrf(
 
     lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms, True)
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
+    # The query vector, when the local scan gets one. Read below to tell whether the
+    # vector retriever could vote at all in this recall.
+    query_vec_seen = query_vec_out if query_vec_out is not None else []
+    vecs_before = len(query_vec_seen)
     if vector._embedding_client:
         # One call to the vector retriever, as always. `far_out` collects the
         # second ranked list it produces when CPERSONA_VECTOR_REACH is set above
@@ -690,7 +782,7 @@ async def _recall_rrf(
             db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_results if PRIOR_FAR_WEIGHT > 0 else None,
-            query_vec_out=query_vec_out,
+            query_vec_out=query_vec_seen,
         )
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -756,6 +848,9 @@ async def _recall_rrf(
         # Found by the keyword arms alone: what the keyword seats may hold.
         row["_lexical_only"] = rid not in vector_rids
         results.append(row)
+    await _mark_single_arm_rows(
+        db, [(rid, doc_map[rid]) for rid in sorted_rids if rid not in vector_rids], len(query_vec_seen) > vecs_before
+    )
     if rec is not None:
         rec.arm("vector_near", vector_results, "_cosine")
         rec.arm("vector_far", far_results, "_cosine")
@@ -1133,6 +1228,14 @@ def _apply_quality_gate(
             # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
             # compare directly; otherwise rescale the cosine-scale heuristic min_score.
             rrf_threshold = gate if (gate is not None and gate_signal == "rrf") else min_score * RRF_MAX_SCALE
+            if r.get("_rrf_single_arm") and not (gate is not None and gate_signal == "rrf"):
+                # RRF_MAX_SCALE is three first-place votes, but only one retriever can
+                # rank this row, so its score tops out at one vote. On a small pool the
+                # heuristic sits above that, and an exact match ranked first was blocked.
+                # Capped at the one-vote maximum: that retriever's first-ranked row is
+                # admitted, and its lower ranks score under the cap, so they pass
+                # exactly where they passed before.
+                rrf_threshold = min(rrf_threshold, 1.0 / (RRF_K + 1))
             if rrf >= rrf_threshold:
                 filtered.append(r)
                 stats["rrf"] += 1
@@ -2327,11 +2430,12 @@ async def _do_recall(
     a tightly-tagged query may receive fewer than `limit` results — namespace
     partitioning is a follow-up.
 
-    source_id (v2.4.20): optional prefix filter applied to ``json_extract(source, '$.id')``.
-    Empty string disables the filter (default). Used by Discord multi-user
-    sessions to prevent cross-user memory contamination: pass e.g.
-    ``source_id="discord:12345"`` to restrict to one user, or
-    ``source_id="discord:"`` to scope to all Discord-sourced memories.
+    source_id (v2.4.20): optional filter applied to ``json_extract(source, '$.id')``
+    (``isolation.source_id_where``). Empty string disables the filter (default).
+    Used by Discord multi-user sessions to prevent cross-user memory
+    contamination: pass e.g. ``source_id="discord:12345"`` to restrict to that
+    one id, or ``source_id="discord:"`` -- a value ending in a delimiter -- to
+    scope to all Discord-sourced memories.
     Episodes are not source-tagged, so episode recall is skipped when
     ``source_id`` is non-empty — unless a ``channel`` filter (v2.4.22) is also
     set, in which case channel-scoped episodes are still recalled (the
@@ -3051,6 +3155,7 @@ async def _do_recall(
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
         r.pop("_lexical_only", None)
+        r.pop("_rrf_single_arm", None)
         r.pop("_keyword_seat", None)
         r.pop("_rsf_score", None)
         r.pop("_prior", None)
@@ -3345,7 +3450,7 @@ async def do_recall_with_context(
     """Recall memories and merge with external conversation context.
 
     project_id (v2.4.17): γ filter — passed through to do_recall.
-    source_id (v2.4.20): per-user source prefix filter — passed through to do_recall.
+    source_id (v2.4.20): per-user source filter — passed through to do_recall.
     """
     ctx = external_context or []
 
@@ -3712,7 +3817,9 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                 row_id = int(raw)
             except (TypeError, ValueError):
                 row_id = -1
-            if kind not in ("mem", "ep") or row_id <= 0:
+            # An id past SQLite's INTEGER range names no row, and binding it would
+            # raise and fail the whole batch rather than this one ref.
+            if kind not in ("mem", "ep") or row_id <= 0 or not fits_sqlite_integer(row_id):
                 missing.append(ref)
                 continue
             if kind == "mem":
@@ -4042,7 +4149,7 @@ async def _search_memories_keyword(
     """Search memories using FTS5 (preferred) or LIKE fallback.
 
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
-    source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
+    source_id (v2.4.20) applies ``isolation.source_id_where`` to ``json_extract(source, '$.id')``.
     extra_terms (2.6) are matched as well as the query, by FTS phrase and by the
     LIKE fallback; see ``_build_fts_recall_query``.
     window (2.6, the cue arm) keeps rows whose timestamp is in ``[start, end)``,

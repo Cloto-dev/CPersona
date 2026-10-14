@@ -137,9 +137,9 @@ Interning is cheap because the axes are low-cardinality. A production corpus has
 set costs 16 bytes per row, next to 3,072 bytes of embedding.
 
 `source_code` exists because the cardinality was measured rather than assumed.
-The source filter is a prefix match against a JSON field, which looks like
-something an index cannot do. But with 38 distinct values, the prefix resolves
-against the string table into a small set of codes, and the per-row test is
+The source filter matches a JSON field (one id whole, or a namespace by prefix),
+which looks like something an index cannot do. But with 38 distinct values, the
+match resolves against the string table into a small set of codes, and the per-row test is
 integer membership. Without it, every recall from a multi-user conversation
 would fall back to the old path, which is a large share of real traffic.
 
@@ -185,10 +185,11 @@ rebuild schedule:
    measurably; it never returns a wrong answer.
 3. **The tail is exact.** The newest rows, which are the ones most likely to be
    retrieved, are never served from a derived structure.
-4. **Deletion needs no index path at all.** A row deleted after the build still
-   appears as a candidate, and the hydrate fails closed on it. The index never
-   needs a delete, a repair or a compaction: if it is wrong, throw it away and
-   rebuild.
+4. **Deletion needs no index path at all.** A row deleted after the build stays
+   in the file. The query path counts the selected rows that still exist and
+   hands the query to the scan when one is gone: a deleted row would otherwise
+   keep a window position the scan gives to the next row. The index never needs
+   a delete, a repair or a compaction: if it is wrong, throw it away and rebuild.
 5. **The tail read is the shape SQLite is best at** — the newest few rows in
    index order.
 

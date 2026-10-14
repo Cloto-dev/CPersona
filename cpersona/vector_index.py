@@ -38,7 +38,7 @@ import numpy as np
 
 from cpersona import config
 from cpersona import fileperms
-from cpersona.isolation import isolation_where
+from cpersona.isolation import isolation_where, source_id_matches
 from cpersona.utils import SCORING_VERSION
 
 MAGIC = b"CPXIDX01"
@@ -81,6 +81,41 @@ INDEXED_TABLES = ("memories", "episodes")
 def index_path(table: str = "memories") -> str:
     """Where the index for `table` lives — beside the database, like the calibration sidecar."""
     return f"{config.DB_PATH}.{table}.vecindex"
+
+
+# How many agent purges have dropped the index files in this process. A build
+# reads its rows on a snapshot and publishes them afterwards; a purge that commits
+# and drops the files in between would otherwise be undone on disk, the build
+# putting the purged agent's identifiers and vectors back where the purge had just
+# removed them (bug-515). Every index file's build checks this before publishing.
+_purges = 0
+
+
+def purges() -> int:
+    """The purge count a build reads before it reads any row."""
+    return _purges
+
+
+def note_purge() -> None:
+    """Called by a purge before it drops the index files, so in-flight builds discard theirs."""
+    global _purges
+    _purges += 1
+
+
+def purged_since(purges_at_start: int) -> bool:
+    """Whether a purge dropped the index files since a build read ``purges_at_start``.
+
+    A build asks this immediately before its ``os.replace``, with no await between
+    the two, so on the event loop the purge (which counts and unlinks without
+    awaiting either) lands wholly before or wholly after. A build that answers yes
+    discards its file: the rows it holds may include a purged agent's, and the
+    next build reads the database as the purge left it.
+    """
+    return _purges != purges_at_start
+
+
+#: What a build that was discarded by a purge answers instead of a file.
+SUPERSEDED_REASON = "an agent purge dropped the index files while this build read its rows; build again"
 
 
 @dataclass(frozen=True)
@@ -313,18 +348,25 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     blobs, under a predicate built from the first pass's findings, and must
     produce exactly the rows the first pass counted.
 
-    Both passes read on the seam's read connection, which WAL gives snapshot
-    isolation from the serialised writer. The second pass's row count is checked
-    against the first anyway: snapshot isolation is an argument, and an argument
-    is not a check. A mismatch aborts the build rather than leaving a file whose
-    embeddings are shifted by a row against their ids — the one corruption that
-    would still pass every length check below.
+    The two passes are two statements, and on a connection with no transaction
+    open each reads its own snapshot (bug-589): a commit between them can delete
+    one planned row and give an embedding to a row the plan skipped, which leaves
+    the count unchanged and shifts every vector between the two rows one slot
+    against its id. So the operator command builds inside one read transaction
+    (`database.read_snapshot()`), and the second pass checks the id of every row
+    it reads against the plan's order rather than only their count: whatever
+    connection a caller passes, a file whose embeddings are shifted against their
+    ids -- the one corruption that would still pass every length check below --
+    is never written. A mismatch aborts the build; building again succeeds.
 
     The index spans every agent (the axes ride as columns, and the authority is
     re-applied when the caller hydrates), so this is a deliberate global scan,
     spelled the way the isolation gate requires one to be spelled.
     """
     out = path or index_path(table)
+    # Read before any row: a purge counted after this may have committed after the
+    # rows below were read, and its files must not come back with them.
+    purges_at_start = purges()
     plan = await plan_rows(db, table)
     if isinstance(plan, dict):
         return plan
@@ -358,15 +400,20 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     blob = json.dumps(header, sort_keys=True, separators=(",", ":")).encode("utf-8")
     blob += b" " * ((-(len(MAGIC) + 4 + len(blob))) % HEADER_ALIGN)
 
-    tmp = f"{out}.tmp"
+    # A temp name of this build's own: two builds of this file can overlap (the
+    # command-line build beside a server's), and a name derived from the output
+    # path alone made them write one inode, so the first rename published a file
+    # the second build was still writing into.
+    tmp = fileperms.temp_beside(out)
     try:
         with fileperms.open_private(tmp, "wb") as fh:
             fh.write(MAGIC)
             fh.write(struct.pack("<I", len(blob)))
             fh.write(blob)
-            fh.write(np.array([r[0] for r in kept], dtype="<i8").tobytes())
+            planned_ids = [r[0] for r in kept]
+            fh.write(np.array(planned_ids, dtype="<i8").tobytes())
 
-            written = await _stream_embeddings(db, fh, table, watermark, width)
+            written = await _stream_embeddings(db, fh, table, watermark, width, planned_ids)
             if written != count:
                 raise IndexUnusable(
                     f"embedding pass returned {written} rows, metadata pass counted {count}"
@@ -384,6 +431,9 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
             os.unlink(tmp)
         raise
 
+    if purged_since(purges_at_start):
+        os.unlink(tmp)
+        return {"built": False, "reason": SUPERSEDED_REASON}
     os.replace(tmp, out)
     return {
         "built": True,
@@ -419,33 +469,48 @@ def _is_canonical(value: str) -> bool:
     )
 
 
-async def iter_embedding_chunks(db, table: str, watermark: int, width: int):
+async def iter_embedding_chunks(db, table: str, watermark: int, width: int, planned_ids):
     """The blobs of the planned rows in canonical order, a chunk at a time.
 
     The predicate mirrors the metadata pass exactly — same watermark, same width,
     same canonical-created_at test, same ORDER BY — so the two passes describe one
     row set. Global by design, like the first pass. Both index files read their
     second pass through here, so they cannot disagree about which blob is which row.
+
+    The predicate makes the two passes describe one row set only when they read
+    one state of the database (bug-589). Each row's id is therefore read with its
+    blob and checked against `planned_ids`, the metadata pass's ids in the same
+    order, and a difference raises `IndexUnusable` before the chunk is yielded. A
+    row the plan did not count shows up as a difference too; a row it counted and
+    this pass did not reach is left to the caller's count check.
     """
     iso = isolation_where(agent_id=None)
     sql = (
-        f"SELECT embedding FROM {table}"
+        f"SELECT id, embedding FROM {table}"
         f" WHERE embedding IS NOT NULL AND id <= ? AND length(embedding) = ?"
         f"   AND {_canonical_predicate()}{iso.and_clause}"
         f" ORDER BY created_at DESC, id ASC"
     )
+    seen = 0
     async with db.execute(sql, (watermark, width, *iso.params)) as cursor:
         while True:
             rows = await cursor.fetchmany(512)
             if not rows:
                 return
-            yield [r[0] for r in rows]
+            ids = [r[0] for r in rows]
+            if ids != list(planned_ids[seen : seen + len(ids)]):
+                raise IndexUnusable(
+                    "the embedding pass read a different row set than the metadata pass "
+                    "(a write landed between them); build again"
+                )
+            seen += len(ids)
+            yield [r[1] for r in rows]
 
 
-async def _stream_embeddings(db, fh, table: str, watermark: int, width: int) -> int:
+async def _stream_embeddings(db, fh, table: str, watermark: int, width: int, planned_ids) -> int:
     """Append the blobs in canonical order, without holding them all at once."""
     written = 0
-    async for blobs in iter_embedding_chunks(db, table, watermark, width):
+    async for blobs in iter_embedding_chunks(db, table, watermark, width, planned_ids):
         fh.write(b"".join(blobs))
         written += len(blobs)
     return written
@@ -718,10 +783,11 @@ def main(argv: list | None = None) -> int:
         config.DB_PATH = args.db
 
     async def run() -> int:
-        # The read seam, not get_db(): the commit/rollback boundary belongs to
-        # database.py, and a builder that only reads has no business owning one.
+        # Reads go through a read seam, not get_db()'s connection: the
+        # commit/rollback boundary belongs to database.py, and a builder that only
+        # reads has no business owning one.
         from cpersona import database
-        from cpersona.database import close_db, connection
+        from cpersona.database import close_db, connection, read_snapshot
 
         # An operator tool does not migrate, and must not create a database behind
         # a mistyped path. Restored afterwards: this is process state, and the
@@ -732,7 +798,14 @@ def main(argv: list | None = None) -> int:
             from cpersona import coarse_index
 
             if args.command == "build":
-                async with connection() as db:
+                # One read transaction for both passes of both builders (bug-589):
+                # the documented way to run this is from a timer against a live
+                # server, and the shared read connection gives each statement its
+                # own snapshot. Entering the read seam first keeps the refusal
+                # above: the snapshot's private connection would create a missing file.
+                async with connection():
+                    pass
+                async with read_snapshot() as db:
                     result = await build_index(db, args.table)
                     if args.table in coarse_index.COARSE_TABLES:
                         # The same command builds both (design §10 B): an operator who
@@ -840,19 +913,22 @@ def select(
         mask &= np.isin(index.channel_code, _axis_codes(index.channels, {channel, ""}))
 
     if source_id:
-        # The SQL is a prefix LIKE over a JSON field. Resolved here against the
+        # The SQL is `source_id_where` over a JSON field: one id compared whole,
+        # or a namespace compared as a prefix. Resolved here against the
         # header's string table, which is small because the values are: the
         # per-row test is integer membership. A NULL source id carries NULL_CODE
-        # and matches nothing, exactly as LIKE against NULL does.
+        # and matches nothing, exactly as the SQL comparison against NULL does.
+        # `source_id_matches` draws the id/namespace line in the one place the
+        # SQL draws it, so the two arms answer the same question.
         codes = np.array(
-            # str(): `json_extract(source, '$.id')` hands back whatever type the
-            # JSON held, and SQLite returns a JSON number as an int. The scan
-            # this mirrors filters with LIKE, which coerces the number to text
-            # and matches it (bug-276) — so a non-string id must be compared the
-            # same way here, not raise. The obligation above is one-directional:
-            # matching a row the authority would drop costs wasted work, while
-            # raising takes down the query the index exists to accelerate.
-            [i for i, v in enumerate(index.sources) if v is not None and str(v).startswith(source_id)],
+            # str() inside the helper: `json_extract(source, '$.id')` hands back
+            # whatever type the JSON held, and SQLite returns a JSON number as an
+            # int. The scan this mirrors compares the number as text and matches
+            # it (bug-276) — so a non-string id must be compared the same way
+            # here, not raise. The obligation above is one-directional: matching
+            # a row the authority would drop costs wasted work, while raising
+            # takes down the query the index exists to accelerate.
+            [i for i, v in enumerate(index.sources) if source_id_matches(v, source_id)],
             dtype="<i4",
         )
         mask &= np.isin(index.source_code, codes)

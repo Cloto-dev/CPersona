@@ -76,6 +76,7 @@ the counting stays in the runner and only the verdict moves:
 """
 
 import contextlib
+import contextvars
 import datetime
 import json
 import logging
@@ -83,10 +84,11 @@ import os
 import re
 import sqlite3
 import stat
+import unicodedata
 
 import aiosqlite
 
-from cpersona import blocks, config, fileperms, generation, health, nodes, operating_context, vector
+from cpersona import associations, blocks, config, fileperms, generation, health, nodes, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
@@ -96,13 +98,16 @@ from cpersona.config import (
     STORE_BLOB,
     VECTOR_SEARCH_MODE,
     local_blobs_stored,
+    require_positive_cap,
 )
 from cpersona.database import FTS_TABLE_SQL, SCHEMA_VERSION, connection, release_read_probe_transaction
 from cpersona.utils import (
     _MEMORY_ANNOTATION_PATTERN,
     _MENTION_PATTERN,
+    _parse_timestamp_utc,
     canonical_source_types_sql,
     future_timestamp_boundary,
+    json_dumps_finite,
     normalize_source,
 )
 
@@ -136,6 +141,13 @@ CALIBRATION_STALE_DAYS = 90
 
 _USERNAME_PREFIX_PATTERN = re.compile(r"^\[(.+?)\]\s")
 _SHORT_CONTENT_THRESHOLD = 5
+# What one East Asian wide character (CJK ideograph, kana, hangul) counts for
+# against _SHORT_CONTENT_THRESHOLD. The threshold was set on Latin-script noise
+# ("ok", "hmm"), where a character carries a fraction of a word; one CJK
+# character carries what two or three Latin letters do, so a five-character
+# Japanese sentence ("妻は看護師", "my wife is a nurse") is a complete fact.
+# At 3 a single wide character still reads as trivial and two do not.
+_WIDE_CHAR_WEIGHT = 3
 _STALE_PROFILE_DAYS = 30
 
 
@@ -143,6 +155,32 @@ _STALE_PROFILE_DAYS = 30
 # check_health runners — each returns a list of issue dicts. The dispatcher
 # stamps ``severity`` from the registry default unless the runner set one.
 # ---------------------------------------------------------------------------
+
+
+# bug-539: in remote vector mode every memory row is also a vector in the remote
+# index (namespace cpersona:<owner>, id mem:<id>). The user-facing delete and update
+# handlers post /remove and /index for what they change; the repairs below delete
+# and rewrite rows too, and posted nothing, so a deleted row kept a ghost vector
+# that takes a top-K slot and rehydrates to nothing, and a rewritten row kept being
+# scored on text it no longer holds (the local NULL-and-re-embed of bug-028 never
+# reaches the remote arm). The repairs run inside the write transaction, where no
+# network call belongs, so they only record what they wrote here; the handler
+# posts it after the commit. None (the default) means nobody is collecting: a
+# report-only run, a local-mode run, or a direct runner call in a test.
+#
+# Each entry is (owner agent_id, row id, new text) with None as the text for a
+# delete, appended only after the statement ran, so the list is exactly what the
+# run wrote. Order matters: a row rewritten by one check and deleted by a later
+# one ends deleted.
+remote_index_effects: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "remote_index_effects", default=None
+)
+
+
+def _note_remote(owner: str, row_id: int, text: str | None) -> None:
+    effects = remote_index_effects.get()
+    if effects is not None:
+        effects.append((owner, row_id, text))
 
 
 # bug-028: the content-rewriting fixers below (annotation/mention/oversized)
@@ -157,13 +195,32 @@ _STALE_PROFILE_DAYS = 30
 # duplicate, so keep the existing row and never touch locked rows.
 async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> None:
     """Rewrite content for re-embedding, or delete an unlocked dedup collision."""
+    owner = None
+    if remote_index_effects.get() is not None:
+        found = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (row_id,))
+        owner = found[0][0] if found else None
     try:
-        await db.execute(
+        cursor = await db.execute(
             "UPDATE memories SET content = ?, embedding = NULL, embedding_model = '' WHERE id = ? AND locked = 0",
             (new_content, row_id),
         )
+        written = new_content
     except sqlite3.IntegrityError:
-        await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
+        # The rewritten text already exists in this agent, project and channel (the
+        # dedup index), and that row is kept. The declarations about this row move to
+        # it first: the delete trigger would otherwise take them with this row, though
+        # the text they are about survives.
+        survivor = await db.execute_fetchall(
+            "SELECT k.id, k.agent_id FROM memories k, memories r WHERE r.id = ? AND k.agent_id = r.agent_id"
+            " AND k.project_id = r.project_id AND k.channel = r.channel AND k.content = ? AND k.id != r.id LIMIT 1",
+            (row_id, new_content),
+        )
+        if survivor:
+            await associations.repoint(db, survivor[0][1], {f"mem:{row_id}": f"mem:{survivor[0][0]}"})
+        cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
+        written = None
+    if owner is not None and cursor.rowcount:
+        _note_remote(owner, row_id, written)
 
 
 # The three content-rewriting checks below share one shape: match a pattern,
@@ -226,56 +283,84 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
 
 async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
-    # bug-014: group by (agent_id, project_id, content) — deliberately NOT the
-    # same key as the idx_memories_dedup_content UNIQUE index
-    # (agent_id, project_id, channel, content). Omitting channel is intentional:
-    # the index only forbids exact (…,channel,…) duplicates at write time, and
-    # this check is what collapses the same content across different channels of
-    # one project (the cross-channel cleanup the index deliberately leaves to
-    # check_health — see test_v2435_bugfixes.py::_insert_dup). Including
-    # project_id is the fix: project_id is a hard γ-isolation axis, so the same
-    # content under project '' (global) and project 'X' are legitimately
-    # distinct rows with different visibility. The previous (agent_id, content)
-    # grouping collapsed them and the MIN(id) survivor could delete the global
-    # copy, silently narrowing visibility for every other project (bug-014).
-    dup_rows = await db.execute_fetchall(
-        f"""SELECT content, COUNT(*) as cnt FROM memories
-            WHERE 1=1{iso.and_clause}
-            GROUP BY agent_id, project_id, content HAVING cnt > 1""",
-        iso.params,
-    )
-    if not dup_rows:
-        return []
-    total_dupes = sum(r[1] - 1 for r in dup_rows)
-    # Agent-scoped, locked-safe (bug-007): only unlocked non-survivors within
-    # scope. The survivor grouping MUST match the detection grouping above
-    # (bug-014). bug-128: prefer the channel='' shared row so cross-channel dedup
-    # never deletes the broadest-visibility copy; otherwise keep the MIN(id).
+    # A row is a duplicate only when deleting it leaves every reader who could
+    # see it able to see the same content. project_id is a hard γ-isolation
+    # axis, so the same content under project '' and project 'X' are distinct
+    # rows (bug-014); a channel 'X' read sees channel 'X' plus channel ''. So,
+    # within one (agent_id, project_id, content) group, a row is covered when
+    #   - an older row sits in the same channel: the exact-bucket duplicate the
+    #     idx_memories_dedup_content UNIQUE index forbids at write time, which a
+    #     corpus from before that index can still hold; or
+    #   - it sits in a named channel and a channel='' row exists, which every
+    #     reader of that channel still sees (bug-128).
+    # The same text in two sibling channels with no channel='' copy is two
+    # memories, not a duplicate: deleting either one removes the content from
+    # every recall scoped to its channel. The store draws the same line -- a
+    # channel write is skipped only against the same channel or channel ''.
     #
-    # One fragment, two verbs: the COUNT that reports `repairable` and the DELETE
-    # that performs the repair have to select the same rows, and a count that
-    # disagrees with its own delete is the defect the contract exists to catch
-    # (the reasoning behind ``invalid_source_type_where``). Local rather than a
-    # module constant so the isolation predicate stays inside the statement the
-    # agent-scoping gate reads.
-    surplus = f"""FROM memories
-                WHERE locked = 0
-                  AND id NOT IN (
-                      SELECT COALESCE(MIN(CASE WHEN channel = '' THEN id END), MIN(id))
-                      FROM memories GROUP BY agent_id, project_id, content
+    # One fragment, every verb: the groups / total_extra report, the COUNT that
+    # reports `repairable` and the DELETE that performs the repair select the
+    # same rows, and a count that disagrees with its own delete is the defect
+    # the contract exists to catch (the reasoning behind
+    # ``invalid_source_type_where``). Local rather than a module constant so the
+    # isolation predicate stays inside the statement the agent-scoping gate reads.
+    covered = f"""FROM memories
+                WHERE (
+                      id NOT IN (
+                          SELECT MIN(id) FROM memories
+                          GROUP BY agent_id, project_id, channel, content
+                      )
+                      OR (channel != '' AND EXISTS (
+                          SELECT 1 FROM memories AS shared
+                          WHERE shared.agent_id = memories.agent_id
+                            AND shared.project_id = memories.project_id
+                            AND shared.content = memories.content
+                            AND shared.channel = ''
+                      ))
                   )
                  {iso.and_clause}"""
+    total_dupes = (await db.execute_fetchall(f"SELECT COUNT(*) {covered}", iso.params))[0][0]
+    if not total_dupes:
+        return []
+    groups = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM (SELECT 1 {covered} GROUP BY agent_id, project_id, content)",
+            iso.params,
+        )
+    )[0][0]
+    # Agent-scoped, locked-safe (bug-007): only the unlocked covered rows.
     # Counted from the fixer's own predicate, not derived from `total_extra`: a
-    # group whose every non-survivor is locked contributes to total_extra and to
-    # nothing a fix can write (bug-139's lesson, applied before the repair
-    # rather than after it).
+    # covered row that is locked contributes to total_extra and to nothing a fix
+    # can write (bug-139's lesson, applied before the repair rather than after it).
+    surplus = f"{covered} AND locked = 0"
     deletable = (await db.execute_fetchall(f"SELECT COUNT(*) {surplus}", iso.params))[0][0]
     if fix:
+        # A deleted copy's declarations move to the row that covers it, which holds the
+        # same text; the delete trigger would otherwise take them with the copy. That
+        # row is the oldest channel '' copy when there is one, and otherwise the oldest
+        # copy in the deleted row's own channel -- never a sibling channel's copy,
+        # which no reader of this row's channel sees. Only rows something declares
+        # about are read.
+        for row_id, agent, keep in await db.execute_fetchall(
+            "SELECT id, agent_id, (SELECT COALESCE(MIN(CASE WHEN k.channel = '' THEN k.id END),"
+            " MIN(CASE WHEN k.channel = memories.channel THEN k.id END))"
+            " FROM memories k WHERE k.agent_id = memories.agent_id AND k.project_id = memories.project_id"
+            f" AND k.content = memories.content) {surplus} AND {associations.names_memory_sql('memories.id')}",
+            iso.params,
+        ):
+            await associations.repoint(db, agent, {f"mem:{row_id}": f"mem:{keep}"})
+        # The same predicate, read under the same transaction just before the
+        # DELETE, is the set the DELETE removes (bug-539).
+        doomed = []
+        if remote_index_effects.get() is not None:
+            doomed = await db.execute_fetchall(f"SELECT agent_id, id {surplus}", iso.params)
         await db.execute(f"DELETE {surplus}", iso.params)
+        for owner, row_id in doomed:
+            _note_remote(owner, row_id, None)
     return [
         {
             "type": "duplicate_content",
-            "groups": len(dup_rows),
+            "groups": groups,
             "total_extra": total_dupes,
             "repairable": deletable,
         }
@@ -283,6 +368,10 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
 
 
 async def check_oversized_content(db, agent_id: str, fix: bool) -> list[dict]:
+    # A non-positive cap selects every row and cuts it to nothing (or one more
+    # character per run), and the collision path below then deletes the rows that
+    # converge. Raise before reading, so the run reports a crashed check instead.
+    require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
         f"""SELECT id, content, locked, length(content) as len FROM memories
@@ -326,6 +415,8 @@ async def check_oversized_profile(db, agent_id: str, fix: bool) -> list[dict]:
     write path caps at — detection, repair and the writer read one number. When
     the memory cap moves (the 2.6 tree) this check does not move with it.
     """
+    # Same refusal as check_oversized_content: substr(content, 1, 0) is ''.
+    require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
     iso = isolation_where(agent_id=agent_id or None)
     rows = await db.execute_fetchall(
         f"""SELECT agent_id, user_id, length(content) AS len FROM profiles
@@ -1813,6 +1904,18 @@ async def axis_distribution(db, agent_id: str = "") -> dict:
     return out
 
 
+def _reencode_json_object(raw) -> str:
+    """Valid JSON text for an object column SQLite called invalid: the same object
+    re-encoded when Python's more lenient parser still reads one, else '{}'."""
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError, RecursionError):
+        return "{}"
+    if not isinstance(value, dict):
+        return "{}"
+    return json_dumps_finite(value)
+
+
 async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     # bug-380: no guard around the two counts. One guard over both meant a failure
@@ -1847,13 +1950,30 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
         # check_health(fix=true) must never alter a locked memory (same guard on
         # invalid_timestamp / timestamp_format_drift / invalid_source_type /
         # deep_anonymous_source).
-        await db.execute(
-            f"UPDATE memories SET source = '{{}}' WHERE json_valid(source) = 0 AND locked = 0{iso.and_clause}", iso.params
-        )
-        await db.execute(
-            f"UPDATE memories SET metadata = '{{}}' WHERE json_valid(metadata) = 0 AND locked = 0{iso.and_clause}",
+        #
+        # An object Python can still parse is re-encoded rather than blanked. The
+        # usual case is a bare NaN / Infinity token written by a json.dumps with
+        # allow_nan=True: SQLite rejects the whole text for that one value, and
+        # writing '{}' threw away every other key with it -- the producer
+        # attribution in source, which source_id-scoped recall reads, included.
+        # Anything that does not parse to an object still becomes '{}'; the CASE
+        # keeps that fallback if a re-encoding were ever rejected by SQLite too.
+        bad_rows = await db.execute_fetchall(
+            f"""SELECT id, source, metadata, json_valid(source) = 0, json_valid(metadata) = 0
+                FROM memories
+                WHERE (json_valid(source) = 0 OR json_valid(metadata) = 0)
+                AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+        for row_id, source, metadata, source_bad, metadata_bad in bad_rows:
+            for column, raw, bad in (("source", source, source_bad), ("metadata", metadata, metadata_bad)):
+                if not bad:
+                    continue
+                await db.execute(
+                    f"UPDATE memories SET {column} = CASE WHEN json_valid(?1) THEN ?1 ELSE '{{}}' END "
+                    "WHERE id = ?2 AND locked = 0",
+                    (_reencode_json_object(raw), row_id),
+                )
     return [
         {
             "type": "invalid_json",
@@ -1862,6 +1982,30 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
             "repairable": repairable,
         }
     ]
+
+
+def _sqlite_readable_stamp(ts: str) -> str | None:
+    """The instant the package's readers see in ``ts``, spelled so SQLite reads it.
+
+    SQLite's datetime() is stricter than ``datetime.fromisoformat``: it rejects an
+    offset with no colon ('+0900', '+09'), the ISO basic format ('20250102T010000Z')
+    and a comma fraction, all of which ``_parse_timestamp_utc`` -- the parser every
+    scoring and recall path uses -- reads. Such a stamp is not corrupt; only its
+    spelling is foreign to SQL. Returns None when the readers cannot parse it either.
+
+    An aware stamp is converted to the canonical UTC form (the same instant). A naive
+    one keeps its wall-clock reading and stays naive: inventing a zone for it is the
+    fabrication timestamp_format_drift refuses.
+    """
+    if _parse_timestamp_utc(ts) is None:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.isoformat()
+        return parsed.astimezone(datetime.timezone.utc).isoformat()
+    except (ValueError, OverflowError):
+        return None
 
 
 async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
@@ -1874,18 +2018,44 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     )[0][0]
     if bad_ts == 0:
         return []
+    # A stamp SQLite cannot read but the Python readers can still names the
+    # caller's event time, and the created_at copy below would replace that with the
+    # row's insertion time -- a backdated memory would rank as brand new in recall.
+    # Those rows are respelled instead (same instant), and only a stamp nothing can
+    # parse falls back to created_at. The respelled form is checked against SQLite
+    # itself so a row is never counted repairable by a rewrite SQL still rejects.
+    rows = await db.execute_fetchall(
+        f"""SELECT id, timestamp, locked FROM memories
+            WHERE datetime(timestamp) IS NULL AND timestamp != ''{iso.and_clause}""",
+        iso.params,
+    )
+    respell: list[tuple[int, str]] = []
+    for row_id, ts, locked in rows:
+        canon = _sqlite_readable_stamp(ts) if isinstance(ts, str) else None
+        if canon is None or locked:
+            continue
+        if (await db.execute_fetchall("SELECT datetime(?) IS NOT NULL", (canon,)))[0][0]:
+            respell.append((row_id, canon))
+    respell_ids = {row_id for row_id, _canon in respell}
     # Before the repair (it rewrites the very rows this counts), and with the
     # fixer's own locked = 0 / parseable-created_at guards so the two agree.
-    repairable = (
-        await db.execute_fetchall(
-            f"""SELECT COUNT(*) FROM memories
+    fallback_ids = {
+        r[0]
+        for r in await db.execute_fetchall(
+            f"""SELECT id FROM memories
                 WHERE datetime(timestamp) IS NULL AND timestamp != ''
                 AND datetime(created_at) IS NOT NULL
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
-    )[0][0]
+    }
+    repairable = len(respell_ids | fallback_ids)
     if fix:
+        # bug-098: locked = 0 on the write as on the scan.
+        for row_id, canon in respell:
+            await db.execute(
+                "UPDATE memories SET timestamp = ? WHERE id = ? AND locked = 0", (canon, row_id)
+            )
         # bug-229: write the CANONICAL AWARE form, not created_at verbatim.
         # created_at is SQLite-native `YYYY-MM-DD HH:MM:SS` (naive) while the
         # write path stores `...T...+00:00`, so copying it minted a `naive`
@@ -1902,6 +2072,13 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+        # The coarse index holds each row's build-time datetime(timestamp) and
+        # filters periods by it; a row given a readable stamp here, respelled or
+        # copied from created_at, would stay in no period there. Both sets were
+        # named above, before the UPDATEs that change them.
+        from cpersona import coarse_index
+
+        coarse_index.discard_if_holding(sorted(respell_ids | fallback_ids))
     return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
 
 
@@ -1965,6 +2142,17 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
         )
     )[0][0]
     if fix:
+        # The coarse index holds each row's build-time datetime(timestamp) and
+        # filters periods by it; a row moved back to its created_at here would
+        # stay in its old period there. Named before the UPDATE moves them.
+        retimed = await db.execute_fetchall(
+            f"""SELECT id FROM memories
+                WHERE strftime('%Y-%m-%d %H:%M:%f', timestamp) > strftime('%Y-%m-%d %H:%M:%f', ?)
+                AND datetime(created_at) IS NOT NULL
+                AND datetime(created_at) <= datetime(?)
+                AND locked = 0{iso.and_clause}""",
+            (boundary, boundary, *iso.params),
+        )
         # bug-098: locked = 0 -- check_health(fix=true) never alters a locked row.
         await db.execute(
             f"""UPDATE memories
@@ -1975,6 +2163,9 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
                 AND locked = 0{iso.and_clause}""",
             (boundary, boundary, *iso.params),
         )
+        from cpersona import coarse_index
+
+        coarse_index.discard_if_holding([r[0] for r in retimed])
     return [{"type": "future_timestamp", "count": ahead, "repairable": repairable}]
 
 
@@ -2107,9 +2298,11 @@ async def check_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dic
     for row_id, ts, locked in aware_rows:
         try:
             parsed = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        except ValueError:
+            canon = parsed.astimezone(datetime.timezone.utc).isoformat()
+        except (ValueError, OverflowError):
+            # OverflowError: the offset carries the instant past the representable
+            # range, so there is no UTC form to normalise it to.
             continue
-        canon = parsed.astimezone(datetime.timezone.utc).isoformat()
         if canon == ts:
             continue
         if locked:
@@ -2175,9 +2368,10 @@ async def check_episode_timestamp_format_drift(db, agent_id: str, fix: bool) -> 
             if cls == "aware":
                 try:
                     parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-                except ValueError:
+                    canon = parsed.astimezone(datetime.timezone.utc).isoformat()
+                except (ValueError, OverflowError):
+                    # As in the memories check: no UTC form exists to normalise to.
                     continue
-                canon = parsed.astimezone(datetime.timezone.utc).isoformat()
                 if canon != value:
                     repairs.append((row_id, column, canon))
             elif cls == "naive":
@@ -2290,10 +2484,18 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
         )
     )[0][0]
     if fix:
+        doomed = []
+        if remote_index_effects.get() is not None:
+            doomed = await db.execute_fetchall(
+                f"SELECT agent_id, id FROM memories WHERE {_EMPTY_CONTENT_WHERE} AND locked = 0{iso.and_clause}",
+                iso.params,
+            )
         await db.execute(
             f"DELETE FROM memories WHERE {_EMPTY_CONTENT_WHERE} AND locked = 0{iso.and_clause}",
             iso.params,
         )
+        for owner, row_id in doomed:
+            _note_remote(owner, row_id, None)
     return [{"type": "empty_content", "count": empty, "repairable": repairable}]
 
 
@@ -2579,8 +2781,37 @@ async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
         # name to recover into a shape that never claimed one.
         issue["unattributed"] = unattributed
     if anon:
-        issue["hint"] = "Use deep_check with fix=true to recover names from content"
+        # Name the scoped call: deep_check with no checks runs every deep
+        # repair, and short_content's repair deletes rows -- following this hint
+        # must repair attribution and nothing else.
+        issue["hint"] = (
+            "Use deep_check(agent_id, fix=true, checks=['anonymous_source']) "
+            "to recover names from content"
+        )
     return [issue]
+
+
+def _server_path(path: str, agent_id: str) -> dict:
+    """``{"path": path}`` for the whole-database report, ``{}`` for a scoped one.
+
+    Where the server keeps its files is the operator's view. The unscoped report
+    is that view (under ACL it takes read on every agent), while an agent-scoped
+    call needs read on one agent only, and every other figure it gets is about
+    that agent alone (the bug-062 rule). The finding still reaches it; the host
+    layout does not.
+    """
+    return {} if agent_id else {"path": path}
+
+
+def _without_server_path(text: str, path: str, agent_id: str) -> str:
+    """``text`` with ``path`` cut down to its file name for an agent-scoped report.
+
+    An OS error carries the path it failed on, so the finding's own message would
+    otherwise put back the path ``_server_path`` left out.
+    """
+    if not agent_id or not path:
+        return text
+    return text.replace(path, os.path.basename(path))
 
 
 async def check_operating_context_parse(db, agent_id: str = "", fix: bool = False) -> list[dict]:
@@ -2592,8 +2823,8 @@ async def check_operating_context_parse(db, agent_id: str = "", fix: bool = Fals
         return [
             {
                 "type": "operating_context_parse_error",
-                "path": state["path"],
-                "detail": state["parse_error"],
+                **_server_path(state["path"], agent_id),
+                "detail": _without_server_path(state["parse_error"], state["path"], agent_id),
                 "hint": "operating context is dormant until the sidecar parses; edit the file",
             }
         ]
@@ -2609,7 +2840,7 @@ async def check_operating_context_size(db, agent_id: str = "", fix: bool = False
         return [
             {
                 "type": "operating_context_summary_oversized",
-                "path": state["path"],
+                **_server_path(state["path"], agent_id),
                 "summary_len": state["summary_len"],
                 "budget": operating_context.SUMMARY_WARN_CHARS,
                 "hint": "move detail into [[doctrine]] sections (served via get_operating_context)",
@@ -2847,8 +3078,9 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                     "indexed_rows": index.count,
                     "rows_still_present": live_indexed,
                     "hint": (
-                        "rows the index holds are gone from the database; the index "
-                        "hands each query back to the scan until it is rebuilt: "
+                        "rows the index holds are gone from the database; every query "
+                        "whose window holds one of them is handed back to the scan until "
+                        "the index is rebuilt: "
                         f"python -m cpersona.vector_index --db <path> --table {table} build"
                     ),
                 }
@@ -3187,7 +3419,7 @@ async def check_file_permissions(db, agent_id: str = "", fix: bool = False) -> l
                 if owned.kind == "dir"
                 else "file_reachable_by_other_accounts"
             ),
-            "path": owned.path,
+            **_server_path(owned.path, agent_id),
             "mode": f"{mode:04o}",
             "holds": owned.holds,
             "writable_by_others": bool(mode & _OTHERS_WRITE),
@@ -3220,7 +3452,7 @@ async def check_file_permissions(db, agent_id: str = "", fix: bool = False) -> l
                 # Reported rather than raised: one unwritable path must not cost
                 # the operator the rest of the repair pass.
                 issue["fixed"] = False
-                issue["fix_error"] = str(exc)
+                issue["fix_error"] = _without_server_path(str(exc), owned.path, agent_id)
         issues.append(issue)
     return issues
 
@@ -3451,11 +3683,12 @@ class Check:
         self.fix_capable = fix_capable
         self.runner = runner
         # Whether this check's repair writes rows outside the agent the call
-        # names. Almost none do; the guard that authorises `fix=true` needs to
-        # know which, because it can only demand a permission that matches the
-        # reach of the write (bug-310). Declared here, beside the runner, so a
-        # repair that widens its reach and a guard that authorises it cannot
-        # drift apart the way they did.
+        # names, or changes state every agent shares (a file holding all of
+        # them, the mode of the database). Almost none do; the guard that
+        # authorises `fix=true` needs to know which, because it can only
+        # demand a permission that matches the reach of the write (bug-310).
+        # Declared here, beside the runner, so a repair that widens its reach
+        # and a guard that authorises it cannot drift apart the way they did.
         self.cross_agent_fix = cross_agent_fix
 
 
@@ -3500,7 +3733,9 @@ HEALTH_CHECKS: list[Check] = [
     # own created_at) and their predicates are disjoint by construction: a stamp
     # SQLite cannot read is the first one's, a stamp it reads as ahead of the
     # clock is this one's. Ordered so a row that somehow satisfied both would be
-    # repaired into a readable past stamp rather than the other way round.
+    # repaired into a readable past stamp rather than the other way round. It also
+    # lets this check see a future stamp invalid_timestamp has just respelled from
+    # a form only Python reads ('+0900') into one SQL compares.
     Check("future_timestamp", "warn", True, check_future_timestamp),
     # bug-208: info, not warn — since bug-213 the read paths score these rows by
     # created_at anyway; the fix materialises that fallback for direct readers.
@@ -3523,7 +3758,10 @@ HEALTH_CHECKS: list[Check] = [
     Check("block_index", "info", True, check_block_index, cross_agent_fix=True),
     Check("operating_context_parse", "warn", False, check_operating_context_parse),
     Check("operating_context_size", "info", False, check_operating_context_size),
-    Check("file_permissions", "warn", True, check_file_permissions),
+    # cross_agent_fix: its repair chmods the database, its sidecars and the index
+    # files, which hold every agent's records; their mode is the operator's choice
+    # for the whole deployment, not one agent's.
+    Check("file_permissions", "warn", True, check_file_permissions, cross_agent_fix=True),
     Check("missing_nodes", "info", True, check_missing_nodes),
     Check("missing_blocks", "info", True, check_missing_blocks),
 ]
@@ -3629,6 +3867,8 @@ async def run_health_checks(
         savepoint = f"health_check_{check.name}" if fix else None
         if savepoint:
             await db.execute(f'SAVEPOINT "{savepoint}"')
+        effects = remote_index_effects.get()
+        effects_mark = len(effects) if effects is not None else 0
         try:
             if embedding_cache is not None and check.name in _EMBEDDING_CHECKS:
                 found = await check.runner(db, agent_id, fix, embedding_cache=embedding_cache)
@@ -3641,6 +3881,10 @@ async def run_health_checks(
                 # row this rolls back to.
                 with contextlib.suppress(Exception):
                     await db.execute(f'ROLLBACK TO "{savepoint}"')
+                # The rows this check noted for the remote index are back as they
+                # were, so its notes go too (bug-539).
+                if effects is not None:
+                    del effects[effects_mark:]
             logger.warning("health check %s crashed: %s", check.name, e)
             found = [{"type": "check_crashed", "check_name": check.name, "detail": str(e), "severity": "warn"}]
         finally:
@@ -3793,11 +4037,29 @@ async def deep_anonymous_source(db, agent_id: str, fix: bool) -> dict:
 _SHORT_CONTENT_DELETE_CHUNK = 500
 
 
+def _short_content_length(content: str) -> int:
+    """Length of ``content`` for the trivial-content test, counting each East
+    Asian wide character as _WIDE_CHAR_WEIGHT. Strips spaces only, as SQLite's
+    TRIM does, so the SQL prefilter and this count agree on what is trimmed.
+    A non-text value (SQLite's type affinity lets a legacy row hold one) is
+    measured as its text form rather than raising mid-repair."""
+    text = content if isinstance(content, str) else str(content)
+    return sum(
+        _WIDE_CHAR_WEIGHT if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        for ch in text.strip(" ")
+    )
+
+
 async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
-    rows = await db.execute_fetchall(
+    # SQLite's LENGTH counts characters, and every character weighs at least 1,
+    # so the character prefilter is a superset of the weighted test; the weight
+    # is applied here so that a short CJK fact is never selected, reported, or
+    # deleted as trivial.
+    candidates = await db.execute_fetchall(
         "SELECT id, content FROM memories WHERE agent_id = ? AND LENGTH(TRIM(content)) <= ?",
         (agent_id, _SHORT_CONTENT_THRESHOLD),
     )
+    rows = [r for r in candidates if _short_content_length(r[1]) <= _SHORT_CONTENT_THRESHOLD]
     fixed_count = 0
     if fix and rows:
         ids = [r[0] for r in rows]
@@ -3812,6 +4074,11 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
         for start in range(0, len(ids), _SHORT_CONTENT_DELETE_CHUNK):
             chunk = ids[start : start + _SHORT_CONTENT_DELETE_CHUNK]
             placeholders = ",".join("?" * len(chunk))
+            doomed = []
+            if remote_index_effects.get() is not None:
+                doomed = await db.execute_fetchall(
+                    f"SELECT id FROM memories WHERE id IN ({placeholders}) AND locked = 0", chunk
+                )
             # Never delete locked rows (bug-015 / the bug-007 invariant): a memory the
             # user explicitly locked must survive maintenance even when it is short.
             # rowcount (not len(chunk)) so the reported count excludes the survivors.
@@ -3819,6 +4086,9 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
                 f"DELETE FROM memories WHERE id IN ({placeholders}) AND locked = 0", chunk
             )
             fixed_count += cur.rowcount
+            # The rows were selected by agent_id, so that is their namespace (bug-539).
+            for (row_id,) in doomed:
+                _note_remote(agent_id, row_id, None)
     result = {"count": len(rows)}
     if fix:
         result["fixed"] = fixed_count
@@ -3886,7 +4156,7 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
     leaves the gate uncalibrated). Either way the condition is visible to an operator
     instead of living only in one boot-time log line.
     """
-    from cpersona.admin_handlers import _load_calibration_state
+    from cpersona.admin_handlers import _read_calibration_sidecar
 
     if not vector._embedding_client:
         return {"status": "not_applicable", "reason": "no embedding client configured"}
@@ -3896,7 +4166,19 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
             (agent_id,),
         )
     )[0][0]
-    state = _load_calibration_state()
+    state, unreadable = _read_calibration_sidecar()
+    if unreadable:
+        # Not "never_calibrated": the file holds every agent's thresholds, gates and
+        # precision overrides, none of which is applied while it does not parse, and the
+        # repair is to fix or restore those bytes -- not to recalibrate, which replaces
+        # them with whatever this process holds.
+        return {
+            "status": "unreadable",
+            "hint": (
+                "the calibration sidecar exists but cannot be parsed; repair it or "
+                "restore a copy (a recalibration copies it aside before replacing it)"
+            ),
+        }
     if state is None:
         if embedded >= 50:
             return {
@@ -3911,16 +4193,26 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
 
     runtime_scoring_version = calibration_fingerprint()
     if sidecar_scoring_version != runtime_scoring_version:
+        # Deliberately NOT "run calibrate_threshold": this status fires precisely when
+        # nothing was restored, and a single-agent calibration then rewrites the whole
+        # sidecar from empty in-memory state, dropping every other agent's thresholds
+        # and gates (bug-189). A restart takes the startup guard's path, which
+        # recalibrates every agent in one pass -- but only when the configuration lets
+        # boot recalibrate; with both flags off a restart is a no-op and the advice
+        # has to name the setting instead.
+        if config.AUTO_CALIBRATE or config.CALIBRATE_ON_MODEL_CHANGE:
+            hint = "restart the server (it recalibrates automatically on boot)"
+        else:
+            hint = (
+                "recalibration on boot is disabled (CPERSONA_AUTO_CALIBRATE and "
+                "CPERSONA_CALIBRATE_ON_MODEL_CHANGE are both off), so a restart does not "
+                "repair this: set CPERSONA_CALIBRATE_ON_MODEL_CHANGE=true and restart the server"
+            )
         return {
             "status": "stale_scoring_version",
             "sidecar_scoring_version": sidecar_scoring_version,
             "runtime_scoring_version": runtime_scoring_version,
-            # Deliberately NOT "run calibrate_threshold": this status fires precisely when
-            # nothing was restored, and a single-agent calibration then rewrites the whole
-            # sidecar from empty in-memory state, dropping every other agent's thresholds
-            # and gates (bug-189). A restart takes the startup guard's path, which
-            # recalibrates every agent in one pass.
-            "hint": "restart the server (it recalibrates automatically on boot)",
+            "hint": hint,
         }
     calibrated_at = state.get("calibrated_at")
     try:

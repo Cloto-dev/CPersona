@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:e3d10acd711e7e12756bc205de92a6b9a7cc27a8 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:065ba1d163386f9b1cd38e66f7f7ca1eb0f74882 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -199,6 +199,12 @@ recall が現在より `CPERSONA_VECTOR_REACH` − `CPERSONA_MAX_MEMORIES` 行�
   バケット (`agent_id, project_id, channel, content`) に限られる一方、先に走る
   判定はグローバルプールも見ます。したがって*異なる* project バケットへ並行に
   書き込む 2 者は、どちらも着地しえます。
+  スキップされるのは**同じ `source.id`** で保存された複製に対してだけです。
+  異なる source id の複製は別の主体のもので、それで応答すると、呼び出し側の
+  文章は自分の `source_id` で絞った recall から届かなくなります。その複製が
+  同じ厳密なバケットにある場合、ユニーク索引がバケットごとに 1 件しか保てない
+  ため、store は**拒否**されます (`ok: false`、id なし)。グローバルプール越しに
+  見えるだけの場合は、呼び出し側の複製が書き込まれます。
 
 決定的な帰結: **upsert は存在しません。** *同じ* `msg_id` で*変更された*内容を
 再保存しても、保存済みの行は**更新されません**。スキップされます。保存済みの

@@ -66,7 +66,7 @@ class FarHit:
 
 
 def _admitted(agent_id, project_id, channel, source_id) -> tuple[str, tuple]:
-    """The authority's predicate, as both reads by id apply it: isolation and the source prefix."""
+    """The authority's predicate, as both reads by id apply it: isolation and the source filter."""
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     src = source_id_where(source_id)
     return f"{iso.and_clause}{src.and_clause}", (*iso.params, *src.params)

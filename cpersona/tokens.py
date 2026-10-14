@@ -50,6 +50,11 @@ def _load():
         data = VOCAB_PATH.read_bytes()
     except OSError as exc:
         raise VocabularyError(f"{ENCODING} vocabulary not found at {VOCAB_PATH}") from exc
+    # A checkout that converted line endings (Git for Windows' core.autocrlf=true)
+    # holds the same vocabulary with CRLF. Every line is base64 and a rank, neither of
+    # which can contain a carriage return, so normalising before the digest only
+    # undoes that conversion; any other change still fails the check.
+    data = data.replace(b"\r\n", b"\n")
     if hashlib.sha256(data).hexdigest() != VOCAB_SHA256:
         raise VocabularyError(f"{ENCODING} vocabulary at {VOCAB_PATH} does not match its digest")
     ranks = {base64.b64decode(token): int(rank) for token, rank in (line.split() for line in data.splitlines() if line)}

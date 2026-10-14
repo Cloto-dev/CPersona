@@ -378,7 +378,9 @@ With the ledger, each of those events is an edit to one file: pointing two `(iss
 at one alias is manual account linking, and it is the operator's escape hatch. The ledger is
 deliberately a different file from the grant table, with different writers: `acl.json` is
 operator-written policy the server never touches; the ledger is server-written state the operator
-may edit.
+may edit. The running server re-reads the file when it changes, so a relinked or removed row
+takes effect on the next call, with no restart, and a removed row is not written back by a
+later issuance.
 
 **Issuance is automatic.** The first call a new subject scopes to itself mints an alias, records it
 durably, logs it, and reports it (`alias_issued: true` in the response). The invitation-shaped alternative — require an operator to pre-create each
@@ -413,8 +415,11 @@ addressable. Four refusals keep the sentinel from widening anything:
   refuses to serve: a stored `@me` row could never be addressed again, and an unrecorded `u-`
   agent is indistinguishable from an issued alias. Aliases the ledger records are exempt: they
   are the server's own prior issuance, and refusing them made the first restart after the first
-  real use fail on legitimate data (measured in production, 2026-08-31). Deployments that never
-  opt in keep every name they have.
+  real use fail on legitimate data (measured in production, 2026-08-31). While the server runs,
+  a write that would add rows under such a name (`store`, `archive_episode`, `update_profile`,
+  and the target of `merge_memories` or `import_memories`, including the agent ids an import
+  file names) is refused, so no call can create the state the next start refuses.
+  Deployments that never opt in keep every name they have.
 - An issuer whose metadata declares only pairwise subject identifiers is
   refused while `per_subject` is configured. A pairwise `sub` names a (person,
   client) pair, not a person, so the ledger key would split one person's memory

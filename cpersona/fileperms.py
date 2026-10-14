@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,27 @@ def create_private(path: str) -> bool:
         return False
     os.close(fd)
     return True
+
+
+def temp_beside(path: str, tag: str = ".tmp") -> str:
+    """Create a new, empty, owner-only temp file next to ``path``; return its name.
+
+    For a write that publishes with ``os.replace(temp, path)``: the temp file has
+    to share ``path``'s directory for the rename to stay on one filesystem, and
+    it has to be this call's own. A name derived from ``path`` alone is shared by
+    every writer of that path, so two builds running at once opened one inode
+    with ``O_TRUNC``, wrote into each other's bytes, and unlinked each other's
+    file in cleanup -- the first rename could then publish the inode the second
+    was still writing. ``mkstemp`` mints a name no other call holds (``O_EXCL``)
+    at ``0600``; the descriptor is closed so the caller reopens the name through
+    ``open_private`` like any other file it writes. The caller removes only the
+    names it was given here.
+    """
+    fd, name = tempfile.mkstemp(
+        dir=os.path.dirname(path) or ".", prefix=os.path.basename(path) + tag + "."
+    )
+    os.close(fd)
+    return name
 
 
 def makedirs_private(path: str) -> None:

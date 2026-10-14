@@ -287,8 +287,8 @@ alongside the implementation, independent of which way §9-D6 resolves.
 | `calibrate_threshold`, `set_recall_precision` | read-write | `agent_id` argument (mutate per-agent calibration state) |
 | `check_health`, `deep_check` | read; **read-write when `fix=true`** | `agent_id` argument; empty = every agent → requires the grant on `"*"` |
 | `migrate_channel_axis` | read-write | `agent_id` argument; empty = every agent → `"*"` |
-| `export_memories` | read-write; **while `CPERSONA_EXPORT_DIR` is unset (the shipped default) the demand escalates to `"*"`** — the path argument is caller-chosen anywhere on the filesystem, so the blast radius is not one agent's data (§9-D4, second amendment from the pre-merge review) | `agent_id` argument |
-| `import_memories` | read-write; same `"*"` escalation while `CPERSONA_EXPORT_DIR` is unset | `target_agent_id`; empty = "as recorded in file" → `"*"` |
+| `export_memories` | read-write; **while `CPERSONA_EXPORT_DIR` is unset (the shipped default) the demand escalates to `"*"`** — the path argument is caller-chosen anywhere on the filesystem, so the blast radius is not one agent's data (§9-D4, second amendment from the pre-merge review). While it is set, replacing an existing file at `output_path` also takes read-write on the agent that file belongs to: its header's `agent_id`, or `"*"` for an export of every agent or a file that is not an export | `agent_id` argument, plus the owner of the file being replaced |
+| `import_memories` | read-write; same `"*"` escalation while `CPERSONA_EXPORT_DIR` is unset. While it is set, also **read** on every agent the file names, in its header and in its records (`"*"` for an export of every agent) — the same read on the source that `merge_memories` demands | `target_agent_id`; empty = "as recorded in file" → `"*"`; plus every agent the file names |
 | `merge_memories` | `copy`: read(source) + read-write(target). `move`: read-write on **both** (move deletes source rows) | `source_agent_id` + `target_agent_id` |
 | `pause_persistence`, `resume_persistence` | read-write on `"*"` — the demand cannot depend on an argument the caller may omit, and the keyless form still silences every keyless caller's writes across every agent. A declared `session_key` narrows the *effect* to that key; it does not narrow the *demand* | global |
 | `persistence_status`, `get_queue_status`, `get_operating_context` | unscoped read: allowed for **any authenticated principal** (no per-agent data; §9-D5) | none |
@@ -314,6 +314,15 @@ Resolution rules the table relies on:
   (`/home`, `/var`) restores the agent-scoped demand while still letting a
   caller choose almost any path inside it, which re-opens what the escalation
   closed and shows nothing.
+- The confined directory is one namespace that every agent and client shares,
+  and a file's name does not tie it to the agent that wrote it. Confinement
+  therefore does not by itself limit a call to one agent: the demand also
+  follows the file. An import reads every agent the file names, so it demands
+  read on each of them (an export of every agent records an empty `agent_id`
+  and demands read on `"*"`). An export replaces whatever is at its
+  destination, so it demands read-write on the agent named in that file's
+  header, and on `"*"` when the file is not an export. A call that already
+  demands read-write on `"*"` covers both, and the file is not read for it.
 - Conditional capability (`fix=true`) is resolved from arguments **before** the
   handler runs. The guard sees the same validated arguments the handler
   would.
@@ -363,7 +372,7 @@ implementation.
 | D1 | Grant store | Config file (§4) | DB table (bootstrap problem; schema change is off the table for this line anyway) |
 | D2 | Default policy | Two-stage opt-in (§4.1) | ACL always on with an implicit full-grant default client (more moving parts in legacy deployments for zero gained enforcement) |
 | D3 | `CPERSONA_AUTH_TOKEN` in ACL mode | Ignored + startup warning | Auto-map to a built-in full-capability client (keeps one hidden super-token alive — the failure mode this feature exists to remove) |
-| D4 | `export_memories` | read-write. The original "read" rationale ("the file write is operator-configured, not caller-chosen") does not survive contact with `_confine_io_path`: with `CPERSONA_EXPORT_DIR` **unset — the shipped default — the caller picks any `..`-free absolute path** (bug-054 lineage), and the existing annotation already declares `destructiveHint=True` | read, valid only when `CPERSONA_EXPORT_DIR` confinement is actually configured — a later, condition-gated relaxation if read-only backup clients turn out to be a real need |
+| D4 | `export_memories` | read-write. The original "read" rationale ("the file write is operator-configured, not caller-chosen") does not survive contact with `_confine_io_path`: with `CPERSONA_EXPORT_DIR` **unset — the shipped default — the caller picks any `..`-free absolute path** (bug-054 lineage), and the existing annotation already declares `destructiveHint=True` | read, valid only when `CPERSONA_EXPORT_DIR` confinement is actually configured — a later, condition-gated relaxation if read-only backup clients turn out to be a real need. Confinement keeps paths inside one directory, not one agent: the directory is shared, so with it configured the demand also covers the agents a file holds (§6) |
 | D5 | Unscoped reads (`persistence_status` etc.) | Any authenticated principal | Require at least one non-`none` grant (denies a fully-revoked-but-still-listed client even status visibility) |
 | D6 | Wildcard semantics | Exact-match overrides wildcard, both directions (§3) | Wildcard as floor (`max(exact, "*")`) — simpler but cannot express "read everywhere except none on X" |
 | D7 | Ship shape | One alpha rung (auth-surface change; soak the resolver + guard under real traffic) | Direct-to-final (formally allowed: additive, default-off) |

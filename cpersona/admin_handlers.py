@@ -10,8 +10,10 @@ Accesses `vector._embedding_client` (remote vector index sync) and
 import base64
 import contextlib
 import glob
+import hashlib
 import json
 import logging
+import math
 import os
 import stat
 import tempfile
@@ -22,6 +24,8 @@ import httpx
 
 from cpersona.isolation import isolation_where
 
+from cpersona import acl
+from cpersona import associations
 from cpersona import blocks
 from cpersona import config
 from cpersona import fileperms
@@ -54,7 +58,9 @@ from cpersona.utils import (
     _parse_timestamp_utc,
     _try_parse_json,
     error_response,
+    fits_sqlite_integer,
     future_timestamp_issue,
+    json_dumps_finite,
     sanitize_content_with_flag,
     sanitize_profile_with_flag,
 )
@@ -434,6 +440,9 @@ async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str 
             {"ok": True, "deleted_id": memory_id}, "delete_memory", key
         )
     _warn_if_unscoped("do_delete_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        # No row has an id SQLite cannot hold, and binding it would raise.
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
     # former avoids a silent AttributeError that previously broke every delete.
     async with connection() as db:
@@ -494,6 +503,8 @@ async def do_update_memory(
     if not content or not content.strip():
         return error_response("Content cannot be empty")
     _warn_if_unscoped("do_update_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
 
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
@@ -601,6 +612,8 @@ async def do_lock_memory(memory_id: int, agent_id: str = "", session_key: str = 
             {"ok": True, "locked_id": memory_id}, "lock_memory", key
         )
     _warn_if_unscoped("do_lock_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -625,6 +638,8 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "", session_key: str 
             {"ok": True, "unlocked_id": memory_id}, "unlock_memory", key
         )
     _warn_if_unscoped("do_unlock_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -686,7 +701,7 @@ def _purge_agent_calibration(agent_id: str) -> bool:
     # in the file, and without the claim the very next calibration would carry
     # those entries back out of it — resurrecting calibration for a corpus that
     # no longer exists, which is the bug-036 this function was written to close.
-    vector._claim_agent_calibration(agent_id, *vector._CALIBRATION_AGENT_AXES)
+    vector._record_agent_calibration_change(agent_id, *vector._CALIBRATION_AGENT_AXES)
     state = _load_calibration_state()
     if state is not None:
         for _key in ("agent_thresholds", "agent_fused_gates", "agent_betas"):
@@ -694,7 +709,7 @@ def _purge_agent_calibration(agent_id: str) -> bool:
             if isinstance(_sub, dict):
                 removed_cal = (_sub.pop(agent_id, None) is not None) or removed_cal
         if removed_cal:
-            _save_calibration_state(
+            purged = _save_calibration_state(
                 state.get("embedding_dim"),
                 state.get("embedding_model"),
                 state.get("global_threshold"),
@@ -708,6 +723,11 @@ def _purge_agent_calibration(agent_id: str) -> bool:
                 # pre-2.5.2b2 sidecar) so the startup guard still sees the staleness.
                 scoring_version=state.get("scoring_version"),
             )
+            # The removal is on disk, so it is no longer pending: a later calibration
+            # of a same-id agent by another process must not be deleted again here.
+            if purged:
+                for _axis in vector._CALIBRATION_AGENT_AXES:
+                    vector._calibration_pending[_axis].discard(agent_id)
     return removed_cal
 
 
@@ -770,12 +790,20 @@ def _purge_local_vector_index(counts: dict) -> list:
     on a key this function does not recognise: the failure worth avoiding here
     is leaving residue behind, not dropping a file that is safe to drop.
 
+    Only for a caller whose grant covers every agent. Each file holds every
+    agent's rows, so dropping it moves every agent's recall onto the slower
+    read until the file is rebuilt -- a change to shared state that a grant on the
+    one agent being purged does not authorise, and one such a caller could
+    repeat at will (store a row, purge it). Under a narrower grant the files
+    stay: every reader hydrates its candidates from the database, so the purged
+    rows drop out of every answer, and the next build leaves them out of the
+    files as well.
+
     Non-DB side effect — call AFTER the delete transaction commits, like the
     calibration and remote-namespace purges beside it.
     """
-    from cpersona import block_index, coarse_index
+    from cpersona import acl, block_index, coarse_index
 
-    removed = []
     # The coarse index carries the same identifiers and a one-bit form of the same
     # vectors, so it is residue in exactly the same sense and goes with the table.
     stale = [(table, vector_index.index_path(table)) for table in vector_index.INDEXED_TABLES]
@@ -783,9 +811,23 @@ def _purge_local_vector_index(counts: dict) -> list:
     # So does the block index file: it holds the bits of both kinds' blocks, and
     # goes when either table lost rows (the second entry finds it already gone).
     stale += [(table, block_index.index_path()) for table in ("memories", "episodes")]
-    for table, path in stale:
-        if not counts.get(f"deleted_{table}", 1):
-            continue
+    stale = [(table, path) for table, path in stale if counts.get(f"deleted_{table}", 1)]
+    if not stale:
+        return []
+    if not acl.caller_holds_every_agent():
+        kept = sorted({path for _table, path in stale if os.path.exists(path)})
+        if kept:
+            logger.info(
+                "Kept the shared index files after a purge authorised on one agent; the "
+                "purged rows are no longer served and leave the files at their next build: %s",
+                ", ".join(kept),
+            )
+        return []
+    # Counted before the first unlink, so a build that read its rows before this
+    # purge committed discards its output instead of publishing it afterwards.
+    vector_index.note_purge()
+    removed = []
+    for _table, path in stale:
         try:
             os.unlink(path)
         except FileNotFoundError:
@@ -1190,7 +1232,11 @@ def _stored_agent_maps_to_carry(embedding_dim: int, state: dict | None = None) -
     }
 
 
-def _stored_calibration_to_carry(embedding_dim: int) -> dict:
+#: "Read the sidecar yourself": distinct from None, which means it is absent or unreadable.
+_UNREAD = object()
+
+
+def _stored_calibration_to_carry(embedding_dim: int, state: dict | None | object = _UNREAD) -> dict:
     """Everything in the sidecar this process must not overwrite, per-agent AND global.
 
     The global axes (``global_threshold`` / ``global_fused_gate`` /
@@ -1211,8 +1257,12 @@ def _stored_calibration_to_carry(embedding_dim: int) -> dict:
     the two with ``carried.get(axis, <live value>)``. Returns ``{}`` when the
     stored payload is stale (bug-184), which correctly makes every axis fall back
     to the freshly measured live value.
+
+    *state* lets the writer pass the payload it already read, so the carry and the
+    write decide from the same read of the file.
     """
-    state = _load_calibration_state()
+    if state is _UNREAD:
+        state = _load_calibration_state()
     if not state:
         return {}
     carried: dict = _stored_agent_maps_to_carry(embedding_dim, state)
@@ -1222,6 +1272,49 @@ def _stored_calibration_to_carry(embedding_dim: int) -> dict:
         if axis not in vector._global_calibration_authority:
             carried[axis] = state.get(axis)
     return carried
+
+
+def _refresh_unchanged_calibration(state: dict | None, embedding_dim: int) -> None:
+    """Take the sidecar's value for every owned entry this process has not changed.
+
+    Several server processes can share one database, and so one sidecar. Owning an
+    entry (by restoring it at boot) says this process once held its current value, not
+    that it still does: when another process later changed or removed it, writing the
+    in-memory copy back reverted that acknowledged change on the next restart -- or
+    resurrected the calibration of an agent the other process had purged. The entries
+    this process changed since its last successful write (``vector._calibration_pending``)
+    are the only ones it is newer for; every other owned entry is refreshed from the file
+    just read, in memory as well as in the write, so the next write does not revert it.
+
+    Skipped when the stored payload would not be carried (absent, unreadable, another
+    embedding dimension or scoring version): those values are not adopted anywhere.
+    """
+    if (
+        not state
+        or state.get("embedding_dim") != embedding_dim
+        or state.get("scoring_version") != _live_fingerprint()
+    ):
+        return
+    live_maps = {
+        "agent_thresholds": vector._agent_thresholds,
+        "agent_fused_gates": vector._agent_fused_gates,
+        "agent_betas": vector._agent_betas,
+    }
+    for axis, live in live_maps.items():
+        stored = state.get(axis) or {}
+        for agent_id in vector._calibration_authority[axis] - vector._calibration_pending[axis]:
+            if agent_id in stored:
+                live[agent_id] = stored[agent_id]
+            else:
+                live.pop(agent_id, None)
+    # Same None rule as _restore_calibration_state: a stored None leaves the live value.
+    unchanged = vector._global_calibration_authority - vector._global_calibration_pending
+    if "global_threshold" in unchanged and state.get("global_threshold") is not None:
+        config.VECTOR_MIN_SIMILARITY = state["global_threshold"]
+    if "global_fused_gate" in unchanged and state.get("global_fused_gate") is not None:
+        vector._global_fused_gate = state["global_fused_gate"]
+    if "fused_gate_signal" in unchanged and state.get("fused_gate_signal") is not None:
+        vector._fused_gate_signal = state["fused_gate_signal"]
 
 
 #: "Stamp the live fingerprint": distinct from None, which a rewrite may pass through.
@@ -1413,6 +1506,28 @@ def _backup_calibration_sidecar(old_scoring_version: str | None) -> str | None:
             exc,
         )
         return None
+
+
+def _backup_unreadable_calibration_sidecar() -> str | None:
+    """Copy an unreadable sidecar aside, one copy per distinct content.
+
+    The per-tag dedup above is right for a superseded scoring version, whose file is
+    byte-identical from boot to boot. Under a fixed ``unreadable`` tag it was wrong: a
+    later, DIFFERENT corrupt file found the first one's copy, copied nothing and was
+    then replaced, so the second set of hand-edited overrides was lost with a log line
+    naming a backup that did not hold them. Tagging by a content digest keeps the
+    dedup for the same bytes and gives different bytes their own copy.
+
+    Returns None when the bytes cannot be read at all: then they cannot be copied
+    either, and the caller must not replace them.
+    """
+    try:
+        with open(_calibration_sidecar_path(), "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()[:12]
+    except OSError as exc:
+        logger.warning("Could not read the unreadable calibration sidecar to copy it aside: %s", exc)
+        return None
+    return _backup_calibration_sidecar(f"unreadable-{digest}")
 
 
 async def _corpus_embedding_dim() -> int | None:
@@ -1735,6 +1850,12 @@ async def do_calibrate_threshold(
     # as UNBOUNDED: the whole corpus flows into the O(n^2) matrix and the OOM bug-053
     # fixed is reopened through the lower bound. Clamp both sides.
     sample_n = max(1, min(sample_size or CALIBRATE_SAMPLE_SIZE, CALIBRATE_MAX_SAMPLE))
+    # NaN is truthy, so it survived the `or` defaults below, and min(10.0, nan) is 10.0:
+    # NaN and +/-Infinity (which a JSON number such as 1e999 parses to) became the
+    # extreme z of the clamp instead of an error. Refuse them before either step.
+    for name, value in (("z_factor", z_factor), ("percentile", percentile)):
+        if not math.isfinite(value):
+            return {"ok": False, "error": f"{name} must be a finite number, got {value}"}
     z = z_factor or CALIBRATE_Z_FACTOR
     cal_method = method or CALIBRATE_METHOD
     cal_percentile = percentile or CALIBRATE_PERCENTILE
@@ -1839,6 +1960,17 @@ async def do_calibrate_threshold(
         )
         new_threshold = stats["threshold"]
         embedding_dim = int(vecs.shape[1])
+        # mean + z*std has a floor but no ceiling, and on a narrow null distribution a
+        # z well inside the clamp lands above 1.0 -- a cosine no vector can reach, so
+        # the agent's vector arm would return nothing. Refuse it before it is applied.
+        if new_threshold > 1.0:
+            return {
+                "ok": False,
+                "error": (
+                    f"the computed threshold {new_threshold} is above the maximum cosine "
+                    f"similarity of 1.0 (method={cal_method}, z_factor={z}); use a smaller z_factor"
+                ),
+            }
 
         # Apply: per-agent dict when agent_id provided, global fallback when empty.
         # Claiming the axis makes this process the owner of what it just measured, so
@@ -1846,10 +1978,10 @@ async def do_calibrate_threshold(
         # (and, later, so a deletion of this entry can reach disk).
         if agent_id:
             vector._agent_thresholds[agent_id] = new_threshold
-            vector._claim_agent_calibration(agent_id, "agent_thresholds")
+            vector._record_agent_calibration_change(agent_id, "agent_thresholds")
         else:
             config.VECTOR_MIN_SIMILARITY = new_threshold
-            vector._claim_global_calibration("global_threshold")
+            vector._record_global_calibration_change("global_threshold")
 
         # Post-fusion quality-gate calibration (v2.4.26). Per-agent and
         # fusion-mode only: recall is per-agent, and the gate lives on the active mode's
@@ -1893,8 +2025,8 @@ async def do_calibrate_threshold(
                 # Only on success: a degraded run (no embedding client, a flaky
                 # backend) measured no gate, so it owns neither the agent's gate
                 # nor the signal and must leave the stored ones alone.
-                vector._claim_agent_calibration(agent_id, "agent_fused_gates")
-                vector._claim_global_calibration("fused_gate_signal")
+                vector._record_agent_calibration_change(agent_id, "agent_fused_gates")
+                vector._record_global_calibration_change("fused_gate_signal")
 
     # Persist for restart survival + embedding-change detection (Tier 4).
     # bug-095: surface a failed sidecar write — the in-memory calibration applied,
@@ -1907,20 +2039,37 @@ async def do_calibrate_threshold(
     # so nothing invalid survives, and it omits every entry this process OWNS, so a
     # deliberate deletion (a cleared precision override, a purged agent) still
     # reaches disk instead of being carried back over.
-    carried = _stored_calibration_to_carry(embedding_dim)
-    sidecar_persisted = _save_calibration_state(
-        embedding_dim,
-        config.EMBEDDING_MODEL,
-        carried.get("global_threshold", config.VECTOR_MIN_SIMILARITY),
-        {**carried.get("agent_thresholds", {}), **dict(vector._agent_thresholds)},
-        global_fused_gate=carried.get("global_fused_gate", vector._global_fused_gate),
-        agent_fused_gates={
-            **carried.get("agent_fused_gates", {}),
-            **dict(vector._agent_fused_gates),
-        },
-        fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
-        agent_betas={**carried.get("agent_betas", {}), **dict(vector._agent_betas)},
-    )
+    stored_state, stored_unreadable = _read_calibration_sidecar()
+    # An unreadable sidecar carries nothing, so the write below would replace the only
+    # copy of every other agent's thresholds, gates and precision overrides with this
+    # process's memory. The startup path copies the bytes aside first (bug-347); a
+    # runtime calibration must too, and must leave the file alone when it cannot.
+    may_replace = not stored_unreadable or _backup_unreadable_calibration_sidecar() is not None
+    if may_replace:
+        _refresh_unchanged_calibration(stored_state, embedding_dim)
+        carried = _stored_calibration_to_carry(embedding_dim, stored_state)
+        sidecar_persisted = _save_calibration_state(
+            embedding_dim,
+            config.EMBEDDING_MODEL,
+            carried.get("global_threshold", config.VECTOR_MIN_SIMILARITY),
+            {**carried.get("agent_thresholds", {}), **dict(vector._agent_thresholds)},
+            global_fused_gate=carried.get("global_fused_gate", vector._global_fused_gate),
+            agent_fused_gates={
+                **carried.get("agent_fused_gates", {}),
+                **dict(vector._agent_fused_gates),
+            },
+            fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
+            agent_betas={**carried.get("agent_betas", {}), **dict(vector._agent_betas)},
+        )
+        if sidecar_persisted:
+            vector._clear_calibration_pending()
+    else:
+        logger.warning(
+            "Not persisting calibration: the sidecar at %s is unreadable and could not "
+            "be copied aside, so replacing it would destroy the only copy.",
+            _calibration_sidecar_path(),
+        )
+        sidecar_persisted = False
 
     result = {
         "ok": True,
@@ -1990,6 +2139,12 @@ async def do_set_recall_precision(
     """
     if not agent_id:
         return {"ok": False, "error": "agent_id is required"}
+    # A JSON number such as 1e999 parses to Infinity. At beta=inf the separation
+    # objective is inf*0 = NaN at the lowest candidate, which argmax picks, so the
+    # strictest request installed the MOST lenient gate, and the stored Infinity is not
+    # valid JSON in any later response. NaN fails `beta > 0` and was read as a clear.
+    if beta and not math.isfinite(beta):
+        return {"ok": False, "error": f"beta must be a finite number, got {beta}"}
 
     # Resolve the target beta. Raw beta wins; then the named level; then (empty + beta<=0)
     # is the clear-override signal.
@@ -2045,6 +2200,7 @@ async def do_set_recall_precision(
     had_override = agent_id in vector._agent_betas
     prev_beta = vector._agent_betas.get(agent_id)
     had_authority = agent_id in vector._calibration_authority["agent_betas"]
+    was_pending = agent_id in vector._calibration_pending["agent_betas"]
     if clear:
         vector._agent_betas.pop(agent_id, None)
     else:
@@ -2054,7 +2210,7 @@ async def do_set_recall_precision(
     # what makes it durable. Without the claim that write carries the stored beta
     # back over the hole, so the tool answers {cleared: true} and the override is
     # live again after the next restart.
-    vector._claim_agent_calibration(agent_id, "agent_betas")
+    vector._record_agent_calibration_change(agent_id, "agent_betas")
 
     # bug-096: the rollback must also cover a RAISED calibration failure (transient
     # DB lock, numpy fault) — the old ok:False-only path leaked the un-persisted
@@ -2076,6 +2232,18 @@ async def do_set_recall_precision(
     # rollback below exists to stop an un-persisted weight from living on in process
     # memory, and that is exactly the state a skip leaves, so it counts as a failure
     # to apply here even though it is not an error.
+    # A calibration whose sidecar write failed is the same state reached the other way:
+    # measured, but the override would be gone on the next restart (the previous sidecar
+    # is what a restart restores), so it is rolled back and reported as not applied.
+    if cal.get("ok") and cal.get("persisted") is not False and cal.get("sidecar_persisted") is False:
+        cal = {
+            **cal,
+            "ok": False,
+            "error": (
+                "the calibration sidecar could not be written, so the change would not "
+                "survive a restart; the precision override was rolled back"
+            ),
+        }
     if not cal.get("ok") or cal.get("persisted") is False:
         # bug-149 (bug-096 residual): compare-and-restore. do_calibrate_threshold awaits, so a
         # concurrent set_recall_precision for the SAME agent can apply + persist its own
@@ -2099,6 +2267,15 @@ async def do_set_recall_precision(
             # its own claim.
             if not had_authority:
                 vector._release_agent_calibration(agent_id, "agent_betas")
+            # Still pending means no sidecar write ran since this call's change, so the
+            # file still holds the restored value. Not pending means one did -- possibly
+            # with this call's value in it -- and the restored value must reach the file
+            # too rather than be refreshed back from it.
+            if agent_id in vector._calibration_pending["agent_betas"]:
+                if not was_pending:
+                    vector._calibration_pending["agent_betas"].discard(agent_id)
+            else:
+                vector._calibration_pending["agent_betas"].add(agent_id)
         return {
             "ok": False,
             "agent_id": agent_id,
@@ -2228,6 +2405,34 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             return {"action": "restored", "embedding_dim": state.get("embedding_dim")}
         logger.info("Calibration sidecar has no recall-gate signal; calibrating the gate.")
 
+    # bug-184 follow-on: skipping the restore drops the operator's knob-3 precision
+    # overrides along with the measurements, and the recalibration below then (a) measures
+    # every gate at the DEFAULT beta instead of the configured one and (b) persists an
+    # empty agent_betas — so the boot would silently and permanently delete a setting the
+    # operator chose. Betas are not measurements: they are policy INPUTS the measurement
+    # consumes (_calibrate_fused_gate reads _get_precision_beta), and neither a scoring
+    # change, an embedding change, nor auto-calibration invalidates a stated preference.
+    # Thresholds and gates are deliberately NOT preloaded here — those are exactly the
+    # stale measurements being re-derived.
+    #
+    # The condition is "nothing was restored", not a list of triggers: the three ways to
+    # recalibrate (stale fingerprint, dimension change, AUTO_CALIBRATE) all bypass
+    # _restore_calibration_state, and AUTO_CALIBRATE is the worst of them — it wipes the
+    # overrides on EVERY boot, not just an upgrade one. Keying on the triggers would make
+    # the invariant hold or fail depending on an unrelated config flag. It also runs
+    # BEFORE the no-recalibration return below: a stale boot with recalibration disabled
+    # restores nothing either, so without the preload the overrides were not applied for
+    # the life of the process, and the next calibrate_threshold — the documented repair
+    # for that state — wrote the sidecar from the empty dict and deleted them.
+    if not restored and state is not None:
+        vector._agent_betas.update(state.get("agent_betas") or {})
+        # Claim the beta axis ONLY. This process now holds every stored beta, so a
+        # later clear of one is a real deletion and must reach disk; it holds none of
+        # the thresholds and gates deliberately left behind above, so those stay
+        # carried into the sidecar until this boot's recalibration replaces them.
+        for stored_agent_id in state.get("agent_betas") or {}:
+            vector._claim_agent_calibration(stored_agent_id, "agent_betas")
+
     if not restored and not (
         auto_calibrate
         or (on_model_change and (state is None or dim_changed or scoring_stale))
@@ -2249,31 +2454,6 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             )
         return {"action": "noop"}
 
-    # bug-184 follow-on: skipping the restore drops the operator's knob-3 precision
-    # overrides along with the measurements, and the recalibration below then (a) measures
-    # every gate at the DEFAULT beta instead of the configured one and (b) persists an
-    # empty agent_betas — so the boot would silently and permanently delete a setting the
-    # operator chose. Betas are not measurements: they are policy INPUTS the measurement
-    # consumes (_calibrate_fused_gate reads _get_precision_beta), and neither a scoring
-    # change, an embedding change, nor auto-calibration invalidates a stated preference.
-    # Thresholds and gates are deliberately NOT preloaded here — those are exactly the
-    # stale measurements being re-derived.
-    #
-    # The condition is "we are about to recalibrate and nothing was restored", not a list
-    # of triggers: the three ways to get here (stale fingerprint, dimension change,
-    # AUTO_CALIBRATE) all bypass _restore_calibration_state, and AUTO_CALIBRATE is the
-    # worst of them — it wipes the overrides on EVERY boot, not just an upgrade one.
-    # Keying on the triggers would make the invariant hold or fail depending on an
-    # unrelated config flag.
-    if not restored and state is not None:
-        vector._agent_betas.update(state.get("agent_betas") or {})
-        # Claim the beta axis ONLY. This process now holds every stored beta, so a
-        # later clear of one is a real deletion and must reach disk; it holds none of
-        # the thresholds and gates deliberately left behind above, so those stay
-        # carried into the sidecar until this boot's recalibration replaces them.
-        for stored_agent_id in state.get("agent_betas") or {}:
-            vector._claim_agent_calibration(stored_agent_id, "agent_betas")
-
     # A staleness recalibration is about to replace the only record of the
     # values that gated recall until this boot. Back the sidecar up first (evidence for
     # the before/after comparison the log below reports), and remember what was stored
@@ -2287,7 +2467,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         # is no `replaced` report to build -- nothing was read out of it -- but the bytes
         # are the only thing an operator can repair by hand, and the calibration below
         # is about to write over them.
-        sidecar_backup = _backup_calibration_sidecar("unreadable")
+        sidecar_backup = _backup_unreadable_calibration_sidecar()
         logger.warning(
             "The unreadable calibration sidecar was copied aside (backup: %s) before "
             "this boot recalibrated over it.",
@@ -2407,6 +2587,8 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
             {"ok": True, "deleted_id": episode_id}, "delete_episode", key
         )
     _warn_if_unscoped("do_delete_episode", episode_id, agent_id)
+    if not fits_sqlite_integer(episode_id):
+        return error_response(f"Episode {episode_id} not found or not owned by agent")
     # Read the owner up front so the remote-vector removal below targets the namespace
     # the episode was indexed under (cpersona:{owner}), matching how do_delete_memory
     # resolves the owner for its bug-023 removal even when the caller omits agent_id.
@@ -2443,6 +2625,19 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
         )
 
     return {"ok": True, "deleted_id": episode_id}
+
+
+async def _equal_memory_id(db, agent_id: str, project_id: str, channel: str, content: str) -> int | None:
+    """The id of the row a copy or restore skipped as equal to `content` in that scope.
+
+    The skipped record lives on as that row, so the declarations naming it are
+    carried onto it.
+    """
+    rows = await db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+        (agent_id, project_id, channel, content),
+    )
+    return rows[0][0] if rows else None
 
 
 def _imported_label(record: dict, blob: bytes | None) -> str:
@@ -2534,8 +2729,117 @@ def _confine_io_path(path: str) -> str | None:
     return path
 
 
+# The ACL pattern meaning "every agent". Spelled out rather than imported: the
+# guard imports this module lazily, and this one must not import the guard.
+_EVERY_AGENT = "*"
+
+
+def _header_agent(header: dict) -> str:
+    """The agent an export header says the file belongs to.
+
+    An export of one agent records that agent. An export of every agent records
+    an empty agent_id, so the file belongs to every agent; a header that names
+    no string at all cannot be tied to anyone and is treated the same way.
+    """
+    owner = header.get("agent_id")
+    return owner if isinstance(owner, str) and owner else _EVERY_AGENT
+
+
+def import_file_agents(input_path: str) -> set[str]:
+    """Every agent an import file names, in its header and in its records.
+
+    Under CPERSONA_EXPORT_DIR the export directory is shared by every agent, and
+    a file's name says nothing about whose rows it holds. The ACL guard demands
+    read on each agent returned here, so restoring a file into one agent
+    requires being allowed to read every agent the file came from.
+
+    The file is read the way do_import_memories reads it: confined, a regular
+    file, bounded by MAX_IMPORT_BYTES, UTF-8 and one JSON object per line. A
+    file the import would refuse to read names nothing; the import then
+    returns its own error. A record without an agent_id names no agent; one
+    whose agent_id is not a string names every agent.
+    """
+    confined = _confine_io_path(input_path)
+    if confined is None:
+        return set()
+    try:
+        st = os.stat(confined)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > config.MAX_IMPORT_BYTES:
+            return set()
+        with open(confined, "rb") as f:
+            raw = f.read(config.MAX_IMPORT_BYTES + 1)
+        if len(raw) > config.MAX_IMPORT_BYTES:
+            return set()
+        lines = raw.decode("utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return set()
+    agents: set[str] = set()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        rtype = record.get("_type")
+        if rtype == "header":
+            agents.add(_header_agent(record))
+        elif rtype in ("memory", "episode", "profile", "entity", "relation"):
+            # A declared-graph record is its agent's data as much as a memory is.
+            aid = record.get("agent_id")
+            if isinstance(aid, str):
+                if aid:
+                    agents.add(aid)
+            elif aid is not None:
+                agents.add(_EVERY_AGENT)
+    return agents
+
+
+def export_file_owner(output_path: str) -> str | None:
+    """The agent an existing file at an export destination belongs to.
+
+    do_export_memories replaces whatever is at its destination, and the export
+    directory is shared by every agent. The ACL guard demands write on the
+    agent returned here, so replacing a file requires being allowed to write the
+    agent that file belongs to.
+
+    None when nothing is there to replace (or the path is refused, which the
+    export reports itself). The header's agent for an export. Every agent for
+    anything that is not an export -- a file whose first line is not an export
+    header cannot be shown to belong to any one agent.
+    """
+    confined = _confine_io_path(output_path)
+    if confined is None:
+        return None
+    try:
+        st = os.stat(confined)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _EVERY_AGENT
+    if not stat.S_ISREG(st.st_mode):
+        return _EVERY_AGENT
+    try:
+        with open(confined, "rb") as f:
+            first = f.readline(64 * 1024)
+        header = json.loads(first.decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return _EVERY_AGENT
+    if not isinstance(header, dict) or header.get("_type") != "header":
+        return _EVERY_AGENT
+    return _header_agent(header)
+
+
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
-    """Export memories, episodes, and profiles to a JSONL file.
+    """Export memories, episodes, profiles and the declared graph to a JSONL file.
+
+    The graph -- entities with their aliases, mentions and relations -- follows the
+    records, keyed on the ids the file gives them, so import can point it at the
+    ids the records get on the way back in. It is declared data that nothing can
+    re-derive, so a logical backup without it is not a backup of it.
 
     **Deliberately not gated on no-persist, and it takes no ``session_key``.**
     A pause means "do not write to my memory"; this writes a file the caller
@@ -2555,6 +2859,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     output_path = confined
 
     iso = isolation_where(agent_id=agent_id or None)
+    iso_e = isolation_where(agent_id=agent_id or None, alias="e")
+    iso_r = isolation_where(agent_id=agent_id or None, alias="r")
 
     out_dir = os.path.dirname(output_path)
     if out_dir:
@@ -2563,6 +2869,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     exported_memories = 0
     exported_episodes = 0
     exported_profiles = 0
+    exported_graph = {"entities": 0, "mentions": 0, "relations": 0}
 
     # bug-091: write to a temp file and os.replace() on success. Opening the
     # destination directly with "w" destroyed the previous backup the moment the
@@ -2595,11 +2902,24 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 row = await cur.fetchone()
                 counts.append(row[0])
             memory_count, episode_count, profile_count = counts
+            graph_sql = {
+                "entities": (f"FROM entities e{iso_e.where}", iso_e.params),
+                "mentions": (
+                    f"FROM entity_mentions m JOIN entities e ON e.id = m.entity_id{iso_e.where}", iso_e.params
+                ),
+                "relations": (f"FROM relations r{iso_r.where}", iso_r.params),
+            }
+            graph_counts = {}
+            for kind, (from_sql, params) in graph_sql.items():
+                cur = await db.execute(f"SELECT COUNT(*) {from_sql}", params)
+                graph_counts[kind] = (await cur.fetchone())[0]
 
             with fileperms.open_private(tmp_path, "w", encoding="utf-8") as f:
                 header = {
                     "_type": "header",
-                    "version": "cpersona-export/1.0",
+                    # 1.1 adds the entity / mention / relation records and their counts.
+                    # A 1.0 file has neither and imports exactly as it did.
+                    "version": "cpersona-export/1.1",
                     "agent_id": agent_id,
                     "exported_at": datetime.now(timezone.utc).isoformat(),
                     "memory_count": memory_count,
@@ -2608,6 +2928,9 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                     # bug-110: an exact count, so the import can detect a file cut at
                     # the episode/profile boundary (has_profile alone cannot).
                     "profile_count": profile_count,
+                    "entity_count": graph_counts["entities"],
+                    "mention_count": graph_counts["mentions"],
+                    "relation_count": graph_counts["relations"],
                 }
                 f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
@@ -2688,19 +3011,53 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                         }
                         f.write(json.dumps(record, ensure_ascii=False) + "\n")
                         exported_profiles += 1
+
+                # The declared graph, after the records it names so an import has
+                # mapped them by the time it reads a reference.
+                cur = await db.execute(
+                    f"SELECT {associations.ENTITY_COLUMNS} {graph_sql['entities'][0]} ORDER BY e.id",
+                    iso_e.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    aliases = await associations.aliases_of(db, [row[0] for row in rows])
+                    for row in rows:
+                        record = {"_type": "entity", **associations.entity_record(row, aliases.get(row[0], []))}
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_graph["entities"] += 1
+                cur = await db.execute(
+                    f"SELECT {associations.MENTION_COLUMNS} {graph_sql['mentions'][0]} ORDER BY m.entity_id, m.ref",
+                    iso_e.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    for row in rows:
+                        record = {"_type": "mention", **associations.mention_record(row)}
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_graph["mentions"] += 1
+                cur = await db.execute(
+                    f"SELECT {associations.RELATION_COLUMNS} {graph_sql['relations'][0]} ORDER BY r.id",
+                    iso_r.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    for row in rows:
+                        record = {"_type": "relation", **associations.relation_record(row)}
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_graph["relations"] += 1
         os.replace(tmp_path, output_path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.remove(tmp_path)
         raise
 
-    return {
+    result = {
         "ok": True,
         "path": output_path,
         "memories": exported_memories,
         "episodes": exported_episodes,
         "profiles": exported_profiles,
     }
+    if any(exported_graph.values()):
+        result["associations"] = exported_graph
+    return result
 
 
 @dataclass
@@ -2747,6 +3104,15 @@ class _ImportTally:
     file_memories: int = 0
     file_episodes: int = 0
     file_profiles: int = 0
+    file_entities: int = 0
+    file_mentions: int = 0
+    file_relations: int = 0
+    # The declared graph the file carries, and where each of its records now lives:
+    # the file's `mem:<id>` / `ep:<id>` to the row imported for it, or the equal row
+    # that was already here. The graph is written through this map after the records.
+    graph: associations.Graph = field(default_factory=associations.Graph)
+    ref_map: dict[str, str] = field(default_factory=dict)
+    associations: dict | None = None
     # bug-070: dry_run performs no INSERT OR IGNORE, so it cannot collide against a row
     # it "inserted" earlier IN THE SAME FILE — a duplicate later in the file was
     # over-counted as imported (a real run sees its own uncommitted row on the shared
@@ -2759,12 +3125,39 @@ class _ImportTally:
     seen_episode: set = field(default_factory=set)
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: dict[str, list[dict]] = field(default_factory=dict)
+    # Whether each agent id the file names may receive rows, asked once per id.
+    reserved_agents: dict[str, bool] = field(default_factory=dict)
 
     def queue_remote(self, agent_id: str, ref: str, text: str) -> None:
         """Queue a written row for the remote index. A preview queues nothing."""
         if self.dry_run:
             return
         self.remote_items.setdefault(agent_id, []).append({"id": ref, "text": text})
+
+    def map_record(self, kind: str, record: dict, row_id: int | None) -> None:
+        """Record which row now holds the file's record. A preview has no row id, so
+        the file's own ref stands in: what is counted is that it maps at all."""
+        file_id = record.get("id")
+        if isinstance(file_id, int) and not isinstance(file_id, bool):
+            self.ref_map[f"{kind}:{file_id}"] = f"{kind}:{file_id if row_id is None else row_id}"
+
+    def refuses_agent(self, aid: str, kind: str, line_num: int) -> bool:
+        """Whether a record must be passed over because its agent id is reserved.
+
+        The ACL guard refuses a reserved ``target_agent_id``; without one, each
+        record names its own agent, and only this loop sees those names. A
+        restore must not create the alias-shaped agent the next server start
+        would refuse (``acl.reserved_for_new_rows``).
+        """
+        refused = self.reserved_agents.get(aid)
+        if refused is None:
+            refused = self.reserved_agents[aid] = acl.reserved_for_new_rows(aid)
+        if refused:
+            self.errors.append(
+                f"Line {line_num}: {kind} agent_id {aid!r} is reserved for subject aliases "
+                "while per_subject is configured; it was not imported"
+            )
+        return refused
 
 
 def _validate_import_preconditions(
@@ -2821,6 +3214,19 @@ def _validate_import_preconditions(
     return confined, None
 
 
+def _null_as_empty(record: dict, key: str):
+    """A record field, with JSON null read as the empty value a missing key gets.
+
+    bug-527: these fields land in NOT NULL columns. A null bound straight in was
+    dropped without a word by the memory INSERT OR IGNORE and aborted the whole
+    restore on the episode and profile INSERTs, while the preview -- which binds
+    nothing -- counted the row as imported. Read on both arms, before the
+    dry_run split, as bug-094 does for keywords.
+    """
+    value = record.get(key)
+    return "" if value is None else value
+
+
 async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
     """Import one memory row, or account for why it was skipped.
 
@@ -2855,9 +3261,17 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
             "and was truncated"
         )
 
-    msg_id = record.get("msg_id", "")
-    pid = record.get("project_id", "")
-    chan = record.get("channel", "")
+    msg_id = _null_as_empty(record, "msg_id")
+    pid = _null_as_empty(record, "project_id")
+    chan = _null_as_empty(record, "channel")
+    # bug-527: the timestamp is bound on the real arm only, but the future-stamp
+    # report below parses it on both, so a value that is not a string aborted the
+    # preview and the restore alike. It is refused for this line instead.
+    timestamp = _null_as_empty(record, "timestamp")
+    if not isinstance(timestamp, str):
+        tally.skipped_memories += 1
+        tally.errors.append(f"Line {line_num}: memory timestamp is not a string; it was not imported")
+        return
 
     # bug-044: dedup on the full identity (agent_id, project_id,
     # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
@@ -2871,6 +3285,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         )
         if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):
             tally.skipped_memories += 1
+            tally.map_record("mem", record, existing[0][0] if existing else None)
             return
 
     # bug-349: the content axis, asked on BOTH arms rather than only on the preview.
@@ -2889,12 +3304,15 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     )
     if dup or (tally.dry_run and (aid, pid, chan, content) in tally.seen_content):
         tally.skipped_memories += 1
+        tally.map_record("mem", record, await _equal_memory_id(db, aid, pid, chan, content) if dup else None)
         return
 
     if not tally.dry_run:
-        source = json.dumps(record.get("source", {}))
-        timestamp = record.get("timestamp", "")
-        metadata = json.dumps(record.get("metadata", {}))
+        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;
+        # written back as bare tokens they are JSON SQLite rejects (see
+        # json_dumps_finite), so the restore writes null in their place.
+        source = json_dumps_finite(record.get("source", {}))
+        metadata = json_dumps_finite(record.get("metadata", {}))
         # bug-016: carry the project_id / channel γ-axes, the locked
         # flag and the embedding through, and INSERT OR IGNORE so a
         # collision with the v12 dedup UNIQUE index is a counted skip
@@ -2926,9 +3344,17 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
             ),
         )
         if cur.rowcount == 0:
+            # bug-527: both dedup keys were probed above, so an insert the database
+            # still ignored was dropped for another reason -- OR IGNORE absorbs
+            # NOT NULL and CHECK failures as well. Counting it as a duplicate would
+            # hide a lost row behind the counter that means "already there".
             tally.skipped_memories += 1
+            tally.errors.append(
+                f"Line {line_num}: memory was not stored (the database ignored the insert)"
+            )
             return
         tally.queue_remote(aid, f"mem:{cur.lastrowid}", content)
+        tally.map_record("mem", record, cur.lastrowid)
     else:
         # bug-056/bug-070: the probe itself now runs on both arms (above). What stays
         # here is the half a preview has and a real run does not need: a real INSERT is
@@ -2938,6 +3364,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         if msg_id:
             tally.seen_msgid.add((aid, pid, msg_id))
         tally.seen_content.add((aid, pid, chan, content))
+        tally.map_record("mem", record, None)
     # N-03: a restore reports a stamp ahead of the clock and imports it anyway.
     #
     # This seam is deliberately not the one that refuses. `store` is an external
@@ -2952,7 +3379,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     # So the finding is surfaced twice instead, in both directions: here as a
     # count on the run that carried them in, and afterwards by the
     # `future_timestamp` health check, which can name and repair the rows.
-    if future_timestamp_issue(record.get("timestamp", "")):
+    if future_timestamp_issue(timestamp):
         tally.future_timestamps += 1
     tally.imported_memories += 1
 
@@ -2995,8 +3422,8 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     else:
         keywords = str(keywords or "")
 
-    ep_pid = record.get("project_id", "")
-    ep_chan = record.get("channel", "")
+    ep_pid = _null_as_empty(record, "project_id")
+    ep_chan = _null_as_empty(record, "channel")
     # bug-220: dedup against what is already stored. The dry_run arm carries the
     # within-file set for the same reason the memory path does (bug-070): a
     # preview has no INSERT of its own to collide against, while a real run sees
@@ -3008,6 +3435,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     )
     if existing or (tally.dry_run and (aid, ep_pid, ep_chan, summary) in tally.seen_episode):
         tally.skipped_episodes += 1
+        tally.map_record("ep", record, existing[0][0] if existing else None)
         return
 
     if not tally.dry_run:
@@ -3032,8 +3460,10 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
             ),
         )
         tally.queue_remote(aid, f"ep:{cur.lastrowid}", summary)
+        tally.map_record("ep", record, cur.lastrowid)
     else:
         tally.seen_episode.add((aid, ep_pid, ep_chan, summary))
+        tally.map_record("ep", record, None)
     tally.imported_episodes += 1
 
 
@@ -3082,6 +3512,30 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             "and was truncated"
         )
 
+    user_id = _null_as_empty(record, "user_id")
+    # bug-528: a restore does not move a profile backwards. The upsert below
+    # replaces the stored row with the file's, so an older backup imported over a
+    # live store -- a restore drill -- replaced newer text, moved updated_at back
+    # and reported profile_updated. Memories and episodes skip what is already
+    # there; a profile has no content key to deduplicate on, so its stamp decides.
+    # Asked on both arms so the preview says what the real run will do. A file
+    # stamp that does not parse makes no claim to be older, and is applied.
+    stamp = record.get("updated_at")
+    file_time = _parse_timestamp_utc(stamp) if isinstance(stamp, str) else None
+    if file_time is not None:
+        stored = await db.execute_fetchall(
+            "SELECT updated_at FROM profiles WHERE agent_id = ? AND user_id = ?",
+            (aid, user_id),
+        )
+        stored_stamp = stored[0][0] if stored else None
+        stored_time = _parse_timestamp_utc(stored_stamp) if isinstance(stored_stamp, str) else None
+        if stored_time is not None and stored_time > file_time:
+            tally.errors.append(
+                f"Line {line_num}: the stored profile (updated {stored_stamp}) is newer than "
+                f"the file's ({stamp}); the stored profile was kept"
+            )
+            return
+
     if not tally.dry_run:
         # bug-223: carry the record's own updated_at, as memories and episodes carry
         # created_at (bug-092). A restore that re-stamps every profile with import time
@@ -3095,10 +3549,10 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             "   updated_at = excluded.updated_at",
             (
                 aid,
-                record.get("project_id", ""),
-                record.get("user_id", ""),
+                _null_as_empty(record, "project_id"),
+                user_id,
                 content,
-                record.get("updated_at"),
+                stamp,
             ),
         )
     tally.profile_updated = True
@@ -3131,6 +3585,57 @@ def _validate_file_header(tally: _ImportTally) -> None:
             f"{declared_mem} memories / {declared_ep} episodes / "
             f"{declared_prof} profiles, file contains "
             f"{tally.file_memories} / {tally.file_episodes} / {tally.file_profiles}"
+        )
+    # The graph section comes last, so it is where a cut file ends. A file written
+    # before the graph was exported declares no graph counts and is not checked here.
+    declared_graph = [tally.file_header.get(f"{kind}_count") for kind in ("entity", "mention", "relation")]
+    in_file = [tally.file_entities, tally.file_mentions, tally.file_relations]
+    if any(isinstance(d, int) and d != n for d, n in zip(declared_graph, in_file)):
+        raise ValueError(
+            "file truncated or inconsistent: header declares "
+            "{} entities / {} mentions / {} relations, file contains {} / {} / {}".format(*declared_graph, *in_file)
+        )
+
+
+def _collect_graph_record(record: dict, rtype: str, target_agent_id: str, tally: _ImportTally, line_num: int) -> None:
+    """Hold one declared-graph record until every record it can name has been imported."""
+    if rtype == "entity":
+        tally.file_entities += 1
+    elif rtype == "mention":
+        tally.file_mentions += 1
+        tally.graph.mentions.append(record)
+        return
+    else:
+        tally.file_relations += 1
+    aid = target_agent_id or record.get("agent_id", "")
+    if not aid or not isinstance(aid, str):
+        tally.errors.append(f"Line {line_num}: {rtype} missing agent_id")
+        return
+    if rtype == "relation":
+        tally.graph.relations.append({**record, "agent_id": aid})
+        return
+    entity_id = record.get("id")
+    if not isinstance(entity_id, int) or isinstance(entity_id, bool):
+        tally.errors.append(f"Line {line_num}: entity missing id")
+        return
+    tally.graph.entities[entity_id] = {**record, "agent_id": aid}
+
+
+async def _import_graph(db, tally: _ImportTally) -> None:
+    """Write the file's declared graph, pointed at the rows its records now live in."""
+    if not tally.graph:
+        return
+    carried = await associations.carry(db, tally.graph, tally.ref_map, dry_run=tally.dry_run)
+    tally.associations = carried.counts()
+    if carried.dropped:
+        tally.errors.append(
+            f"{carried.dropped} declared associations were not restored: they are malformed, or name a "
+            "record or entity this import did not restore"
+        )
+    if carried.aliases_dropped:
+        tally.errors.append(
+            f"{carried.aliases_dropped} aliases were not restored: each already names another entity "
+            "in its scope"
         )
 
 
@@ -3202,6 +3707,8 @@ async def do_import_memories(
                     if not aid:
                         tally.errors.append(f"Line {line_num}: memory missing agent_id")
                         continue
+                    if tally.refuses_agent(aid, "memory", line_num):
+                        continue
                     await _import_memory_record(db, record, aid, tally, line_num)
 
                 elif rtype == "episode":
@@ -3209,6 +3716,8 @@ async def do_import_memories(
                     aid = target_agent_id or record.get("agent_id", "")
                     if not aid:
                         tally.errors.append(f"Line {line_num}: episode missing agent_id")
+                        continue
+                    if tally.refuses_agent(aid, "episode", line_num):
                         continue
                     await _import_episode_record(db, record, aid, tally, line_num)
 
@@ -3218,7 +3727,12 @@ async def do_import_memories(
                     if not aid:
                         tally.errors.append(f"Line {line_num}: profile missing agent_id")
                         continue
+                    if tally.refuses_agent(aid, "profile", line_num):
+                        continue
                     await _import_profile_record(db, record, aid, tally, line_num)
+
+                elif rtype in ("entity", "mention", "relation"):
+                    _collect_graph_record(record, rtype, target_agent_id, tally, line_num)
 
                 else:
                     if rtype:
@@ -3227,6 +3741,7 @@ async def do_import_memories(
             # Inside the transaction scope: the raise must roll a real run back
             # rather than commit a partial restore (bug-091).
             _validate_file_header(tally)
+            await _import_graph(db, tally)
 
     except Exception as e:
         # bug-110: keep the per-line diagnostics (a torn last line lands in
@@ -3262,6 +3777,8 @@ async def do_import_memories(
         "skipped_episodes": tally.skipped_episodes,
         "profile_updated": tally.profile_updated,
     }
+    if tally.associations is not None:
+        result["associations"] = tally.associations
     if tally.future_timestamps:
         result["future_timestamps"] = tally.future_timestamps
     if tally.errors:
@@ -3301,6 +3818,14 @@ class _MergeTally:
     copied_memory_ids: list[int] = field(default_factory=list)
     copied_episode_ids: list[int] = field(default_factory=list)
     copied_profile_ids: list[int] = field(default_factory=list)
+    # The source ref of every record that now exists in the target -- the copy, or
+    # the equal row the target already held -- mapped to its target ref. The declared
+    # graph is carried through it: a declaration names records by ref, and a move
+    # deletes the source rows it names.
+    ref_map: dict[str, str] = field(default_factory=dict)
+    # False when some of the source's declarations could not be carried; the move
+    # then leaves the source's graph where it is rather than delete the only copy.
+    graph_carried: bool = True
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: list[dict] = field(default_factory=list)
 
@@ -3309,6 +3834,11 @@ class _MergeTally:
         if self.dry_run:
             return
         self.remote_items.append({"id": ref, "text": text})
+
+    def map_record(self, kind: str, src_id: int, target_id: int | None) -> None:
+        """Record where a source record lives in the target. A preview has no target
+        id, so the source ref stands in: what is counted is that it maps at all."""
+        self.ref_map[f"{kind}:{src_id}"] = f"{kind}:{src_id if target_id is None else target_id}"
 
 
 async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
@@ -3368,6 +3898,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
             )
             if existing:
                 tally.skipped_memories += 1
+                tally.map_record("mem", src_id, existing[0][0])
                 continue
         # bug-349: the import twin, for the same reason -- strategy='skip' must not
         # depend on an index whose creation is allowed to fail. Measured on a database
@@ -3379,6 +3910,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
         )
         if dup:
             tally.skipped_memories += 1
+            tally.map_record("mem", src_id, await _equal_memory_id(db, target_agent_id, project_id, channel, content))
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -3408,6 +3940,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
                 continue
             tally.copied_memory_ids.append(src_id)
             tally.queue_remote(f"mem:{cur.lastrowid}", content)
+        tally.map_record("mem", src_id, None if tally.dry_run else cur.lastrowid)
         tally.merged_memories += 1
 
 
@@ -3468,6 +4001,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
             tally.dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in tally.seen_summary
         ):
             tally.skipped_episodes += 1
+            tally.map_record("ep", src_id, existing[0][0] if existing else None)
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -3493,6 +4027,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
             tally.queue_remote(f"ep:{cur.lastrowid}", summary)
         else:
             tally.seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
+        tally.map_record("ep", src_id, None if tally.dry_run else cur.lastrowid)
         tally.merged_episodes += 1
 
 
@@ -3560,6 +4095,12 @@ _MOVE_LEFT_SQL = (
     ("profiles", "SELECT COUNT(*) FROM profiles WHERE agent_id = ?"),
 )
 
+# The declared graph a move can leave behind. Reported only when nonzero.
+_MOVE_LEFT_GRAPH_SQL = (
+    ("entities", "SELECT COUNT(*) FROM entities WHERE agent_id = ?"),
+    ("relations", "SELECT COUNT(*) FROM relations WHERE agent_id = ?"),
+)
+
 
 async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTally) -> tuple[dict, dict]:
     """Move phase: remove exactly the rows this merge copied (bug-218 / bug-222).
@@ -3579,6 +4120,13 @@ async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTall
     The crash-recovery queue is per agent, not per row (bug-093): it is drained only
     when the move leaves the source with nothing at all — the wiped-agent case that
     guard was written for.
+
+    The declared graph was carried to the target before this runs. Deleting the
+    copied rows takes their mentions and anchored relations by trigger; what remains
+    is the agent's entities and its record-free relations. Those go too when the
+    move empties the source and the graph arrived whole -- they are copies now, as
+    ``_delete_agent_rows`` treats them -- and otherwise they stay and are counted in
+    ``left_at_source``, so a source still holding declarations is not reported empty.
     """
     ids_for = {
         "deleted_memories": tally.copied_memory_ids,
@@ -3610,6 +4158,13 @@ async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTall
             "DELETE FROM pending_memory_tasks WHERE agent_id = ?", (source_agent_id,)
         )
         deleted["deleted_pending_tasks"] = cur.rowcount
+        if tally.graph_carried:
+            await db.execute("DELETE FROM entities WHERE agent_id = ?", (source_agent_id,))
+            await db.execute("DELETE FROM relations WHERE agent_id = ?", (source_agent_id,))
+    for kind, sql in _MOVE_LEFT_GRAPH_SQL:
+        rows = await db.execute_fetchall(sql, (source_agent_id,))
+        if rows[0][0]:
+            left[kind] = rows[0][0]
     return deleted, left
 
 
@@ -3687,6 +4242,16 @@ async def do_merge_memories(
             await _merge_episode_rows(db, source_agent_id, target_agent_id, tally)
             await _merge_profile_rows(db, source_agent_id, target_agent_id, tally)
 
+            # The declared graph follows the records it names, before a move deletes
+            # them (their delete triggers would take every declaration with them).
+            graph = await associations.read_graph(db, source_agent_id)
+            carried = None
+            if graph:
+                carried = await associations.carry(
+                    db, graph, tally.ref_map, agent_id=target_agent_id, dry_run=dry_run
+                )
+                tally.graph_carried = not (carried.dropped or carried.aliases_dropped)
+
             move_counts = None
             left_at_source = None
             if mode == "move" and not dry_run:
@@ -3746,6 +4311,13 @@ async def do_merge_memories(
         "profile_copied": tally.profile_copied,
         "skipped_profile": tally.skipped_profile,
     }
+    if carried is not None:
+        result["associations"] = carried.counts()
+        not_carried = carried.dropped + carried.aliases_dropped
+        if not_carried:
+            # A declaration naming a record that was not copied, or an alias that
+            # already names another entity in the target.
+            result["associations"]["not_carried"] = not_carried
     if move_result:
         result["source_deleted"] = move_result
         # bug-218/bug-222: the residue is part of the answer — a caller that reads

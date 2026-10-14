@@ -255,24 +255,37 @@ async def build_block_index(path: str | None = None, width: int | None = None) -
     from cpersona.database import read_snapshot
 
     out = path or index_path()
+    # Before the snapshot is opened: a purge that drops the file after this may
+    # have committed after the snapshot, and the rows it removed are in it.
+    purges_at_start = vector_index.purges()
     generation = await start_logging()
     if generation is None:
         return {
             "built": False,
             "reason": "the database has no block change log; start the server once to migrate it to schema 19",
         }
-    tmp, bits_tmp = f"{out}.tmp", f"{out}.bits.tmp"
+    # Temp names of this build's own: every process on the database runs its own
+    # queue, and the command-line build can run beside them, so two builds of this
+    # file can overlap. Names derived from the output path alone were shared, and
+    # the second build truncated the first one's bits under it.
+    tmp = bits_tmp = None
     try:
+        tmp = fileperms.temp_beside(out)
+        bits_tmp = fileperms.temp_beside(out, ".bits.tmp")
         async with read_snapshot() as snap:
             header = await _write_rows(snap, tmp, bits_tmp, width)
+        if vector_index.purged_since(purges_at_start):
+            # The temp files go in the `finally` below.
+            return {"built": False, "reason": vector_index.SUPERSEDED_REASON}
         os.replace(tmp, out)
     except _Declined as exc:
         return {"built": False, "reason": str(exc)}
     finally:
         # A half-written temp file is not the index and must not be left where a
-        # later build could mistake it for one.
+        # later build could mistake it for one. Only this build's names: another
+        # build's temp files are its own to publish or remove.
         for name in (tmp, bits_tmp):
-            if os.path.exists(name):
+            if name is not None and os.path.exists(name):
                 os.unlink(name)
     pruned = await _prune(header["generation"], header["built_seq"])
     return {
@@ -862,7 +875,10 @@ async def build_task(payload: dict) -> str:
         return "block index is off; nothing built"
     result = await build_block_index()
     if not result["built"]:
-        _declined_until = time.monotonic() + _RETRY_AFTER_DECLINE_SECONDS
+        # A build discarded because a purge overtook it is not declined: the next
+        # one reads the database as the purge left it, so the queue need not wait.
+        if result["reason"] != vector_index.SUPERSEDED_REASON:
+            _declined_until = time.monotonic() + _RETRY_AFTER_DECLINE_SECONDS
         return f"block index not built: {result['reason']}"
     return (
         f"block index built: {result['count']} rows of width {result['width']}, "
