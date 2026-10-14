@@ -141,7 +141,7 @@ def test_human_output_names_the_path_and_the_outcome(db_path):
     assert "\ncoarse: built " in built.stdout
     status = plain("status")
     assert status.returncode == 0
-    assert "2 rows" in status.stdout and "0 rows written since the build" in status.stdout
+    assert "2 rows" in status.stdout and "0 rows written and 0 changed since the build" in status.stdout
 
 
 def test_a_missing_database_path_is_exit_2_without_creating_it(tmp_path):

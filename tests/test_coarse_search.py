@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from cpersona import blocks, coarse_index, coarse_search
+from cpersona import blocks, coarse_index, coarse_search, vector_index
 from cpersona.database import get_db
 from cpersona.isolation import isolation_where, source_id_where
 
@@ -107,6 +107,7 @@ async def store(db, tmp_path):
     hole = await _insert(db, 901, embedding=None)
     await db.commit()
     path = str(tmp_path / "coarse")
+    await vector_index.start_logging()
     built = await coarse_index.build_coarse_index(db, "memories", path)
     assert built["built"] and built["excluded"] == 1 and built["unembedded"] == 1, built
     await _populate(db, range(121, 151), rng)
@@ -232,8 +233,12 @@ async def test_a_period_bound_the_sql_cannot_read_admits_nothing(store, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_a_cleared_embedding_sends_the_question_to_the_live_store(store, tmp_path):
-    """A row that left the scan moves every later row up a position the index still counts."""
+async def test_a_cleared_embedding_is_read_live_through_the_change_log(store, tmp_path):
+    """A row that left the scan moves every later row up a position the index still counts.
+
+    bug-514: the change log names the row, so the index reads it live (and finds
+    nothing to rank) instead of handing the whole question to the live store.
+    """
     db, path = store
     # A row the file holds: a row the build named instead of holding is read live,
     # and a cleared embedding there is already the live answer.
@@ -243,17 +248,47 @@ async def test_a_cleared_embedding_sends_the_question_to_the_live_store(store, t
     await db.commit()
     scope = dict(agent_id=AGENT, start=2, end=20, k=5)
     got = await coarse_search.coarse_candidates(db, _vector(3), path=path, **scope)
+    assert got.source == "index"
+    assert got.rows() == await _reference(db, _vector(3), **scope)
+
+
+@pytest.mark.asyncio
+async def test_a_cleared_embedding_the_log_missed_sends_the_question_to_the_live_store(store, tmp_path):
+    """The lost-embedding probe stays the backstop for a change the log does not name."""
+    db, path = store
+    index = coarse_index.load_coarse_index(path=path)
+    newest_indexed = int(index.ids[np.flatnonzero(index.agent_code == index.agents.index(AGENT))[0]])
+    await db.execute("UPDATE memories SET embedding = NULL WHERE id = ?", (newest_indexed,))
+    await db.execute("DELETE FROM record_vector_changes WHERE record_id = ?", (newest_indexed,))
+    await db.commit()
+    scope = dict(agent_id=AGENT, start=2, end=20, k=5)
+    got = await coarse_search.coarse_candidates(db, _vector(3), path=path, **scope)
     assert got.source == "live"
     assert got.rows() == await _reference(db, _vector(3), **scope)
 
 
 @pytest.mark.asyncio
-async def test_a_deleted_candidate_sends_the_question_to_the_live_store(store, tmp_path):
+async def test_a_deleted_candidate_is_dropped_through_the_change_log(store, tmp_path):
     db, path = store
     query = _vector(4)
     first = await coarse_search.coarse_candidates(db, query, agent_id=AGENT, k=3, path=path)
     assert first.source == "index" and first.ids
     await db.execute("DELETE FROM memories WHERE id = ?", (first.ids[0],))
+    await db.commit()
+    got = await coarse_search.coarse_candidates(db, query, agent_id=AGENT, k=3, path=path)
+    assert got.source == "index"
+    assert first.ids[0] not in got.ids
+    assert got.rows() == await _reference(db, query, agent_id=AGENT, k=3)
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_candidate_the_log_missed_sends_the_question_to_the_live_store(store, tmp_path):
+    db, path = store
+    query = _vector(4)
+    first = await coarse_search.coarse_candidates(db, query, agent_id=AGENT, k=3, path=path)
+    assert first.source == "index" and first.ids
+    await db.execute("DELETE FROM memories WHERE id = ?", (first.ids[0],))
+    await db.execute("DELETE FROM record_vector_changes WHERE record_id = ?", (first.ids[0],))
     await db.commit()
     got = await coarse_search.coarse_candidates(db, query, agent_id=AGENT, k=3, path=path)
     assert got.source == "live"
@@ -269,6 +304,7 @@ async def test_a_row_of_another_width_keeps_its_scan_position_and_is_skipped(db,
     # Newer than every row above, so it takes scan position 0.
     await _insert(db, 99, created_at="2026-03-01 00:02:00", embedding=_vector(99, DIM * 2).tobytes())
     await db.commit()
+    await vector_index.start_logging()
     assert not (await coarse_index.build_coarse_index(db, "memories", str(tmp_path / "mixed")))["built"]
     got = await coarse_search.coarse_candidates(db, _vector(6), agent_id=AGENT, start=0, end=10, k=1000,
                                                 path=_missing(tmp_path))

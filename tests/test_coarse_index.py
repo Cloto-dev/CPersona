@@ -107,7 +107,9 @@ def test_sign_bits_are_the_bits_block_reach_stores():
 @pytest.mark.asyncio
 async def test_the_rows_are_the_contiguous_index_rows(corpus, tmp_path):
     contiguous, coarse = str(tmp_path / "vec"), str(tmp_path / "bits")
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "memories", contiguous))["built"]
+    await vector_index.start_logging()
     result = await coarse_index.build_coarse_index(corpus, "memories", coarse)
     assert result["built"], result
 
@@ -126,6 +128,7 @@ async def test_the_rows_are_the_contiguous_index_rows(corpus, tmp_path):
 @pytest.mark.asyncio
 async def test_each_rows_bits_are_the_sign_code_of_its_own_vector(corpus, tmp_path):
     path = str(tmp_path / "bits")
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", path)
     index = coarse_index.load_coarse_index(path=path)
 
@@ -144,6 +147,7 @@ async def test_each_rows_bits_are_the_sign_code_of_its_own_vector(corpus, tmp_pa
 @pytest.mark.asyncio
 async def test_each_rows_time_is_sqlites_own_reading_of_it(corpus, tmp_path):
     path = str(tmp_path / "bits")
+    await vector_index.start_logging()
     result = await coarse_index.build_coarse_index(corpus, "memories", path)
     index = coarse_index.load_coarse_index(path=path)
 
@@ -172,6 +176,7 @@ async def test_each_rows_time_is_sqlites_own_reading_of_it(corpus, tmp_path):
 async def test_a_period_in_the_file_selects_the_rows_sql_selects(corpus, tmp_path):
     """What section 6 will rely on: comparing the bytes is comparing as SQL does."""
     path = str(tmp_path / "bits")
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", path)
     index = coarse_index.load_coarse_index(path=path)
     for start, end in (("2026-03-01 00:00:00", "2026-03-01 00:00:01"),
@@ -192,7 +197,9 @@ async def test_a_period_in_the_file_selects_the_rows_sql_selects(corpus, tmp_pat
 @pytest.mark.asyncio
 async def test_rebuild_is_byte_identical(corpus, tmp_path):
     first, second = str(tmp_path / "a"), str(tmp_path / "b")
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", first)
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", second)
     assert open(first, "rb").read() == open(second, "rb").read()
 
@@ -203,6 +210,7 @@ async def test_a_mixed_width_store_is_declined_as_the_contiguous_index_declines_
     await _insert(db, 2, embedding=_vector(2, DIM + 4).tobytes())
     await db.commit()
     path = str(tmp_path / "bits")
+    await vector_index.start_logging()
     result = await coarse_index.build_coarse_index(db, "memories", path)
     assert result["built"] is False and "widths" in result["reason"]
     assert not os.path.exists(path)
@@ -210,6 +218,7 @@ async def test_a_mixed_width_store_is_declined_as_the_contiguous_index_declines_
 
 @pytest.mark.asyncio
 async def test_episodes_get_no_coarse_index(db, tmp_path):
+    await vector_index.start_logging()
     result = await coarse_index.build_coarse_index(db, "episodes", str(tmp_path / "bits"))
     assert result["built"] is False
 
@@ -217,6 +226,7 @@ async def test_episodes_get_no_coarse_index(db, tmp_path):
 @pytest.mark.asyncio
 async def test_a_file_that_does_not_hold_together_is_refused(corpus, tmp_path):
     path = str(tmp_path / "bits")
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", path)
     good = open(path, "rb").read()
 
@@ -243,6 +253,7 @@ async def test_a_file_that_does_not_hold_together_is_refused(corpus, tmp_path):
 async def test_the_read_path_holds_the_same_arrays_as_the_mapped_one(corpus, tmp_path, monkeypatch):
     """Windows reads the arrays instead of mapping them; the answer must not depend on which."""
     path = str(tmp_path / "bits")
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", path)
     mapped = coarse_index.load_coarse_index(path=path)
     monkeypatch.setattr(vector_index, "_maps_files", lambda: False)
@@ -256,11 +267,13 @@ async def test_the_read_path_holds_the_same_arrays_as_the_mapped_one(corpus, tmp
 @pytest.mark.asyncio
 async def test_the_cache_picks_up_a_rebuild(corpus, tmp_path):
     path = str(tmp_path / "bits")
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", path)
     first = coarse_index.cached_coarse_index(path=path)
     assert coarse_index.cached_coarse_index(path=path) is first
     await _insert(corpus, 99, agent_id=AGENT)
     await corpus.commit()
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(corpus, "memories", path)
     assert coarse_index.cached_coarse_index(path=path).count == first.count + 1
 
@@ -288,6 +301,7 @@ async def test_a_purge_removes_the_coarse_index_with_the_rows_it_held(beside_the
     await _insert(db, 1, source='{"type": "User", "id": "discord:Alice"}')
     await _insert(db, 2, agent_id=OTHER_AGENT)
     await db.commit()
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
     path = coarse_index.index_path("memories")
     # The control: the file held the agent's identifiers before the purge.
@@ -305,6 +319,7 @@ async def test_a_purge_that_removed_nothing_keeps_the_coarse_index(beside_the_da
     db = beside_the_database
     await _insert(db, 3, agent_id=OTHER_AGENT)
     await db.commit()
+    await vector_index.start_logging()
     await coarse_index.build_coarse_index(db, "memories")
     path = coarse_index.index_path("memories")
     before = open(path, "rb").read()

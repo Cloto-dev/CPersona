@@ -102,6 +102,7 @@ async def test_a_copied_window_is_scored_in_the_scans_chunks(
     db, scored_rows, monkeypatch, fake_embedding_client
 ):
     await _store(db, 60)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     await _store(db, 1, start=60)  # written since the build: the window is copied
     taken = []
@@ -142,6 +143,7 @@ async def test_the_peak_does_not_grow_with_the_window(db, monkeypatch):
     vectors = rng.standard_normal((rows, dim)).astype(np.float32)
     vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
     await _store(db, rows, vectors=list(vectors))
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     index = vector_index.load_index("memories")
     positions = np.arange(0, rows, 2, dtype=np.int64)  # every other row: a gap each time

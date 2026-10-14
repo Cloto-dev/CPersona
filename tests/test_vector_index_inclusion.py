@@ -75,6 +75,7 @@ async def indexed():
         )
     await db.commit()
 
+    await vector_index.start_logging()
     result = await vector_index.build_index(db, "memories", path)
     assert result["built"], result
     index = vector_index.load_index("memories", path)

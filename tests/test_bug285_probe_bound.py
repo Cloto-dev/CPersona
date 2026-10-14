@@ -83,6 +83,7 @@ async def corpus(fake_embedding_client):
             source_id="even" if n % 2 == 0 else "odd",
         )
     await db.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     yield db
     await db.execute("DELETE FROM memories")
@@ -129,7 +130,16 @@ async def _answer_without_the_index(db, **kw):
 
 
 async def _clear_embedding_of(db, content: str) -> None:
+    """Clear a row's embedding where only the probe can see it.
+
+    bug-514: the change log names a cleared row, and the read leaves it out of the
+    selection, so the probe never meets it. These tests are about the probe, the
+    backstop for a change the log does not name, so the log row goes too.
+    """
+    rows = await db.execute_fetchall("SELECT id FROM memories WHERE content = ?", (content,))
     await db.execute("UPDATE memories SET embedding = NULL WHERE content = ?", (content,))
+    for (row_id,) in rows:
+        await db.execute("DELETE FROM record_vector_changes WHERE record_id = ?", (row_id,))
     await db.commit()
 
 

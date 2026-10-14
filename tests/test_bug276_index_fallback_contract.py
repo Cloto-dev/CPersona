@@ -97,6 +97,7 @@ async def _answer_without_the_index(db, **kw):
 @pytest.mark.asyncio
 async def test_a_raising_index_still_returns_the_scans_answer(corpus, monkeypatch):
     """Not "this exception is gone" — an exception the repair never heard of."""
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "memories"))["built"]
     expected = await _answer_without_the_index(corpus)
 
@@ -124,6 +125,7 @@ async def test_a_numeric_source_id_matches_instead_of_raising(corpus):
         embedding=_SHARED,
     )
     await corpus.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "memories"))["built"]
 
     with_index = await _search(corpus, source_id="123")
@@ -157,6 +159,7 @@ def _index_with_sources(sources: tuple) -> vector_index.VectorIndex:
     return vector_index.VectorIndex(
         path="<synthetic>", dim=1, count=n, watermark=n,
         excluded_ids=(), unembedded_ids=(),
+        generation=1, built_seq=0, schema_cookie=0,
         embedding_model="fake", scoring_version="test",
         ids=np.arange(1, n + 1, dtype="<i8"),
         embeddings=np.zeros((n, 1), dtype="<f4"),

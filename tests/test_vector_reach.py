@@ -430,6 +430,7 @@ async def test_the_index_and_the_scan_agree_on_the_far_list(
     scanned_near, scanned_far = await _search(corpus, limit=10)
     assert taken["index"] == 0, "no index exists yet — the baseline must be the live scan"
 
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "memories"))["built"]
     taken["index"] = taken["fallback"] = 0
 
@@ -483,6 +484,7 @@ async def test_the_suppliers_agree_when_rows_were_written_after_the_build(
     )
     await corpus.commit()
 
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "memories"))["built"]
 
     # Newer than everything: five rows that take scan positions 0..4 and shift
@@ -553,6 +555,7 @@ async def test_a_tail_longer_than_the_near_window_still_feeds_the_far_list(
     a build produces.
     """
     set_reach(monkeypatch, NEAR, REACH)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "memories"))["built"]
 
     # 160 rows written after the build: 100 of them fill the near window, and the

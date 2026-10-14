@@ -191,6 +191,7 @@ async def test_episode_index_answers_exactly_what_the_scan_answers(corpus, taken
     assert _episode_rows(expected), f"[{name}] the fixture must put episodes in the answer"
     assert taken["episodes"] == 0, "no index exists yet — the baseline must be the live scan"
 
+    await vector_index.start_logging()
     result = await vector_index.build_index(corpus, "episodes")
     assert result["built"], result
 
@@ -205,7 +206,9 @@ async def test_episode_index_answers_exactly_what_the_scan_answers(corpus, taken
 async def test_both_indexes_together_answer_what_the_two_scans_answer(corpus, taken):
     """The production shape: one file per table, both consulted on every query."""
     expected = await _search(corpus)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "memories"))["built"]
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
 
     taken["scans"] = 0
@@ -219,6 +222,7 @@ async def test_both_indexes_together_answer_what_the_two_scans_answer(corpus, ta
 async def test_a_source_filter_without_a_channel_never_asks_the_episode_index(corpus, taken):
     """Episodes carry no source column. The scan skips them; so must the index path,
     without ever being asked about a column the table lacks."""
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     rows = await _search(corpus, source_id="user-1")
     assert not _episode_rows(rows), "a source-only filter must exclude every episode"
@@ -228,6 +232,7 @@ async def test_a_source_filter_without_a_channel_never_asks_the_episode_index(co
 @pytest.mark.asyncio
 async def test_an_episode_written_after_the_build_is_still_found(corpus, taken):
     """The watermark's whole point, for the second table."""
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     await _episode(corpus, f"{TOPIC} freshly archived", created_at="2026-03-01 00:00:09",
                    embedding=_SHARED)
@@ -247,6 +252,7 @@ async def test_an_episode_written_after_the_build_is_still_found(corpus, taken):
 async def test_an_episode_older_than_the_index_lands_in_the_right_place(corpus, taken):
     """An ordered merge, not a prepend — the import path gives a restored episode a
     fresh id and its original timestamp."""
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     await _episode(corpus, f"{TOPIC} restored", created_at="2025-01-01 00:00:00",
                    embedding=_SHARED)
@@ -261,6 +267,7 @@ async def test_an_episode_older_than_the_index_lands_in_the_right_place(corpus, 
 async def test_the_answer_rows_keep_their_episode_shape(corpus, taken):
     """Prefix, kind marker, the bug-213 timestamp rule and the resolved flag are
     the hydrate's business, and the hydrate did not change."""
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     rows = _episode_rows(await _search(corpus))
     assert taken["episodes"] == 1 and taken["scans"] == 1
@@ -276,6 +283,7 @@ async def test_the_answer_rows_keep_their_episode_shape(corpus, taken):
 @pytest.mark.asyncio
 async def test_absent_episode_index_falls_back(corpus, taken):
     expected = await _search(corpus)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     os.unlink(vector_index.index_path("episodes"))
     assert await _search(corpus) == expected
@@ -285,6 +293,7 @@ async def test_absent_episode_index_falls_back(corpus, taken):
 @pytest.mark.asyncio
 async def test_corrupt_episode_index_falls_back(corpus, taken):
     expected = await _search(corpus)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     path = vector_index.index_path("episodes")
     with open(path, "r+b") as fh:
@@ -297,6 +306,7 @@ async def test_corrupt_episode_index_falls_back(corpus, taken):
 async def test_a_raising_episode_probe_stays_inside_recall(corpus, taken, monkeypatch, caplog):
     """bug-285's claim, for the second table: whatever the probe raises, recall survives."""
     expected = await _search(corpus)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
 
     async def exploding(*args, **kwargs):
@@ -309,13 +319,36 @@ async def test_a_raising_episode_probe_stays_inside_recall(corpus, taken, monkey
 
 
 @pytest.mark.asyncio
-async def test_an_episode_that_lost_its_embedding_hands_the_query_back(corpus, taken):
-    """bug-279 for episodes: the file keeps bytes the row no longer has."""
+async def test_an_episode_that_lost_its_embedding_is_read_live(corpus, taken):
+    """bug-279 for episodes: the file keeps bytes the row no longer has.
+
+    bug-514: the change log names the row, so the index answers without it --
+    the answer the scan gives -- instead of handing the query back.
+    """
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     row = await corpus.execute_fetchall(
         "SELECT id FROM episodes WHERE agent_id = ? ORDER BY id LIMIT 1", (AGENT,)
     )
     await corpus.execute("UPDATE episodes SET embedding = NULL WHERE id = ?", (row[0][0],))
+    await corpus.commit()
+
+    actual = await _search(corpus)
+    assert taken["episodes"] == 1, "the change log names the row, so the index answers"
+    assert row[0][0] not in [r["id"] for r in actual]
+    assert [r["id"] for r in actual] == [r["id"] for r in await _search_without_index(corpus)]
+
+
+@pytest.mark.asyncio
+async def test_an_episode_that_lost_its_embedding_unlogged_hands_the_query_back(corpus, taken):
+    """The probe stays the backstop for a cleared vector the change log does not name."""
+    await vector_index.start_logging()
+    assert (await vector_index.build_index(corpus, "episodes"))["built"]
+    row = await corpus.execute_fetchall(
+        "SELECT id FROM episodes WHERE agent_id = ? ORDER BY id LIMIT 1", (AGENT,)
+    )
+    await corpus.execute("UPDATE episodes SET embedding = NULL WHERE id = ?", (row[0][0],))
+    await corpus.execute("DELETE FROM record_vector_changes WHERE record_id = ?", (row[0][0],))
     await corpus.commit()
 
     actual = await _search(corpus)
@@ -363,6 +396,7 @@ async def indexed_episodes():
             ),
         )
     await db.commit()
+    await vector_index.start_logging()
     result = await vector_index.build_index(db, "episodes", path)
     assert result["built"], result
     yield db, vector_index.load_index("episodes", path)
@@ -449,6 +483,7 @@ async def test_the_episode_index_cut_keeps_what_the_scan_keeps(corpus, taken, li
     assert all(r.get("_rid", ("", 0))[0] == "ep" for r in expected), expected
     assert taken["episodes"] == 0, "the baseline must come from the live scan"
 
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
     actual = await _search_narrow()
     assert taken["episodes"] == 1, "the episode index path was not taken"
@@ -486,6 +521,7 @@ async def test_the_episode_index_hands_its_survivors_back_in_scan_order(corpus, 
             embedding=_SHARED if n < 4 else fake_embed_one(f"unrelated {n}"),
         )
     await corpus.commit()
+    await vector_index.start_logging()
     assert (await vector_index.build_index(corpus, "episodes"))["built"]
 
     iso = isolation_where(agent_id=agent, project_id=None, channel="")

@@ -14,7 +14,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -879,6 +879,98 @@ WHEN (SELECT logging FROM block_log_clock WHERE id = 0) = 1
 END;
 """
 
+# v20: the change log the vector index files are read through
+# (docs/CONTIGUOUS_INDEX_DESIGN.md §5, cpersona/vector_index.py). The contiguous
+# index of each table and the coarse index of records hold every row's vector and
+# axes as they were at the build. The watermark sends the rows written since to
+# the live table; this log names the rows at or below it that changed in a way
+# the files copy -- a vector replaced or cleared, an axis or a time rewritten, the
+# row deleted -- so a read takes those from the live table too (bug-514).
+#
+# The same clock, the same `logging` switch and the same reasons as BLOCK_LOG_SQL
+# above, with one clock for the three files: each file records the generation and
+# the head it was built at, and a build prunes only what every file present holds.
+# An INSERT is not logged: ids come from AUTOINCREMENT, so a new row is above every
+# file's watermark and the live table already answers for it. An UPDATE is logged
+# only when a column a file copies changed (`UPDATE OF` keeps the recall counters,
+# written on every recall, out of it), and an id change logs both ids.
+#
+# Run on every boot (bug-118). check_schema_objects watches the six triggers.
+VECTOR_LOG_SQL = """
+CREATE TABLE IF NOT EXISTS vector_log_clock (
+    id             INTEGER PRIMARY KEY CHECK (id = 0),
+    logging        INTEGER NOT NULL DEFAULT 0,
+    generation     INTEGER NOT NULL DEFAULT 0,
+    head           INTEGER NOT NULL DEFAULT 0,
+    pruned_through INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT OR IGNORE INTO vector_log_clock (id) VALUES (0);
+
+CREATE TABLE IF NOT EXISTS record_vector_changes (
+    seq       INTEGER PRIMARY KEY,
+    kind      TEXT    NOT NULL,
+    record_id INTEGER NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_vector_log_au
+AFTER UPDATE OF embedding, agent_id, project_id, channel, source, timestamp, created_at ON memories
+WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1
+ AND (new.embedding IS NOT old.embedding OR new.agent_id IS NOT old.agent_id
+      OR new.project_id IS NOT old.project_id OR new.channel IS NOT old.channel
+      OR new.source IS NOT old.source OR new.timestamp IS NOT old.timestamp
+      OR new.created_at IS NOT old.created_at) BEGIN
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', old.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_vector_log_ak AFTER UPDATE OF id ON memories
+WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 AND new.id IS NOT old.id BEGIN
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', old.id);
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', new.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_vector_log_ad AFTER DELETE ON memories
+WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 BEGIN
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'mem', old.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS episodes_vector_log_au
+AFTER UPDATE OF embedding, agent_id, project_id, channel, created_at ON episodes
+WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1
+ AND (new.embedding IS NOT old.embedding OR new.agent_id IS NOT old.agent_id
+      OR new.project_id IS NOT old.project_id OR new.channel IS NOT old.channel
+      OR new.created_at IS NOT old.created_at) BEGIN
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', old.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS episodes_vector_log_ak AFTER UPDATE OF id ON episodes
+WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 AND new.id IS NOT old.id BEGIN
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', old.id);
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', new.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS episodes_vector_log_ad AFTER DELETE ON episodes
+WHEN (SELECT logging FROM vector_log_clock WHERE id = 0) = 1 BEGIN
+    UPDATE vector_log_clock SET head = head + 1 WHERE id = 0;
+    INSERT INTO record_vector_changes (seq, kind, record_id)
+    VALUES ((SELECT head FROM vector_log_clock WHERE id = 0), 'ep', old.id);
+END;
+"""
+
 # v15: the declared graph of docs/ASSOCIATIVE_MEMORY_DESIGN.md §1 — entities
 # with aliases, the records that mention them, and subject–predicate–object
 # relations. Nothing in `memories` or `episodes` changes, and nothing here is
@@ -1257,6 +1349,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     await db.executescript(RECORD_BLOCKS_SQL)
     await db.executescript(RECORD_BLOCK_VECTORS_SQL)
     await db.executescript(BLOCK_LOG_SQL)
+    await db.executescript(VECTOR_LOG_SQL)
     await db.executescript(ASSOCIATIONS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on

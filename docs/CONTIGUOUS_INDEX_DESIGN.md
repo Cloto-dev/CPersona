@@ -4,7 +4,9 @@ Status: shipped in 2.5.9, first in 2.5.9a1. It added no schema version and no
 runtime dependency, and the answers are the ones the scan returns — bit for
 bit, including the order of equally-similar rows. An operator command builds
 the index; the server only reads it
-([Operations](operations.md#the-contiguous-vector-index)).
+([Operations](operations.md#the-contiguous-vector-index)). Since schema 20 it
+is read through a change log of the rows it holds (§5), which closed the cases
+in which a row changed in place after the build kept its build-time copy.
 
 ## 1. What changes and what does not
 
@@ -122,7 +124,7 @@ A header followed by parallel arrays, all fixed-width:
 
 | Part | Contents |
 | --- | --- |
-| Header | magic, format version, dimension, dtype, row count, watermark, and a fingerprint over the embedding model, the dimension and the scoring version |
+| Header | magic, format version, dimension, dtype, row count, watermark, the change log's position at the build (§5), and a fingerprint over the embedding model, the dimension and the scoring version |
 | `embeddings` | `float32[count][dim]`, contiguous, in canonical order |
 | `ids` | `int64[count]` |
 | `agent_code`, `project_code`, `channel_code`, `source_code` | `int32[count]`, interned against small string tables in the header |
@@ -186,10 +188,10 @@ rebuild schedule:
 3. **The tail is exact.** The newest rows, which are the ones most likely to be
    retrieved, are never served from a derived structure.
 4. **Deletion needs no index path at all.** A row deleted after the build stays
-   in the file. The query path counts the selected rows that still exist and
-   hands the query to the scan when one is gone: a deleted row would otherwise
-   keep a window position the scan gives to the next row. The index never needs
-   a delete, a repair or a compaction: if it is wrong, throw it away and rebuild.
+   in the file. The change log below names it, and the query leaves it out of
+   the selection before the window is cut, so the window position goes to the
+   next row as it does in the scan. The index never needs a delete, a repair or
+   a compaction: if it is wrong, throw it away and rebuild.
 5. **The tail read is the shape SQLite is best at** — the newest few rows in
    index order.
 
@@ -209,6 +211,40 @@ header and rides the same exact tail read. The cap covers the two lists
 together, because they are bound into one statement, and a corpus that exceeds
 it declines to build rather than shipping an index that cannot name its own
 holes.
+
+**What neither list can see, a change log names.** A row the build held can
+also change in place: `update_memory` writes new text and a new vector under the
+same id, the missing-embedding repair writes a vector into a row the file already
+holds, a re-tag moves a row to another project, channel or agent, a repair
+rewrites a time, or the row is deleted. The watermark says nothing about any of
+them, and the file would keep ranking the row by its build-time vector and axes.
+
+So triggers on `memories` and `episodes` (schema 20) log the id of every row
+whose copied columns change — the vector, the four axes, `created_at`, and for
+records the `timestamp` the coarse index filters a period by — and of every row
+deleted. An insert is not logged: ids come from `AUTOINCREMENT`, so a new row is
+above every watermark already. Each file records where the log stood when its
+build began: a generation, the log's head, and the schema cookie. A query reads,
+in one statement, the ids logged since that head, leaves them out of the file's
+selection before the window limit is taken, and reads them exactly with the tail
+and the named holes, so each takes the place and the score it has now.
+
+The log is the block index's design applied to these files
+([block contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)),
+with one clock for the three files. It runs only while a file exists: a build
+turns it on before it reads its first row, so every write the build may miss
+carries a higher number, and the server turns it off at startup when no file is
+left. After a build publishes its file, the log rows that every file present
+already holds are dropped. A query hands the question to the scan when the log
+cannot vouch for the file: logging off or restarted since the build, changes the
+file needs already dropped, a head behind the file's (a database restored from
+an older copy), a schema change (a trigger dropped and recreated could have
+missed a write), or more changed rows than the cap on named holes.
+
+The two probes that detect a selected row whose embedding was cleared or which
+was deleted stay as the backstop for a change the log does not name. Their range
+forms skip the ids the log named, so a run of ids with logged holes in it is
+still asked about as a run.
 
 **The merge is an ordered merge, not a concatenation.** It is tempting to assume
 the tail is uniformly newer than the index and simply prepend it. Nothing
@@ -271,11 +307,10 @@ system's health will meet it.
     table lacks.
 - **Repair.** The index is a derived artifact: it is not backed up, and it is
   never fixed. It is deleted and rebuilt.
-- **Re-tagging after a build.** Moving a row to another project or channel
-  leaves the index's axis columns stale until the next rebuild. In the loose
-  direction the hydrate covers it; in the strict direction the row is missed
-  until rebuild. Re-tagging is rare, and this is accepted rather than solved —
-  stated here so that the next reader does not have to discover it.
+- **Re-tagging after a build — no longer left out.** Moving a row to another
+  project or channel used to leave the index's axis columns stale until the
+  next rebuild, which missed the row in the strict direction and was accepted
+  as rare. The change log of §5 names the row, and the query reads it live.
 
 ## 8. How it is gated
 

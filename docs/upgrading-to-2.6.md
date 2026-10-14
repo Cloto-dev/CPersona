@@ -32,7 +32,7 @@ reachable by exact version.
 ## What the first start does
 
 On its first start, 2.6 migrates the database from schema version 13 (every
-2.5.x release) to schema version 19 (18 for 2.6.3 to 2.6.7a1, 17 for 2.6.0 to 2.6.2), one step at a time. **No
+2.5.x release) to schema version 20 (19 for 2.6.7a2 to 2.6.11a1, 18 for 2.6.3 to 2.6.7a1, 17 for 2.6.0 to 2.6.2), one step at a time. **No
 stored row is rewritten**: each step adds tables and triggers, or one column. A step that fails is not
 recorded as done, so it is retried on the next start.
 
@@ -44,6 +44,7 @@ recorded as done, so it is retried on the next start.
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
 | 19 | 2.6.7a2 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **Built for you** on the queue, unless you turn the file off ([below](#the-block-index-file-is-on-by-default)) |
+| 20 | 2.6.11 | `vector_log_clock`, `record_vector_changes`: the log of which rows held by the vector index files changed, kept only while one of those files exists ([design §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **Yes, if you build the vector index**: build it again ([below](#build-the-vector-index-again)) |
 
 2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1, 2.6.7, 2.6.8a1, 2.6.8, 2.6.9a1, 2.6.9, 2.6.10a1, 2.6.10a2, 2.6.10a3, 2.6.10a4, 2.6.10 and 2.6.11a1 changed no schema.
 
@@ -130,6 +131,23 @@ database instead of from SQLite, with the same answer
 - **On Windows the file is read into memory** rather than mapped.
 - **To turn it off**, set `CPERSONA_BLOCK_INDEX=false`: the server stops the
   log at startup and recalls read SQLite.
+
+### Build the vector index again
+
+If you build the contiguous vector index (and with it the coarse index), build
+it again after the first start:
+
+```bash
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" build
+python -m cpersona.vector_index --db "$CPERSONA_DB_PATH" --table episodes build
+```
+
+A file now records where the change log stood when it was built, and a query
+reads every row changed since from the database
+([operations](operations.md#the-contiguous-vector-index)). A file written before
+schema 20 cannot say which of its rows changed, so it is refused: `status` exits
+2 and recall uses the scan, with the same answers and without the speed, until
+the file is built again.
 
 ## Behaviour that changed
 

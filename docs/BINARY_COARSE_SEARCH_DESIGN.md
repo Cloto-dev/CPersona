@@ -109,7 +109,7 @@ again.
 
 | Part | Contents |
 | --- | --- |
-| Header | magic, format version, dimension, row count, watermark, the same fingerprint the contiguous index carries, and the named-row lists below |
+| Header | magic, format version, dimension, row count, watermark, the change log's position at the build, the same fingerprint the contiguous index carries, and the named-row lists below |
 | `ids` | `int64[count]` |
 | `bits` | `uint8[count][dim/8]` |
 | `agent_code`, `project_code`, `channel_code`, `source_code` | `int32[count]`, interned exactly as the contiguous index interns them |
@@ -121,7 +121,10 @@ position in the file is its scan position. The watermark, the excluded-row list
 and the unembedded-row list have the meaning they have in the contiguous index
 ([§5 there](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)): rows above
 the watermark and the named rows are read live, so no stored record is ever
-invisible to this path for want of a rebuild.
+invisible to this path for want of a rebuild. The change log of that section
+applies here too: a record the file holds whose vector, axes, `created_at` or
+`timestamp` changed since the build, or which was deleted, is read live, so it
+takes the bits, the scan position and the period it has now.
 
 **Why a file of its own, and not more arrays in the contiguous index.** Two
 reasons hold whatever the loader does:
@@ -291,8 +294,9 @@ so its cost does not grow with the store, and it searches the remainder as soon
 as an index exists.
 
 "Cannot answer" is every state in which the supplier would fall back: no file,
-another dimension, an unusable file, rows whose embedding was cleared since the
-build, or a candidate deleted since the build. The decision is made on each
+another dimension, an unusable file, a change log that cannot vouch for the file,
+or, as backstops for a change the log did not name, rows whose embedding was
+cleared since the build or a candidate deleted since the build. The decision is made on each
 recall. `time_cue.remainder` is present only when the period held records past
 the cap that were not searched: `{"searched": false, "reason": "no_usable_index",
 "hint": ...}`. Whether there were any is one id-only read of the period at

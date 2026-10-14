@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:8b8975f36ac3da6cc7fc738dd0392c3ebe590d04 -->
+<!-- i18n-source: docs/architecture.md@blob:5bde90afb63b750641bb42b5ce37304725b94285 -->
 
 # アーキテクチャ
 
@@ -41,7 +41,7 @@ flowchart TB
 ## ストレージ { #storage }
 
 WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在の
-**schema v19** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
+**schema v20** で、起動時に自動で前進マイグレーションされます。データ用テーブルは
 `memories` / `episodes` / `profiles` / `pending_memory_tasks` の 4 つです。加えて
 記録用の `schema_version` テーブルと、トリガーで同期される FTS5 仮想テーブルが
 2 つあります。5 つ目のテーブル `record_nodes` は、長い記憶とエピソードの本文への
@@ -60,7 +60,11 @@ Block の腕の Hamming パスが最上位に並べたものを再順位付け�
 `block_log_clock` と `record_block_changes` は、どの記録の Block が変わったかの記録で、
 Block の索引ファイル (`CPERSONA_BLOCK_INDEX`、既定は on) を使っている間だけトリガーが
 付けます。想起はその記録を SQLite から、それ以外の記録の Block をファイルから読みます
-([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))。
+([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))。`vector_log_clock` と
+`record_vector_changes` は、ベクトル索引ファイルのための同じ種類の記録です。そのファイルが
+1 つでもある間、`memories` と `episodes` のトリガーが、ベクトル・軸・時刻が変わった行と削除された
+行を名指しし、クエリはその行を SQLite から読みます
+([連続索引 §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark))。
 
 FTS5 索引は **trigram** トークナイザを使います。これが、CPersona が日本語や
 その他の分かち書きしない文字体系で機能する理由です。単語境界ベースの

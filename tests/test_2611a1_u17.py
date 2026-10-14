@@ -122,7 +122,9 @@ def _index_files() -> list[str]:
 
 
 async def _build_all(db) -> dict[str, bytes]:
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
+    await vector_index.start_logging()
     assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
     assert (await block_index.build_block_index())["built"]
     files = {path: Path(path).read_bytes() for path in _index_files()}
@@ -268,9 +270,11 @@ async def test_a_vector_index_build_does_not_republish_a_purged_agent(which, mon
         monkeypatch.setattr(vector_index, "iter_embedding_chunks", chunks_then_purge)
         async with read_snapshot() as snap:
             if which == "contiguous":
+                await vector_index.start_logging()
                 built = await vector_index.build_index(snap, "memories")
                 path = vector_index.index_path("memories")
             else:
+                await vector_index.start_logging()
                 built = await coarse_index.build_coarse_index(snap, "memories")
                 path = coarse_index.index_path("memories")
         assert purged.get("ok") and purged["deleted_memories"] == 1, purged

@@ -39,7 +39,7 @@ Two things follow from this shape:
 ## Storage
 
 One SQLite database in WAL mode (`CPERSONA_DB_PATH`), currently
-**schema v19**, migrated forward automatically on startup. It holds four data tables —
+**schema v20**, migrated forward automatically on startup. It holds four data tables —
 `memories`, `episodes`, `profiles`, `pending_memory_tasks` — plus a
 `schema_version` bookkeeping table and two FTS5 virtual tables that triggers
 keep in step. A fifth table, `record_nodes`, holds only offsets into the text of
@@ -60,7 +60,12 @@ tables, `block_log_clock` and `record_block_changes`, are a log of which records
 blocks changed, kept by triggers only while the block index file
 (`CPERSONA_BLOCK_INDEX`, on by default) is in use: a recall reads those records
 from SQLite and every other record's blocks from the file
-([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)).
+([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions)). Two more,
+`vector_log_clock` and `record_vector_changes`, are the same kind of log for the
+vector index files: triggers on `memories` and `episodes` name each row whose
+vector, axes or time changed, or which was deleted, while one of those files
+exists, and a query reads those rows from SQLite
+([contiguous index §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)).
 
 The FTS5 indexes use the **trigram** tokenizer. That is what makes CPersona
 work on Japanese and other space-less scripts at all. A word-boundary

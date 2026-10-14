@@ -87,6 +87,7 @@ async def test_an_unembedded_hole_filled_after_the_build_is_counted(db):
     # all below the watermark the build records.
     await _insert(db, range(3))
     await _insert(db, range(3, 8), embedded=False)
+    await vector_index.start_logging()
     built = await vector_index.build_index(db, "memories")
     assert built["built"] is True, built
     assert built["excluded"] == 0
@@ -112,6 +113,7 @@ async def test_an_unembedded_hole_filled_after_the_build_is_counted(db):
 async def test_a_hole_still_without_an_embedding_costs_nothing_yet(db):
     await _insert(db, range(3))
     await _insert(db, range(3, 8), embedded=False)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     index = vector_index.load_index("memories")
     # The query path skips a row with no embedding, so it is not behind yet.
@@ -125,6 +127,7 @@ async def test_a_hole_still_without_an_embedding_costs_nothing_yet(db):
 async def test_an_excluded_row_is_counted(db):
     await _insert(db, range(5))
     await _insert(db, [5], created_at="2026-03-01T00:00:05Z")  # not the canonical form
+    await vector_index.start_logging()
     built = await vector_index.build_index(db, "memories")
     assert built["excluded"] == 1 and built["unembedded"] == 0
     index = vector_index.load_index("memories")
@@ -140,6 +143,7 @@ async def test_the_count_is_the_query_paths_read_on_every_group(db):
     await _insert(db, range(10))
     await _insert(db, [10], created_at="2026-03-01T00:00:10Z")
     await _insert(db, range(11, 14), embedded=False)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     await _fill_missing_embeddings(db)
     await _insert(db, range(20, 24))  # written since the build
@@ -159,6 +163,7 @@ async def test_the_count_is_the_query_paths_read_on_every_group(db):
 async def test_the_health_check_reports_filled_holes(db):
     await _insert(db, range(10))
     await _insert(db, range(10, 15), embedded=False)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     assert await checks.check_vector_index(db, AGENT, False) == []
 
@@ -175,6 +180,7 @@ async def test_the_health_check_reports_filled_holes(db):
 async def test_the_health_check_threshold_is_unchanged_for_a_plain_tail(db):
     """Control: with no holes, the number is the tail and the line sits where it sat."""
     await _insert(db, range(50))
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     await _insert(db, range(100, 110))  # 20% of the indexed rows: not past the ratio
     assert await checks.check_vector_index(db, AGENT, False) == []

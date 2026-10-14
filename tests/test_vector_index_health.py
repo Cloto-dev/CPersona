@@ -121,6 +121,7 @@ async def test_the_absent_line_carries_the_price_not_a_severity(db, monkeypatch)
 @pytest.mark.asyncio
 async def test_a_healthy_index_says_nothing(db):
     await _insert(db, 50)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     assert await _run(db) == []
 
@@ -128,6 +129,7 @@ async def test_a_healthy_index_says_nothing(db):
 @pytest.mark.asyncio
 async def test_an_index_that_does_not_hold_together_is_a_warning(db):
     await _insert(db, 50)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     path = vector_index.index_path("memories")
     with open(path, "r+b") as fh:
@@ -143,6 +145,7 @@ async def test_an_index_that_does_not_hold_together_is_a_warning(db):
 async def test_a_corpus_whose_width_moved_is_a_warning(db):
     """What a model swap looks like from here: the file is intact and unusable."""
     await _insert(db, 50)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     await _insert(db, 1, start=900, dim=DIM * 2)
 
@@ -158,6 +161,7 @@ async def test_a_tail_past_the_rebuild_threshold_is_an_observation(db):
     """The one staleness this design admits: never a wrong answer, only a longer
     exact read on every query."""
     await _insert(db, 50)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     await _insert(db, 20, start=500)  # 40% of the indexed rows
 
@@ -170,6 +174,7 @@ async def test_a_tail_past_the_rebuild_threshold_is_an_observation(db):
 @pytest.mark.asyncio
 async def test_a_short_tail_stays_quiet(db):
     await _insert(db, 50)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     await _insert(db, 5, start=500)  # 10%, under the threshold
     assert await _run(db) == []
@@ -180,6 +185,7 @@ async def test_the_findings_surface_separates_the_two_severities(db):
     """The kinds have to differ, or a reader routing on severity sees `info` for
     an index that stopped working."""
     await _insert(db, 50)
+    await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
     path = vector_index.index_path("memories")
     with open(path, "r+b") as fh:
@@ -253,6 +259,7 @@ async def test_each_table_reports_its_own_absence(db_with_episodes):
     db = db_with_episodes
     await _insert(db, 50)
     await _insert_episodes(db, checks.INDEX_MATTERS_ROWS)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
     issues = await _run(db)
     assert [(i["type"], i["table"]) for i in issues] == [("vector_index_absent", "episodes")]
@@ -265,7 +272,9 @@ async def test_both_indexes_healthy_say_nothing(db_with_episodes):
     db = db_with_episodes
     await _insert(db, 50)
     await _insert_episodes(db, 50)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "memories"))["built"]
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "episodes"))["built"]
     assert await _run(db) == []
 
@@ -274,6 +283,7 @@ async def test_both_indexes_healthy_say_nothing(db_with_episodes):
 async def test_an_episode_index_that_does_not_hold_together_names_its_table(db_with_episodes):
     db = db_with_episodes
     await _insert_episodes(db, 50)
+    await vector_index.start_logging()
     assert (await vector_index.build_index(db, "episodes"))["built"]
     path = vector_index.index_path("episodes")
     with open(path, "r+b") as fh:

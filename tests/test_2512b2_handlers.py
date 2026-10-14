@@ -3130,6 +3130,7 @@ async def test_delete_agent_data_leaves_no_identifiers_in_the_local_index(clean_
     await _insert_337(clean_337, OTHER_337, 3, "discord:Carol")
     await clean_337.commit()
 
+    await vector_index.start_logging()
     built = await vector_index.build_index(clean_337, "memories")
     assert built.get("built"), built
     path = vector_index.index_path("memories")
@@ -3150,6 +3151,7 @@ async def test_delete_agent_data_leaves_no_identifiers_in_the_local_index(clean_
 async def test_delete_agent_data_leaves_no_embedding_bytes_in_the_local_index(clean_337):
     await _insert_337(clean_337, AGENT_337, 7, "discord:Alice")
     await clean_337.commit()
+    await vector_index.start_logging()
     await vector_index.build_index(clean_337, "memories")
     path = vector_index.index_path("memories")
     assert _vec_337(7) in open(path, "rb").read(), "the index did not capture the embedding"
@@ -3170,6 +3172,7 @@ async def test_a_delete_that_matched_nothing_keeps_the_operators_index(clean_337
     """
     await _insert_337(clean_337, OTHER_337, 4, "discord:Carol")
     await clean_337.commit()
+    await vector_index.start_logging()
     await vector_index.build_index(clean_337, "memories")
     path = vector_index.index_path("memories")
     before = open(path, "rb").read()
