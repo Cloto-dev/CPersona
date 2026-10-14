@@ -1531,7 +1531,7 @@ def text_revision(text: str) -> str:
     `unresolved` answer rather than a different passage served under the same
     offsets. A block or node range needs no such check, because the triggers
     delete a record's derived rows when its text changes; a raw span has nothing
-    equivalent, which is why the one place that hands a span back attaches this.
+    equivalent, which is why every place that hands a span back attaches this.
     """
     import hashlib
 

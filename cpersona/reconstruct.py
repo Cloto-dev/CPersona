@@ -1161,6 +1161,16 @@ def _stored_text(claim: _Candidate) -> str:
     return excerpts.stored_text(claim.ref, claim.content)
 
 
+def _span_expand(ref: str, text: str, start: int, end: int) -> dict:
+    """The expand of a raw character span of `text`, carrying the revision of that text.
+
+    Unlike a block or node range, nothing invalidates a raw span when its record is
+    rewritten: get_contents checks a revision only when one is given, and without it the
+    same offsets would serve a passage of the new text the record never said here.
+    """
+    return {"ref": ref, "span": [start, end], "revision": blocks.text_revision(text)}
+
+
 def _filled_quote(
     claim: _Candidate, block_entry: tuple | None, query_bits, query_grams: set[str], cap: int, query_vec=None
 ) -> dict:
@@ -1186,7 +1196,7 @@ def _filled_quote(
     quote: dict = {"content_len": len(text), "content_truncated": True}
     if basis == "start":
         return {**quote, "content": text[:cap], "quote_basis": "start", "ranges": [[0, cap]],
-                "expand": {"ref": claim.ref, "span": [0, len(text)]}}
+                "expand": _span_expand(claim.ref, text, 0, len(text))}
     quote.update(content=excerpts.SEPARATOR.join(text[s:e] for s, e in ranges), quote_basis=basis,
                  ranges=[[s, e] for s, e in ranges])
     if severed:
@@ -1194,7 +1204,7 @@ def _filled_quote(
         start = ranges[0][0]
         end = blocks.context_range(text, spans, ranked[0][0])[1]
         quote["context_incomplete"] = True
-        quote["expand"] = {"ref": claim.ref, "span": [start, end]}
+        quote["expand"] = _span_expand(claim.ref, text, start, end)
     return quote
 
 
@@ -1493,7 +1503,7 @@ def sequence_quote(claim: _Candidate, text: str, basis: str, passages: list[tupl
     if cut is not None:
         if basis != "start":
             quote["context_incomplete"] = True
-        quote["expand"] = {"ref": claim.ref, "span": [cut[0], cut[3]]}
+        quote["expand"] = _span_expand(claim.ref, text, cut[0], cut[3])
     return quote
 
 
@@ -1744,8 +1754,8 @@ async def do_reconstruct(
     providers.check_walk(reached, chosen, graph.rows if graph is not None else {})
 
     by_ref = {c.ref: c for c in candidates}
-    selected = []
-    for position, (members, walked) in enumerate(zip(chosen, reached)):
+    item_rows: list[tuple[list[_Candidate], list[tuple]]] = []
+    for members, walked in zip(chosen, reached):
         rows = [candidates[i] for i in members]
         extra = []
         for ref, label, hops in walked:
@@ -1753,12 +1763,19 @@ async def do_reconstruct(
             row.context = graph.rows[ref]["context"]
             by_ref[row.ref] = row
             extra.append((row, label, hops))
-        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)
+        item_rows.append((rows, extra))
+
+    def structured(position: int, evidence: int) -> dict:
+        """The item at `position`, keeping at most `evidence` claims."""
+        rows, extra = item_rows[position]
+        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, evidence, extra, links)
         providers.check_structure(item, {row.ref for row in rows} | {row.ref for row, _, _ in extra})
         if position >= len(window):
             # Said in the words recall uses for the same row, so one reading covers both.
             item["admission"] = "reservation"
-        selected.append(item)
+        return item
+
+    selected = [structured(position, bounds_max_evidence) for position in range(len(item_rows))]
 
     # Quote the selected items. Nodes are read only now, after the items and their
     # order are fixed, so the tree cannot change what comes back.
@@ -1863,9 +1880,21 @@ async def do_reconstruct(
         budget_policy = {"source": "server_default", "clamped": False, "reason": "bounded_by_the_cap"}
         response["effective_budget"], response["budget_policy"] = effective_budget, budget_policy
 
-    def assemble(budget_chars: int) -> tuple[dict, list[int]]:
+    def assemble(budget_chars: int, evidence: dict[int, int] | None = None) -> tuple[dict, list[int]]:
         """The response at a character budget, the longest prefix of the sequence that fits,
-        and which entries it quoted."""
+        and which entries it quoted.
+
+        `evidence` lowers the claims kept by the items at the given positions (a mode's
+        cap, below); an excerpt of a claim the lower bound drops goes with it.
+        """
+        item_at = [item for item, _, _ in entries_claims]
+        quotes_at = other_quotes
+        if evidence:
+            quotes_at = list(other_quotes)
+            for i, kept in evidence.items():
+                item_at[i] = structured(i, kept)
+                refs = {claim["ref"] for claim in item_at[i]["claims"]}
+                quotes_at[i] = [quote for quote in other_quotes[i] if quote["ref"] in refs]
         out = dict(response)
         out["bounds"] = {k: (list(v) if isinstance(v, list) else v) for k, v in bounds.items()}
         out["reconstruction"] = dict(response["reconstruction"])
@@ -1886,7 +1915,7 @@ async def do_reconstruct(
             for i in positions:
                 text, basis, passages = records[i]
                 head_quote = sequence_quote(entries_claims[i][1], text, basis, passages, taken[i])
-                entries.append((entries_claims[i][0], head_quote, other_quotes[i]))
+                entries.append((item_at[i], head_quote, quotes_at[i]))
             if trace:
                 picked = {(i, j) for i, js in taken.items() for j in js}
                 out["trace"]["sequence"] = {
@@ -1903,7 +1932,7 @@ async def do_reconstruct(
                     ],
                 }
         else:
-            entries = [(item, head_quotes[i], other_quotes[i]) for i, (item, _, _) in enumerate(entries_claims)]
+            entries = [(item, head_quotes[i], quotes_at[i]) for i, item in enumerate(item_at)]
         items, used_budget, budget_cut = p.reconstructor.allocate(entries, allowance)
         providers.check_allocation(entries, items, used_budget, allowance, budget_cut)
         out["used_budget"] = used_budget
@@ -1983,9 +2012,41 @@ async def do_reconstruct(
                 else:
                     high = middle - 1
             if fits is None:
+                # Not even the first step fits. Its item's claims are not steps of the
+                # sequence -- max_evidence bounds them, not the cap -- so a bundled burst
+                # can outgrow the cap around a short passage. Keep the most claims that
+                # fit, the cut said in claims_omitted as max_evidence's is, rather than
+                # refuse. The prefix stays at the first step: a longer one could hold
+                # an item a larger cap, fitting without the cut, would not.
+                first = assemble(ends[0])[1]
+                retained = max((len(entries_claims[i][0]["claims"]) for i in first), default=1)
+                low, high = 1, retained - 1
+                while low <= high:
+                    middle = (low + high) // 2
+                    attempt, attempt_quoted = assemble(ends[0], {i: middle for i in first})
+                    attempt_shaped = _shaped(attempt)
+                    if attempt_shaped["used_tokens"] <= limit:
+                        fits, low = (attempt, attempt_quoted, attempt_shaped), middle + 1
+                    else:
+                        high = middle - 1
+            if fits is None:
+                smallest = _shaped(assemble(ends[0], {i: 1 for i in first})[0])
+                passage = sum(tokens.count_json(item["content"]) for item in smallest["items"])
+                if passage > limit:
+                    detail = f"the first passage alone is {passage} tokens, over mode {mode!r}'s cap of {limit} tokens"
+                else:
+                    # Say what does not fit: the passage does, so naming it would send
+                    # the caller after the wrong bound.
+                    notices = [key for key in ("advisory", "update", "suggestion", "time_cue") if key in smallest]
+                    detail = (
+                        f"the smallest response is {smallest['used_tokens']} tokens, over mode {mode!r}'s cap of "
+                        f"{limit} tokens: the first passage is {passage} tokens, and the rest is its head claim "
+                        "and the response's own fields"
+                        + (f", notices included ({', '.join(notices)})" if notices else "")
+                    )
                 return error_response(
                     CAP_BELOW_MINIMUM,
-                    detail=f"the first passage alone does not fit mode {mode!r}'s cap of {limit} tokens",
+                    detail=detail,
                     items=[],
                     returned_count=0,
                     mode=mode,
