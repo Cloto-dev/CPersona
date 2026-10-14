@@ -3275,7 +3275,9 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     never repaired. One file holds every agent's records, so the registry
     declares the repair cross-agent and the guard demands write on every agent
     for it. ``repairable`` is 1 (the one file) or 0 when the builder would
-    decline, which is a corpus carrying two embedding widths mid-swap.
+    decline, which is a corpus carrying two embedding widths mid-swap. The build
+    commits on seams of its own, so it runs with no transaction held: a fix run
+    reaches it only after its commit (``POST_COMMIT_REPAIRS``).
 
     Detection is all the findings surface does with this (the SuperAuditor
     boundary): whether a finding leads to ``check_health(fix=true)`` is the
@@ -3402,26 +3404,48 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
             )
 
     if fix and repairable:
-        # The change log goes on, and is pruned, on the repair's own transaction:
-        # the build reads its rows on it too, so no write can fall between the
-        # log's head and the rows (bug-514).
-        await vector_index.start_logging_on(db)
-        try:
-            built = await coarse_index.build_coarse_index(db, "memories")
-        except vector_index.IndexUnusable as exc:
-            built = {"built": False, "reason": str(exc)}
-        if built.get("built"):
-            await vector_index.prune_log_on(db)
-        elif not any(os.path.exists(path) for path, _magic in vector_index._log_readers()):
-            # A declined build leaves no file to read the log it turned on.
-            await vector_index.stop_logging(db)
-        # Present on every fix run, so "not built" is an answer rather than an absence.
-        issue["rebuilt"] = bool(built.get("built"))
-        if issue["rebuilt"]:
-            issue["build"] = {k: built[k] for k in ("count", "dim", "watermark", "bytes")}
-        else:
-            issue["build_declined"] = built.get("reason", "")
+        await _rebuild_coarse_index(issue)
     return [issue]
+
+
+async def _rebuild_coarse_index(issue: dict) -> None:
+    """Build the coarse index from committed rows and stamp the outcome on ``issue``.
+
+    Runs with no transaction held, as the operator command builds it (bug-550).
+    The build reads every embedded record and writes no row; on the fix run's
+    connection it held the write lock for that whole read, so every store,
+    archive, queue drain and import, in this process and in every other one on
+    the file, waited for it. It also read rows that run had not committed and
+    published the file before the commit, so a run that then rolled back left a
+    file without rows the rollback put back.
+
+    The change log goes on in a commit of its own before the snapshot opens, so
+    every write the snapshot does not see is logged and read live, and the log is
+    pruned once the file is published (bug-514).
+    """
+    from cpersona import coarse_index, vector_index
+    from cpersona.database import read_snapshot, transaction
+
+    built: dict = {"built": False}
+    await vector_index.start_logging()
+    try:
+        async with read_snapshot() as snap:
+            built = await coarse_index.build_coarse_index(snap, "memories")
+    except vector_index.IndexUnusable as exc:
+        built = {"built": False, "reason": str(exc)}
+    finally:
+        if built.get("built"):
+            await vector_index.prune_log()
+        elif not any(os.path.exists(path) for path, _magic in vector_index._log_readers()):
+            # A build that declined or failed leaves no file to read the log it turned on.
+            async with transaction() as db:
+                await vector_index.stop_logging(db)
+    # Present on every fix run, so "not built" is an answer rather than an absence.
+    issue["rebuilt"] = bool(built.get("built"))
+    if issue["rebuilt"]:
+        issue["build"] = {k: built[k] for k in ("count", "dim", "watermark", "bytes")}
+    else:
+        issue["build_declined"] = built.get("reason", "")
 
 
 async def check_block_index(db, agent_id: str = "", fix: bool = False) -> list[dict]:
@@ -3910,6 +3934,15 @@ _CHECKS_BY_NAME = {c.name: c for c in HEALTH_CHECKS}
 # clean pre-scan already voted "no repair needed". See the dispatch there.
 WHOLE_DB_SCAN_CHECKS = frozenset({"fts_integrity", "sqlite_integrity"})
 
+# bug-550: the fix-capable checks whose repair runs after the fix run commits.
+# Such a repair writes no row: it builds a derived file by reading the whole
+# store, which needs no write lock, and it commits the change log on seams of
+# its own. Inside the run's transaction it held the shared write lock for the
+# whole read, and it published a file built from rows the run had not committed.
+# Under fix, run_health_checks only detects these; do_check_health runs their
+# repair once the locked run has committed (``after_commit``).
+POST_COMMIT_REPAIRS = frozenset({"coarse_index"})
+
 
 def is_fix_capable(name: str) -> bool:
     """Whether the named check can write a repair (registry metadata lookup).
@@ -3957,7 +3990,12 @@ _EMBEDDING_CHECKS = {
 
 
 async def run_health_checks(
-    db, agent_id: str = "", fix: bool = False, checks: list | None = None, embedding_cache=None
+    db,
+    agent_id: str = "",
+    fix: bool = False,
+    checks: list | None = None,
+    embedding_cache=None,
+    after_commit: bool = False,
 ) -> tuple[list[dict], dict]:
     """Run (a subset of) the registry; returns (issues, severity_summary).
 
@@ -3966,11 +4004,18 @@ async def run_health_checks(
 
     ``embedding_cache`` (bug-072) carries embeddings pre-computed outside the write lock
     for the two null-embedding checks; None means those checks embed live (CLI path).
+
+    Under ``fix`` the run is the caller's transaction, and the checks in
+    ``POST_COMMIT_REPAIRS`` are only detected there. ``after_commit`` is the
+    caller's second call, once that transaction has committed: ``db`` is a read
+    connection, those checks repair on seams of their own, and every other check
+    is only detected.
     """
     selected = set(checks) if checks else None
     issues: list[dict] = []
     summary = {"critical": 0, "warn": 0, "info": 0}
-    if fix:
+    in_run = fix and not after_commit
+    if in_run:
         # bug-361: the loop below turns every exception from a check into an
         # ordinary finding, so nothing escapes to transaction()'s rollback and a
         # repair that raised between its two statements was committed half done
@@ -3989,16 +4034,20 @@ async def run_health_checks(
     for check in HEALTH_CHECKS:
         if selected is not None and check.name not in selected:
             continue
-        savepoint = f"health_check_{check.name}" if fix else None
+        savepoint = f"health_check_{check.name}" if in_run else None
         if savepoint:
             await db.execute(f'SAVEPOINT "{savepoint}"')
+        # A repair that reads the whole store to build a file runs only after the
+        # commit: inside the run it would hold the write lock for that whole read
+        # (bug-550). Every other repair runs only inside the run.
+        check_fix = fix and (check.name in POST_COMMIT_REPAIRS) == after_commit
         effects = remote_index_effects.get()
         effects_mark = len(effects) if effects is not None else 0
         try:
             if embedding_cache is not None and check.name in _EMBEDDING_CHECKS:
-                found = await check.runner(db, agent_id, fix, embedding_cache=embedding_cache)
+                found = await check.runner(db, agent_id, check_fix, embedding_cache=embedding_cache)
             else:
-                found = await check.runner(db, agent_id, fix)
+                found = await check.runner(db, agent_id, check_fix)
         except Exception as e:
             if savepoint:
                 # Undo this check's writes only. A statement-level abort keeps the

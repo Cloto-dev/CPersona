@@ -186,6 +186,7 @@ async def do_check_health(
     # price of never shipping that contradiction.
     scan_issues: list[dict] = []
     locked_checks = checks_run
+    post_commit_names: list[str] = []
     if fix:
         scan_names = [
             n
@@ -198,6 +199,11 @@ async def do_check_health(
                     db, agent_id=agent_id, fix=False, checks=scan_names
                 )
             locked_checks = [n for n in checks_run if n not in scan_names]
+        # bug-550: a repair that builds a file from the whole store leaves the locked
+        # run too, for the reason the scan above does, and runs after the commit
+        # below (see there).
+        post_commit_names = [n for n in checks_run if n in checks_registry.POST_COMMIT_REPAIRS]
+        locked_checks = [n for n in locked_checks if n not in post_commit_names]
 
     # bug-042/043: a fix run's writes + commit are serialised by transaction() so a
     # concurrent import/merge cannot flush check_health's partial repairs (and vice
@@ -269,6 +275,20 @@ async def do_check_health(
                     )
                     if finding is not None and "re_embedded" in finding:
                         finding["re_embedded"] += applied
+
+    # bug-550: the coarse index's repair reads every embedded record to build a file
+    # and writes no row. Inside the locked run it held the write lock for that
+    # whole read, stalling every writer in every process on the file, and it
+    # published a file built from rows the run had not committed, which a rollback
+    # then put back without the file knowing. It runs here instead, after every
+    # write above has committed, with no lock held: detected on the committed rows,
+    # then built on a snapshot of its own with the change log turned on first.
+    if post_commit_names:
+        async with connection() as db:
+            post_issues, _ = await checks_registry.run_health_checks(
+                db, agent_id=agent_id, fix=True, checks=post_commit_names, after_commit=True
+            )
+        issues = checks_registry.merge_issues(issues, post_issues)
 
     # bug-059: after a fix run, re-derive status/severity_summary from the RESIDUAL
     # state (read-only, post-commit) rather than from the issues that were FOUND.

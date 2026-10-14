@@ -736,8 +736,8 @@ async def test_export_and_import_carry_no_log(clean, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_coarse_repair_builds_under_its_own_transaction(clean, monkeypatch):
-    """check_health(fix) builds the coarse file inside the repair's transaction, log included."""
+async def test_the_coarse_repair_builds_a_file_the_log_vouches_for(clean, monkeypatch):
+    """check_health(fix) builds the coarse file after its run commits, the log turned on first."""
     from cpersona import config
 
     db = clean

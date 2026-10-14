@@ -3123,7 +3123,7 @@ MUTATIONS += [
         tests=('tests/test_coarse_index_health.py',),
         target='coarse_index health — fix builds the file',
         file='cpersona/checks.py',
-        find='            built = await coarse_index.build_coarse_index(db, "memories")\n',
+        find='            built = await coarse_index.build_coarse_index(snap, "memories")\n',
         replace='            built = {"built": False, "reason": "mutant"}\n',
         breaks='check_health(fix=true) reports the coarse index and never builds it',
         expect='test_coarse_index_health.py::test_fix_builds_the_file_and_the_next_run_is_quiet',
