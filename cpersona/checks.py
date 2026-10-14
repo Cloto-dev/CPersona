@@ -2135,6 +2135,10 @@ def _sqlite_readable_stamp(ts: str) -> str | None:
         return None
 
 
+# The width of this module's other id-list `IN (...)` repairs.
+_SQL_ONLY_STAMP_CHUNK = 500
+
+
 async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     bad_ts = (
@@ -2143,7 +2147,37 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
             iso.params,
         )
     )[0][0]
-    if bad_ts == 0:
+    # The other direction: a stamp SQLite reads and the package's parser does not
+    # ('now', a Julian-day number, 30 February, a lower-case 'z'). Every scoring
+    # path reads it as undated and the confidence span cannot take it as an end,
+    # yet datetime() alone called it valid, so no check claimed it and a literal
+    # 'now' survived every repair. Which stamps the parser reads cannot be asked in
+    # SQL, so the parser is asked here, over the narrowest scan that can answer it
+    # (folding the strftime() calls below into this scan made it five times slower
+    # at 100,000 rows, so they run on the declined rows alone). A stamp SQLite reads
+    # as ahead of the clock stays future_timestamp's -- the same predicate against
+    # the same boundary -- so the two checks still never claim one row.
+    declined = [
+        row_id
+        for row_id, ts in await db.execute_fetchall(
+            f"SELECT id, timestamp FROM memories WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause}",
+            iso.params,
+        )
+        if not isinstance(ts, str) or _parse_timestamp_utc(ts) is None
+    ]
+    sql_only: list = []
+    if declined:
+        ahead_of = future_timestamp_boundary()
+        for start in range(0, len(declined), _SQL_ONLY_STAMP_CHUNK):
+            chunk = declined[start : start + _SQL_ONLY_STAMP_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            sql_only += await db.execute_fetchall(
+                f"""SELECT id, locked, strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at) FROM memories
+                    WHERE id IN ({placeholders})
+                    AND NOT (strftime('%Y-%m-%d %H:%M:%f', timestamp) > strftime('%Y-%m-%d %H:%M:%f', ?))""",
+                (*chunk, ahead_of),
+            )
+    if bad_ts == 0 and not sql_only:
         return []
     # A stamp SQLite cannot read but the Python readers can still names the
     # caller's event time, and the created_at copy below would replace that with the
@@ -2176,7 +2210,19 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
             iso.params,
         )
     }
-    repairable = len(respell_ids | fallback_ids)
+    # Nothing to respell to: the parser reads no instant in these, and SQLite's
+    # reading ('now' is the moment of the read, 30 February is 2 March) is a guess,
+    # not the caller's. created_at is the honest time the row carries, as for a
+    # stamp nothing parses -- in the same canonical form, computed here so a
+    # created_at the parser could not read either (an imported year 0, say) is not
+    # counted as a repair that would leave the row exactly as unreadable.
+    sql_only_repairs = {
+        row_id: replacement
+        for row_id, locked, replacement in sql_only
+        if not locked and isinstance(replacement, str) and _parse_timestamp_utc(replacement) is not None
+    }
+    sql_only_ids = set(sql_only_repairs)
+    repairable = len(respell_ids | fallback_ids | sql_only_ids)
     if fix:
         # bug-098: locked = 0 on the write as on the scan.
         for row_id, canon in respell:
@@ -2199,14 +2245,18 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+        for row_id, replacement in sorted(sql_only_repairs.items()):
+            await db.execute(
+                "UPDATE memories SET timestamp = ? WHERE id = ? AND locked = 0", (replacement, row_id)
+            )
         # The coarse index holds each row's build-time datetime(timestamp) and
         # filters periods by it; a row given a readable stamp here, respelled or
-        # copied from created_at, would stay in no period there. Both sets were
-        # named above, before the UPDATEs that change them.
+        # copied from created_at, would stay in its old period, or in none, there.
+        # Every set was named above, before the UPDATEs that change them.
         from cpersona import coarse_index
 
-        coarse_index.discard_if_holding(sorted(respell_ids | fallback_ids))
-    return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
+        coarse_index.discard_if_holding(sorted(respell_ids | fallback_ids | sql_only_ids))
+    return [{"type": "invalid_timestamp", "count": bad_ts + len(sql_only), "repairable": repairable}]
 
 
 async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
@@ -3884,11 +3934,12 @@ HEALTH_CHECKS: list[Check] = [
     Check("invalid_timestamp", "warn", True, check_invalid_timestamp),
     # Runs after invalid_timestamp because the two share a repair (copy the row's
     # own created_at) and their predicates are disjoint by construction: a stamp
-    # SQLite cannot read is the first one's, a stamp it reads as ahead of the
-    # clock is this one's. Ordered so a row that somehow satisfied both would be
-    # repaired into a readable past stamp rather than the other way round. It also
-    # lets this check see a future stamp invalid_timestamp has just respelled from
-    # a form only Python reads ('+0900') into one SQL compares.
+    # SQLite reads as ahead of the clock is this one's, and any other stamp that
+    # SQLite or the package's parser cannot read is the first one's. Ordered so a
+    # row that somehow satisfied both would be repaired into a readable past stamp
+    # rather than the other way round. It also lets this check see a future stamp
+    # invalid_timestamp has just respelled from a form only Python reads ('+0900')
+    # into one SQL compares.
     Check("future_timestamp", "warn", True, check_future_timestamp),
     # bug-208: info, not warn — since bug-213 the read paths score these rows by
     # created_at anyway; the fix materialises that fallback for direct readers.

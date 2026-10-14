@@ -208,7 +208,13 @@ refusing here would make the round trip lossy for precisely the rows worth
 inspecting.
 
 An unreadable stamp is not this finding's business either: `invalid_timestamp`
-owns that row.
+owns that row. Unreadable means no reader of the column can place it. A
+spelling only SQLite's date functions read — a Julian-day number such as
+`2500000`, 30 February, a lower-case `z` — is judged the way SQLite reads it,
+because the `future_timestamp` check and the time filters read it that way:
+`2500000` is 2132 to them, so `reject` refuses it. Such a stamp that is not
+ahead of the clock (`now`, say) is still `invalid_timestamp`'s, and `fix=true`
+replaces it with the row's `created_at`.
 
 For rows already stored, `check_health` reports `future_timestamp`, and
 `fix=true` restores each one from its own `created_at` — the insertion time the

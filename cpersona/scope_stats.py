@@ -10,7 +10,8 @@ same scans on every call.
 This module owns those statements and hands the raw results back. Nothing downstream
 moves: the parsing, the ``_parse_timestamp_utc`` calls and the adaptive-threshold
 arithmetic stay at their call sites and consume exactly the values the queries
-returned, so a cached recall and an uncached one score identically.
+returned, so a cached recall and an uncached one score identically. (The span asks
+the same parser only whether an end is one its caller can read; see ``get_span``.)
 
 The two halves are cached under one key but computed independently, so a
 confidence-off install never issues the MIN/MAX at all — it is not merely cheap
@@ -52,6 +53,7 @@ from typing import Callable
 from cpersona import database
 from cpersona.config import SCOPE_STATS_CACHE_ENABLED, SCOPE_STATS_TTL_SECONDS
 from cpersona.isolation import isolation_where
+from cpersona.utils import _parse_timestamp_utc
 
 __all__ = ["clear", "get_pool_counts", "get_span"]
 
@@ -182,36 +184,87 @@ async def get_span(
     # is a range over the same index rather than a walk of the scope. Settling it
     # in SQL rather than here keeps this function returning the strings SQLite
     # gave back, as its docstring promises.
+    #
+    # datetime() is SQLite's reading, and it reads more than the caller's parser
+    # does: 'now', a Julian-day number, 30 February, a trailing space. Such a stamp
+    # passed the predicate and could be an end -- 'now' sorts after every digit, so
+    # it was the text maximum -- and the call site, which needs BOTH ends parsed,
+    # then dropped the whole scope's span: bug-237's effect by another spelling.
+    # So an end is also checked with the caller's own parser, and one it cannot
+    # read is stepped past (each step is another seek, from just beyond it). The
+    # parsed value is not returned; what comes back is still SQLite's string.
     sql = (
         f"SELECT {{agg}}(timestamp) FROM memories "
         f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause}"
     )
-    lo = await db.execute_fetchall(sql.format(agg="MIN"), iso.params)
-    hi = await db.execute_fetchall(sql.format(agg="MAX"), iso.params)
-    lo_text = lo[0][0] if lo else None
-    hi_text = hi[0][0] if hi else None
+    lo_text = await _readable_end(db, sql.format(agg="MIN"), iso.params, ">")
+    hi_text = await _readable_end(db, sql.format(agg="MAX"), iso.params, "<")
     window = (
         "SELECT timestamp FROM memories "
         f"WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause} AND {{edge}} "
         "ORDER BY julianday(timestamp) {order}, timestamp {order} LIMIT 1"
     )
+    # A row the parser cannot read can sit inside the window and, by julianday(),
+    # past the true end, so the row the window answers is not taken on trust (see
+    # _settle). Each end found above is readable and inside its own window, so no
+    # row here means a delete landed between the statements, and the end stands.
     if lo_text is not None:
-        rows = await db.execute_fetchall(
-            window.format(order="ASC", edge="timestamp < date(substr(?, 1, 10), '+3 days')"),
-            (*iso.params, lo_text),
+        rows = await _settle(
+            db,
+            window,
+            order="ASC",
+            edge="timestamp < date(substr(?, 1, 10), '+3 days')",
+            params=(*iso.params, lo_text),
         )
-        # No row means the text minimum does not start with a date (a julian-day
-        # string, say): there is no window to settle it in, so it stands.
         lo_text = rows[0][0] if rows else lo_text
     if hi_text is not None:
-        rows = await db.execute_fetchall(
-            window.format(order="DESC", edge="timestamp >= date(substr(?, 1, 10), '-2 days')"),
-            (*iso.params, hi_text),
+        rows = await _settle(
+            db,
+            window,
+            order="DESC",
+            edge="timestamp >= date(substr(?, 1, 10), '-2 days')",
+            params=(*iso.params, hi_text),
         )
         hi_text = rows[0][0] if rows else hi_text
     span = (lo_text, hi_text)
     _store(key, "span", span, generation, now)
     return span
+
+
+def _readable(text) -> bool:
+    """True if the span's caller can parse ``text`` -- it parses both ends itself."""
+    return isinstance(text, str) and _parse_timestamp_utc(text) is not None
+
+
+async def _readable_end(db, sql: str, params, step: str) -> str | None:
+    """The single aggregate ``sql`` answers, stepped past values the caller cannot parse.
+
+    ``step`` is ``>`` under MIN and ``<`` under MAX. Each retry is the same seek from
+    just beyond the value it declined, so the cost is one seek per distinct
+    unreadable value sitting at that end of the scope: none, normally.
+    """
+    rows = await db.execute_fetchall(sql, params)
+    text = rows[0][0] if rows else None
+    while text is not None and not _readable(text):
+        rows = await db.execute_fetchall(f"{sql} AND timestamp {step} ?", (*params, text))
+        text = rows[0][0] if rows else None
+    return text
+
+
+async def _settle(db, window: str, *, order: str, edge: str, params) -> list:
+    """The window's one row, passing over values the caller cannot parse: ``[]`` if none.
+
+    A value the parser declines is excluded and the window asked again, so the cost
+    is one more statement per distinct unreadable value that would have won: none,
+    normally.
+    """
+    declined: list[str] = []
+    while True:
+        excluded = f" AND timestamp NOT IN ({', '.join('?' * len(declined))})" if declined else ""
+        rows = await db.execute_fetchall(window.format(order=order, edge=edge + excluded), (*params, *declined))
+        if not rows or _readable(rows[0][0]):
+            return rows
+        declined.append(rows[0][0])
 
 
 async def get_pool_counts(
