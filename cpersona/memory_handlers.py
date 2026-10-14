@@ -487,11 +487,11 @@ async def do_store(
     local_embedded = embedding_blob is not None
     remote_embedded = False
 
-    if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
+    index_url = vector.remote_route("index") if VECTOR_SEARCH_MODE == "remote" else None
+    if index_url is not None:
         try:
-            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
             resp = await vector._embedding_client._client.post(
-                f"{base_url}/index",
+                index_url,
                 json={
                     "namespace": f"cpersona:{agent_id}",
                     "items": [{"id": f"mem:{mem_id}", "text": content}],
@@ -799,8 +799,9 @@ async def _mark_single_arm_rows(db, lexical: list[tuple[tuple, dict]], query_emb
     if not lexical:
         return
     client = vector._embedding_client
-    # The predicate _search_vector_remote gates on, read from the same module.
-    remote_armed = bool(vector.VECTOR_SEARCH_MODE == "remote" and client and client._http_url)
+    # The predicate _search_vector_remote gates on, read from the same module. A URL
+    # that names no search route sends nothing, so that service cannot have answered.
+    remote_armed = vector.VECTOR_SEARCH_MODE == "remote" and vector.remote_route("search") is not None
     if not client or (not query_embedded and not remote_armed):
         for _rid, r in lexical:
             r["_rrf_single_arm"] = True
@@ -2016,15 +2017,18 @@ async def _propagation_seat_rows(
                 wanted[(kind, "memories" if kind == "mem" else "episodes")].append(r["id"])
             blobs: dict[tuple, bytes] = {}
             for (kind, table), ids in wanted.items():
-                if not ids:
-                    continue
-                marks = ",".join("?" * len(ids))
-                async with db.execute(
-                    f"SELECT id, embedding FROM {table} WHERE agent_id = ? AND id IN ({marks})",
-                    (agent_id, *ids),
-                ) as cur:
-                    for row_id, blob in await cur.fetchall():
-                        blobs[(kind, row_id)] = blob
+                # Split at the width every other id read on this recall uses: the
+                # candidates follow the deeper ranking's depth, which the depth floor
+                # can raise as far as the library ceiling, and one statement over all
+                # of them passed SQLite's variable limit and failed the whole recall.
+                found = await vector._fetch_rows_by_id(
+                    db,
+                    f"SELECT id, embedding FROM {table} WHERE id IN ({{ph}}) AND agent_id = ?",
+                    ids,
+                    (agent_id,),
+                )
+                for row_id, row in found.items():
+                    blobs[(kind, row_id)] = row[1]
             # A vector another model wrote is not compared (reject): absent, like a NULL blob.
             for rid in await vector.rejected_rids(db, blobs):
                 blobs.pop(rid)
@@ -4184,7 +4188,11 @@ async def _common_phrases(db, phrases: list[str]) -> set[str]:
     held: dict[str, int] = {}
     for term in sorted(set(candidates.values())):
         quoted = '"' + term.replace('"', '""') + '"'
-        held[term] = (await db.execute_fetchall(_PHRASE_ROWS_SQL, (quoted,)))[0][0]
+        # Each count is its own statement, so rows any agent commits after the row
+        # count above are counted here and not there. A phrase held by more rows than
+        # were counted is held by all of them, and the idf below would otherwise take
+        # the log of a negative ratio.
+        held[term] = min(n_rows, (await db.execute_fetchall(_PHRASE_ROWS_SQL, (quoted,)))[0][0])
     return {
         phrase
         for phrase, term in candidates.items()
@@ -4260,16 +4268,25 @@ async def _search_episodes_fts(
     # episodes are never orphaned once recall starts filtering by concrete channel.
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
 
-    rows = await db.execute_fetchall(
-        f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts), e.created_at
-           FROM episodes_fts f
-           JOIN episodes e ON f.rowid = e.id
-           WHERE episodes_fts MATCH ?
-           AND {iso.clause}{_EPISODE_IN_WINDOW if window is not None else ""}
-           ORDER BY rank
-           LIMIT ?""",
-        (fts_query, *iso.params, *(window or ()), limit),
-    )
+    try:
+        rows = await db.execute_fetchall(
+            f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts), e.created_at
+               FROM episodes_fts f
+               JOIN episodes e ON f.rowid = e.id
+               WHERE episodes_fts MATCH ?
+               AND {iso.clause}{_EPISODE_IN_WINDOW if window is not None else ""}
+               ORDER BY rank
+               LIMIT ?""",
+            (fts_query, *iso.params, *(window or ()), limit),
+        )
+    except sqlite3.OperationalError as e:
+        # The memory keyword arm's guard (bug-326), for the episode index: an absent
+        # episodes_fts (its triggers survive the table, so FTS_ENABLED stays true) or
+        # an expression FTS5 cannot parse -- a U+0000 inside a token ends a quoted
+        # phrase early -- took the whole recall down. Episodes have no LIKE fallback,
+        # so the arm answers nothing, as it does with FTS disabled.
+        logger.warning("Episode FTS search unavailable, searching no episodes by keyword (episodes_fts): %s", e)
+        return []
 
     return [
         {
@@ -4367,9 +4384,11 @@ async def _search_memories_keyword(
                         rows, report = await _rank_on_rare_phrases(
                             db, _fts_recall_phrases(query, extra_terms), keyword_sql, (*iso_m.params, *src_params_m), limit
                         )
-                    except sqlite3.OperationalError as e:
+                    except Exception as e:
                         # The shortcut failing is no reason to lose the whole expression,
-                        # which the except below would turn into the LIKE fallback.
+                        # which the except below would turn into the LIKE fallback, or,
+                        # for anything but an OperationalError, into a failed recall: the
+                        # shortcut only saves time, so any failure of it ranks as before.
                         logger.debug("Rare-phrase ranking unavailable, ranking on the whole expression: %s", e)
                         rows, report = None, None
                     rec = recall_trace.current()

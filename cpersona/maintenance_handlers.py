@@ -53,18 +53,17 @@ async def _sync_remote_index(effects: list) -> None:
             removed.append(f"mem:{row_id}")
         else:
             indexed.append({"id": f"mem:{row_id}", "text": text})
-    base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
     for namespace, (removed, indexed) in by_namespace.items():
         for start in range(0, len(removed), _REMOTE_SYNC_CHUNK):
             await _post_remote_side_effect(
-                f"{base_url}/remove",
+                "remove",
                 {"namespace": namespace, "ids": removed[start : start + _REMOTE_SYNC_CHUNK]},
                 action="removal",
                 namespace=namespace,
             )
         for start in range(0, len(indexed), _REMOTE_SYNC_CHUNK):
             await _post_remote_side_effect(
-                f"{base_url}/index",
+                "index",
                 {"namespace": namespace, "items": indexed[start : start + _REMOTE_SYNC_CHUNK]},
                 action="update",
                 namespace=namespace,

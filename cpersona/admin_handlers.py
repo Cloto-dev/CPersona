@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from cpersona._vendored_mcp_common.embedding_client import redact_urls
 from cpersona.isolation import isolation_where
 
 from cpersona import acl
@@ -368,7 +369,7 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
     return result
 
 
-async def _post_remote_side_effect(path: str, payload: dict, *, action: str, namespace: str) -> bool:
+async def _post_remote_side_effect(route: str, payload: dict, *, action: str, namespace: str) -> bool:
     """Post one index side effect, and say so when it does not land.
 
     bug-323: these four posts (delete, update, purge, episode delete) kept the
@@ -392,7 +393,14 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
 
     Returns True when the post timed out, so a caller posting in chunks can stop
     instead of spending the same deadline again on every remaining chunk.
+
+    ``route`` is named rather than built by each caller, so every post derives it
+    the one way ``vector.remote_route`` does, keeping the configured URL's query;
+    with no route to derive there is nothing to post.
     """
+    path = vector.remote_route(route)
+    if path is None:
+        return False
     try:
         response = await vector._embedding_client._client.post(
             path, json=payload, timeout=REMOTE_INDEX_TIMEOUT_SECS
@@ -404,16 +412,18 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
             action,
             REMOTE_INDEX_TIMEOUT_SECS,
             namespace,
-            e,
+            # The request URL carries the configured query, so it is redacted.
+            redact_urls(str(e)),
         )
         return True
     except Exception as e:  # noqa: BLE001 - non-fatal by contract, reported by design
+        # The request URL carries the configured query, so it is redacted.
         logger.warning(
             "Remote index %s failed for %s (non-fatal, local change already committed; "
             "the index is now out of step with the database): %s",
             action,
             namespace,
-            e,
+            redact_urls(str(e)),
         )
         return False
     # A non-2xx answer is a refusal the service chose to give; it raises nothing,
@@ -504,9 +514,8 @@ async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str 
         # Deleting by id without passing agent_id used to compute "cpersona:" and
         # leave the remote vector entry orphaned. Use the owner we just read.
         ns = f"cpersona:{owner_agent_id}"
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/remove",
+            "remove",
             {"namespace": ns, "ids": [f"mem:{memory_id}"]},
             action="removal",
             namespace=ns,
@@ -656,9 +665,8 @@ async def do_update_memory(
     # Keep the remote vector entry in step with the new text (same
     # namespace/id scheme as do_store; non-fatal).
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/index",
+            "index",
             {
                 "namespace": f"cpersona:{row[1]}",
                 "items": [{"id": f"mem:{memory_id}", "text": content}],
@@ -854,10 +862,9 @@ async def _remove_moved_source_vectors(source_agent_id: str, tally: "_MergeTally
     if not refs:
         return
     namespace = f"cpersona:{source_agent_id}"
-    base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
     for start in range(0, len(refs), 128):
         timed_out = await _post_remote_side_effect(
-            f"{base_url}/remove",
+            "remove",
             {"namespace": namespace, "ids": refs[start : start + 128]},
             action="removal",
             namespace=namespace,
@@ -950,9 +957,8 @@ def _purge_local_vector_index(counts: dict) -> list:
 async def _purge_agent_remote_namespace(agent_id: str) -> None:
     """Purge the agent's remote vector namespace (network I/O — post-commit only)."""
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/purge",
+            "purge",
             {"namespace": f"cpersona:{agent_id}"},
             action="purge",
             namespace=f"cpersona:{agent_id}",
@@ -2816,9 +2822,8 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
         # remote-mode recall, wasting top-K slots until the by-id rehydrate missed.
         # Mirror do_delete_memory's /remove; a removal failure must not fail the delete.
         ns = f"cpersona:{owner_agent_id}"
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/remove",
+            "remove",
             {"namespace": ns, "ids": [f"ep:{episode_id}"]},
             action="removal",
             namespace=ns,

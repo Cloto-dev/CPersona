@@ -11,7 +11,12 @@ import math
 import struct
 
 import aiosqlite
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, redact_urls
+from cpersona._vendored_mcp_common.embedding_client import (
+    EmbeddingClient,
+    _safe_endpoint,
+    _sibling_route,
+    redact_urls,
+)
 from cpersona.isolation import IsolationFilter, isolation_where, source_id_where
 
 from cpersona import config
@@ -142,6 +147,40 @@ def stored_blob_is_finite(blob: object) -> bool:
 
 
 
+# Whether remote_route has said that the configured URL names no remote route.
+_remote_route_refusal_logged = False
+
+
+def remote_route(route: str) -> str | None:
+    """The remote index service's ``route`` beside the configured ``/embed`` URL, or None.
+
+    Derived by the embedding client's own rule for its sibling routes, so the
+    configured URL's query string, where an endpoint credential is carried, is kept
+    and a trailing slash is not read as a path segment. Cutting the whole URL at its
+    last ``/`` lost both: the query went with the cut, so the index pushes and the
+    searches went out without the credential the embed requests carried and were
+    refused, and ``.../embed/`` became ``.../embed/index``.
+
+    A URL that does not end in ``/embed`` names no route this process can derive, as
+    the client already answers for its capability route, so there is none: the
+    caller skips the remote call, as it gets past a failed one, and the reason is
+    logged once rather than on every write and search.
+    """
+    global _remote_route_refusal_logged
+    url = getattr(_embedding_client, "_http_url", None)
+    if not url:
+        return None
+    sibling = _sibling_route(url, route)
+    if sibling is None and not _remote_route_refusal_logged:
+        _remote_route_refusal_logged = True
+        logger.warning(
+            "Remote vector index calls are skipped: %s does not end in /embed, so the "
+            "index service's routes cannot be derived from it",
+            _safe_endpoint(url),
+        )
+    return sibling
+
+
 async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
     """Push memory items to an agent's remote vector index in bounded chunks.
 
@@ -155,8 +194,10 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
         or not _embedding_client._client
     ):
         return
+    index_url = remote_route("index")
+    if index_url is None:
+        return
 
-    base_url = _embedding_client._http_url.rsplit("/", 1)[0]
     # bug-304: non-fatal is not the same as unreported. Every chunk's exception
     # went to logger.debug -- off in any normal deployment -- and the response
     # status was never read at all, so a service that answered 500 to half the
@@ -175,7 +216,7 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
         total_chunks += 1
         try:
             response = await _embedding_client._client.post(
-                f"{base_url}/index",
+                index_url,
                 json={"namespace": f"cpersona:{agent_id}", "items": chunk},
                 # bug-330: the only remote call in the package that named no
                 # deadline, so each chunk inherited the embedding client's 30s
@@ -198,7 +239,8 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
         except Exception as e:
             failed_chunks += 1
             failed_items += len(chunk)
-            logger.debug("Remote index chunk failed (non-fatal): %s", e)
+            # The request URL carries the configured query, so it is redacted.
+            logger.debug("Remote index chunk failed (non-fatal): %s", redact_urls(str(e)))
     if failed_chunks:
         logger.warning(
             "Remote index partially synchronised for %s: %d of %d chunks did not land "
@@ -506,11 +548,13 @@ async def _search_vector_remote(
     """
     if not (VECTOR_SEARCH_MODE == "remote" and _embedding_client and _embedding_client._http_url):
         return None
+    search_url = remote_route("search")
+    if search_url is None:
+        return None
 
     try:
-        base_url = _embedding_client._http_url.rsplit("/", 1)[0]
         resp = await _embedding_client._client.post(
-            f"{base_url}/search",
+            search_url,
             json={
                 "namespace": f"cpersona:{agent_id}",
                 "query": query,
@@ -615,8 +659,8 @@ async def _search_vector_remote(
                     )
         return results
     except Exception as e:
-        # httpx quotes the request URL in its exception text, and the base URL here
-        # is cut from the configured embedding URL, userinfo and all.
+        # httpx quotes the request URL in its exception text, and the route here is
+        # derived from the configured embedding URL, userinfo and query and all.
         logger.warning("Remote vector search failed, falling back to local: %s", redact_urls(str(e)))
         return None
 
