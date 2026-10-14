@@ -240,6 +240,19 @@ _CALIBRATION_GLOBAL_AXES = ("global_threshold", "global_fused_gate", "fused_gate
 _calibration_authority: dict[str, set[str]] = {axis: set() for axis in _CALIBRATION_AGENT_AXES}
 _global_calibration_authority: set[str] = set()
 
+# Authority alone cannot tell whose value is NEWER. Several server processes can share
+# one database and so one sidecar, and a process that restored the file at boot owns
+# every entry in it from then on. When another process later changes or removes one of
+# those entries, the owner's in-memory copy is stale, and writing it back reverted an
+# acknowledged set_recall_precision (or resurrected a purged agent) on the next restart.
+#
+# So the entries this process has CHANGED since its last successful sidecar write are
+# tracked separately. Only those are authoritative over the file; an owned entry that is
+# not pending here is refreshed from the file before the write instead of overwriting it.
+# Loading does not mark anything pending -- only measuring, overriding or removing does.
+_calibration_pending: dict[str, set[str]] = {axis: set() for axis in _CALIBRATION_AGENT_AXES}
+_global_calibration_pending: set[str] = set()
+
 
 def _claim_agent_calibration(agent_id: str, *axes: str) -> None:
     """Record that this process owns *agent_id*'s entry on each named per-agent axis.
@@ -272,11 +285,35 @@ def _claim_global_calibration(*axes: str) -> None:
         _global_calibration_authority.add(axis)
 
 
+def _record_agent_calibration_change(agent_id: str, *axes: str) -> None:
+    """Claim *agent_id*'s entry on each axis AND mark it changed since the last write.
+
+    The path for a measurement, an override or a removal; a restore only claims.
+    """
+    _claim_agent_calibration(agent_id, *axes)
+    for axis in axes:
+        _calibration_pending[axis].add(agent_id)
+
+
+def _record_global_calibration_change(*axes: str) -> None:
+    """The global-axis companion of ``_record_agent_calibration_change``."""
+    _claim_global_calibration(*axes)
+    _global_calibration_pending.update(axes)
+
+
+def _clear_calibration_pending() -> None:
+    """Every pending change has reached the sidecar."""
+    for pending in _calibration_pending.values():
+        pending.clear()
+    _global_calibration_pending.clear()
+
+
 def _reset_calibration_authority() -> None:
     """Forget every claim — the companion of clearing the dicts above (tests)."""
     for owned in _calibration_authority.values():
         owned.clear()
     _global_calibration_authority.clear()
+    _clear_calibration_pending()
 
 
 def _get_vector_threshold(agent_id: str) -> float:

@@ -4122,7 +4122,7 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
     leaves the gate uncalibrated). Either way the condition is visible to an operator
     instead of living only in one boot-time log line.
     """
-    from cpersona.admin_handlers import _load_calibration_state
+    from cpersona.admin_handlers import _read_calibration_sidecar
 
     if not vector._embedding_client:
         return {"status": "not_applicable", "reason": "no embedding client configured"}
@@ -4132,7 +4132,19 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
             (agent_id,),
         )
     )[0][0]
-    state = _load_calibration_state()
+    state, unreadable = _read_calibration_sidecar()
+    if unreadable:
+        # Not "never_calibrated": the file holds every agent's thresholds, gates and
+        # precision overrides, none of which is applied while it does not parse, and the
+        # repair is to fix or restore those bytes -- not to recalibrate, which replaces
+        # them with whatever this process holds.
+        return {
+            "status": "unreadable",
+            "hint": (
+                "the calibration sidecar exists but cannot be parsed; repair it or "
+                "restore a copy (a recalibration copies it aside before replacing it)"
+            ),
+        }
     if state is None:
         if embedded >= 50:
             return {
