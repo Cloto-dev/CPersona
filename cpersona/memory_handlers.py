@@ -640,6 +640,50 @@ async def _lexical_arms(
     return episodes, memories
 
 
+async def _mark_single_arm_rows(db, lexical: list[tuple[tuple, dict]], query_embedded: bool) -> None:
+    """Flag the fused rows only one retriever could have ranked (``_rrf_single_arm``).
+
+    ``lexical`` holds the (rid, row) pairs of the fused list the vector retriever did
+    not rank.
+
+    A memory can be ranked by the vector retriever and the keyword retriever, an
+    episode by the vector retriever and the episode FTS retriever. The vector
+    retriever ranks nothing when there is no embedding client (mode=none) or the
+    query was not embedded (the backend failed), and its local scan cannot rank a row
+    that has no stored vector. Such a row's reciprocal-rank score tops out at one vote
+    instead of the three the heuristic rrf gate is scaled to (``_apply_quality_gate``),
+    so without the flag even an exact match ranked first could never pass it.
+
+    When the remote vector service may have answered, it ranked from its own index:
+    a missing local vector says nothing about the row there, and nothing is flagged.
+    """
+    if not lexical:
+        return
+    client = vector._embedding_client
+    # The predicate _search_vector_remote gates on, read from the same module.
+    remote_armed = bool(vector.VECTOR_SEARCH_MODE == "remote" and client and client._http_url)
+    if not client or (not query_embedded and not remote_armed):
+        for _rid, r in lexical:
+            r["_rrf_single_arm"] = True
+        return
+    if not query_embedded:
+        return
+    # The local scan ran, so a row it did not rank because it has no stored vector
+    # could not have been ranked by it. Only a row a keyword list ranked first reaches
+    # the one-vote score the gate's cap admits, so only those are looked up.
+    top = [(rid, r) for rid, r in lexical if r["_rrf_score"] >= 1.0 / (RRF_K + 1)]
+    for kind, table in (("mem", "memories"), ("ep", "episodes")):
+        by_id = {rid[1]: r for rid, r in top if rid[0] == kind}
+        if not by_id:
+            continue
+        marks = ",".join("?" * len(by_id))
+        rows = await db.execute_fetchall(
+            f"SELECT id FROM {table} WHERE id IN ({marks}) AND embedding IS NULL", tuple(by_id)
+        )
+        for (row_id,) in rows:
+            by_id[row_id]["_rrf_single_arm"] = True
+
+
 async def _recall_rrf(
     db,
     agent_id: str,
@@ -676,6 +720,10 @@ async def _recall_rrf(
 
     lexical = _Beside(_lexical_arms, db, agent_id, query, depth, channel, project_id, source_id, lexical_terms, True)
     rrf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
+    # The query vector, when the local scan gets one. Read below to tell whether the
+    # vector retriever could vote at all in this recall.
+    query_vec_seen = query_vec_out if query_vec_out is not None else []
+    vecs_before = len(query_vec_seen)
     if vector._embedding_client:
         # One call to the vector retriever, as always. `far_out` collects the
         # second ranked list it produces when CPERSONA_VECTOR_REACH is set above
@@ -690,7 +738,7 @@ async def _recall_rrf(
             db, agent_id, query, depth, min_similarity=rrf_min_sim,
             channel=channel, project_id=project_id, source_id=source_id,
             far_out=far_results if PRIOR_FAR_WEIGHT > 0 else None,
-            query_vec_out=query_vec_out,
+            query_vec_out=query_vec_seen,
         )
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
@@ -756,6 +804,9 @@ async def _recall_rrf(
         # Found by the keyword arms alone: what the keyword seats may hold.
         row["_lexical_only"] = rid not in vector_rids
         results.append(row)
+    await _mark_single_arm_rows(
+        db, [(rid, doc_map[rid]) for rid in sorted_rids if rid not in vector_rids], len(query_vec_seen) > vecs_before
+    )
     if rec is not None:
         rec.arm("vector_near", vector_results, "_cosine")
         rec.arm("vector_far", far_results, "_cosine")
@@ -1133,6 +1184,14 @@ def _apply_quality_gate(
             # Calibrated gate is on the raw RRF scale (calibrated on raw _rrf_score), so
             # compare directly; otherwise rescale the cosine-scale heuristic min_score.
             rrf_threshold = gate if (gate is not None and gate_signal == "rrf") else min_score * RRF_MAX_SCALE
+            if r.get("_rrf_single_arm") and not (gate is not None and gate_signal == "rrf"):
+                # RRF_MAX_SCALE is three first-place votes, but only one retriever can
+                # rank this row, so its score tops out at one vote. On a small pool the
+                # heuristic sits above that, and an exact match ranked first was blocked.
+                # Capped at the one-vote maximum: that retriever's first-ranked row is
+                # admitted, and its lower ranks score under the cap, so they pass
+                # exactly where they passed before.
+                rrf_threshold = min(rrf_threshold, 1.0 / (RRF_K + 1))
             if rrf >= rrf_threshold:
                 filtered.append(r)
                 stats["rrf"] += 1
@@ -3051,6 +3110,7 @@ async def _do_recall(
         r.pop("_confidence_score", None)
         r.pop("_rrf_score", None)
         r.pop("_lexical_only", None)
+        r.pop("_rrf_single_arm", None)
         r.pop("_keyword_seat", None)
         r.pop("_rsf_score", None)
         r.pop("_prior", None)

@@ -14160,7 +14160,35 @@
         "runbook": "**Notify the user:** CPersona is running WITHOUT an embedding backend (mode=none), so recall is keyword/FTS-only — semantic similarity search is off. This configuration is supported as a fallback, but it is NOT recommended for normal operation: memories phrased differently from the query are silently missed, and so are older ones.\n\nTo enable semantic recall: start an embedding server that implements the CPersona embedding contract, then set EMBEDDING_MODE=http and EMBEDDING_HTTP_URL to its /embed endpoint and restart CPersona. Any conforming server works and is equally supported; CEmbedding is the reference implementation. Setup steps live in the bundled skill and in the Getting Started guide.\n\nPlain version for the user: \"My memory search is in keyword-only mode — connecting an embedding service would let me recall by meaning, not just exact words.\"\n\nTo silence this advisory set CPERSONA_DEGRADED_ADVISORY=false. That records an operator who accepts the supported-but-not-recommended standalone configuration; it does not make running without an embedding backend the recommended one.",
         "severity": "hint"
       },
-      "messages": [],
+      "messages": [
+        {
+          "content": "harbor lighthouse keeper logbook entry 0",
+          "match_reason": {
+            "rrf": 0.0163934426,
+            "score": 0.0163934426,
+            "signal": "rrf"
+          },
+          "ref": "mem:1",
+          "source": {
+            "id": "test",
+            "type": "System"
+          },
+          "timestamp": "2026-12-31T00:00:00Z"
+        },
+        {
+          "content": "[Episode] harbor lighthouse keeper review inside the period",
+          "match_reason": {
+            "rrf": 0.0163934426,
+            "score": 0.0163934426,
+            "signal": "rrf"
+          },
+          "ref": "ep:1",
+          "source": {
+            "System": "episode"
+          },
+          "timestamp": "2026-11-02T00:00:00Z"
+        }
+      ],
       "time_cue": {
         "confidence": "sure",
         "moved": 0,
@@ -14266,7 +14294,7 @@
         "autocut": {
           "dropped": [],
           "fired": false,
-          "kept": 0
+          "kept": 2
         },
         "config": {
           "autocut_enabled": true,
@@ -14387,20 +14415,18 @@
           "calibrated": null,
           "decisions": [
             {
-              "passed": false,
-              "reason": "below_gate",
+              "passed": true,
               "ref": "ep:1",
               "score": 0.0163934426,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
-              "passed": false,
-              "reason": "below_gate",
+              "passed": true,
               "ref": "mem:1",
               "score": 0.0163934426,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14408,7 +14434,7 @@
               "ref": "ep:2",
               "score": 0.0161290323,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14416,7 +14442,7 @@
               "ref": "mem:2",
               "score": 0.0161290323,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14424,7 +14450,7 @@
               "ref": "mem:3",
               "score": 0.0158730159,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14432,7 +14458,7 @@
               "ref": "mem:4",
               "score": 0.015625,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14440,7 +14466,7 @@
               "ref": "mem:5",
               "score": 0.0153846154,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14448,7 +14474,7 @@
               "ref": "mem:6",
               "score": 0.0151515152,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14456,7 +14482,7 @@
               "ref": "mem:7",
               "score": 0.0149253731,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14464,7 +14490,7 @@
               "ref": "mem:8",
               "score": 0.0147058824,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14472,7 +14498,7 @@
               "ref": "mem:9",
               "score": 0.0144927536,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14480,7 +14506,7 @@
               "ref": "mem:10",
               "score": 0.0142857143,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14488,7 +14514,7 @@
               "ref": "mem:11",
               "score": 0.014084507,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             },
             {
               "passed": false,
@@ -14496,7 +14522,7 @@
               "ref": "mem:12",
               "score": 0.0138888889,
               "signal": "rrf",
-              "threshold": 0.0181622951
+              "threshold": 0.0163934426
             }
           ],
           "gate_fallback": false,
@@ -14506,7 +14532,14 @@
           "signal": null
         },
         "order": {
-          "before_cut": [],
+          "before_cut": [
+            {
+              "ref": "ep:1"
+            },
+            {
+              "ref": "mem:1"
+            }
+          ],
           "cut_by_count": [],
           "limit": 12
         },
