@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OVERFLOW_TREE_DESIGN.md@blob:4860a33bcb4e34dc593dac4b79af022796754cd6 -->
+<!-- i18n-source: docs/OVERFLOW_TREE_DESIGN.md@blob:0b3b62bbbc79a23fb1256b105cf822de3700d6c9 -->
 
 # 溢れ分の tree — 設計 { #overflow-tree-design }
 

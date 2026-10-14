@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:6aea333d202bf34563e767c9817223f5e2fab37d -->
+<!-- i18n-source: docs/CONTIGUOUS_INDEX_DESIGN.md@blob:9695413959faf621148c076a4f8c39136aa1c889 -->
 
 # 連続配置埋め込み索引
 

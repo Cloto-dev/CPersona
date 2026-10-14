@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ACL_DESIGN.md@blob:a4be0c9ea9cec76ce406ddcf7b11f412406d50dc -->
+<!-- i18n-source: docs/ACL_DESIGN.md@blob:7639603b32fd47b282242f41f06ac93d6d972b88 -->
 
 # クライアント別ケーパビリティ / ACL 設計
 

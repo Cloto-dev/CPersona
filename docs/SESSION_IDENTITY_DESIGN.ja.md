@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:cfc18e4b103de5c50e5cd6d4fd5210d58ec0b9ca -->
+<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:ea512ed0c78ed5771709f347d3d51fdd1e3e39c5 -->
 
 # 申告型セッション同一性 (`session_key`)
 

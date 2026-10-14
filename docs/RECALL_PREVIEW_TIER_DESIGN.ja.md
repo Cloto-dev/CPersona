@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RECALL_PREVIEW_TIER_DESIGN.md@blob:6c615a17b86a7aa71b3590356a0dc3825aee7118 -->
+<!-- i18n-source: docs/RECALL_PREVIEW_TIER_DESIGN.md@blob:91756e95acb12a74a96f99706b5a7953e3890daf -->
 
 # recall プレビュー階層の設計 (v2.5.0)
 
