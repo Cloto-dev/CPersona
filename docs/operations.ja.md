@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:79e2f74d80e47e0520da66a0ed50a1ae71169344 -->
+<!-- i18n-source: docs/operations.md@blob:6c8838ded1715e46aab7ec7daa0cf6e119c55d1d -->
 
 # 運用 Runbook
 
@@ -260,7 +260,9 @@ skip** であること ([契約 §5](behavior-contracts.md#5-dedup-semantics-ski
 
 1. 各チャンクを、安定した `msg_id` (例: `path#heading`) と、`source.id` に入れた
    元ドキュメントとともに `store` します。こうすると recall の `source_id` 引数
-   (前方一致) が、ドキュメント単位のフィルタとしても使えます。
+   が、ドキュメント単位のフィルタとしても使えます。英字か数字で終わる値
+   (`docs/a.md`) はその 1 ドキュメントにだけ完全一致し、区切り文字で終わる値
+   (`docs/`) はその下のすべてのドキュメントに前方一致します。
 2. 呼び出し側で `キー → 内容ハッシュ` の台帳を保持し、ハッシュが変わった
    チャンクだけを処理します。
 3. **変更されたチャンクは必ず `update_memory` (または `delete_memory` +

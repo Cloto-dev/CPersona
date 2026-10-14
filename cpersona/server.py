@@ -1025,8 +1025,9 @@ registry.auto_tool(
     "'stored' (a new row: id, and embedded, whether a vector was kept; truncated:true when "
     "content was shortened to the length cap; nodes:{status:'queued'} when the text runs "
     "past the embedding window and its overflow-tree nodes were queued), "
-    "'skipped' (nothing written and nothing wrong: a duplicate id or content echoes the "
-    "existing row's id, except reason='duplicate (unique index)', a concurrent-write race, "
+    "'skipped' (nothing written and nothing wrong: a duplicate id, or content already stored "
+    "under the same source id, echoes the existing row's id, except reason='duplicate "
+    "(unique index)', a concurrent-write race, "
     "which has none), or "
     "'rejected' (ok:false, nothing written; reason is human-readable, not a stable token). "
     # bug-141: the no-persist branch has its own shape — document it so
@@ -1364,9 +1365,11 @@ registry.auto_tool(
                 "type": "string",
                 "description": (
                     "v2.4.20 per-user source filter. Empty (default) = no filter. "
-                    "Non-empty = prefix match against json_extract(source, '$.id'), "
-                    "e.g. 'discord:12345' to restrict to one Discord user, or "
-                    "'discord:' to scope to all Discord-sourced memories. "
+                    "Non-empty = match against json_extract(source, '$.id'): a value "
+                    "ending in a letter or digit matches that one id exactly, e.g. "
+                    "'discord:12345' to restrict to one Discord user; a value ending in "
+                    "any other character is a prefix, e.g. 'discord:' to scope to all "
+                    "Discord-sourced memories. "
                     # C26 (e): the exception is real behaviour, not an edge case —
                     # the session-start grounding path relies on it.
                     "Episodes carry no per-user source tagging, so they are skipped "

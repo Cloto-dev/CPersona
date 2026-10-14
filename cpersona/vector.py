@@ -2031,7 +2031,7 @@ async def _search_vector(
     may receive fewer than `limit` results. Namespace partitioning is a
     follow-up (out of v2.4.17 scope).
 
-    source_id (v2.4.20): optional prefix filter against
+    source_id (v2.4.20): optional ``isolation.source_id_where`` filter on
     ``json_extract(source, '$.id')`` applied to memory rows (not episodes).
     Used by Discord multi-user sessions to prevent cross-user contamination.
     """

@@ -23078,7 +23078,6 @@
             "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
             "holds": "every stored memory",
             "mode": "0644",
-            "path": "<corpus>/corpus.db",
             "severity": "warn",
             "type": "file_reachable_by_other_accounts",
             "writable_by_others": false
@@ -23088,7 +23087,6 @@
             "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
             "holds": "the memories not yet checkpointed into the database",
             "mode": "0644",
-            "path": "<corpus>/corpus.db-wal",
             "severity": "warn",
             "type": "file_reachable_by_other_accounts",
             "writable_by_others": false
@@ -23098,7 +23096,6 @@
             "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
             "holds": "the calibrated thresholds that decide recall breadth",
             "mode": "0644",
-            "path": "<corpus>/corpus.db.calibration.json",
             "severity": "warn",
             "type": "file_reachable_by_other_accounts",
             "writable_by_others": false
@@ -23108,7 +23105,6 @@
             "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
             "holds": "the cached release verdict",
             "mode": "0644",
-            "path": "<corpus>/update-check.json",
             "severity": "warn",
             "type": "file_reachable_by_other_accounts",
             "writable_by_others": false
@@ -23118,7 +23114,6 @@
             "hint": "check_health(fix=True) narrows this to 0600; if the mode was widened deliberately -- a backup reader in the same group, say -- do not run the fix",
             "holds": "which memory space each caller reaches",
             "mode": "0644",
-            "path": "<corpus>/alias_ledger.json",
             "severity": "warn",
             "type": "file_reachable_by_other_accounts",
             "writable_by_others": false

@@ -24,6 +24,7 @@ import httpx
 
 from cpersona.isolation import isolation_where
 
+from cpersona import acl
 from cpersona import associations
 from cpersona import blocks
 from cpersona import config
@@ -3101,6 +3102,8 @@ class _ImportTally:
     seen_episode: set = field(default_factory=set)
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: dict[str, list[dict]] = field(default_factory=dict)
+    # Whether each agent id the file names may receive rows, asked once per id.
+    reserved_agents: dict[str, bool] = field(default_factory=dict)
 
     def queue_remote(self, agent_id: str, ref: str, text: str) -> None:
         """Queue a written row for the remote index. A preview queues nothing."""
@@ -3114,6 +3117,24 @@ class _ImportTally:
         file_id = record.get("id")
         if isinstance(file_id, int) and not isinstance(file_id, bool):
             self.ref_map[f"{kind}:{file_id}"] = f"{kind}:{file_id if row_id is None else row_id}"
+
+    def refuses_agent(self, aid: str, kind: str, line_num: int) -> bool:
+        """Whether a record must be passed over because its agent id is reserved.
+
+        The ACL guard refuses a reserved ``target_agent_id``; without one, each
+        record names its own agent, and only this loop sees those names. A
+        restore must not create the alias-shaped agent the next server start
+        would refuse (``acl.reserved_for_new_rows``).
+        """
+        refused = self.reserved_agents.get(aid)
+        if refused is None:
+            refused = self.reserved_agents[aid] = acl.reserved_for_new_rows(aid)
+        if refused:
+            self.errors.append(
+                f"Line {line_num}: {kind} agent_id {aid!r} is reserved for subject aliases "
+                "while per_subject is configured; it was not imported"
+            )
+        return refused
 
 
 def _validate_import_preconditions(
@@ -3663,6 +3684,8 @@ async def do_import_memories(
                     if not aid:
                         tally.errors.append(f"Line {line_num}: memory missing agent_id")
                         continue
+                    if tally.refuses_agent(aid, "memory", line_num):
+                        continue
                     await _import_memory_record(db, record, aid, tally, line_num)
 
                 elif rtype == "episode":
@@ -3671,6 +3694,8 @@ async def do_import_memories(
                     if not aid:
                         tally.errors.append(f"Line {line_num}: episode missing agent_id")
                         continue
+                    if tally.refuses_agent(aid, "episode", line_num):
+                        continue
                     await _import_episode_record(db, record, aid, tally, line_num)
 
                 elif rtype == "profile":
@@ -3678,6 +3703,8 @@ async def do_import_memories(
                     aid = target_agent_id or record.get("agent_id", "")
                     if not aid:
                         tally.errors.append(f"Line {line_num}: profile missing agent_id")
+                        continue
+                    if tally.refuses_agent(aid, "profile", line_num):
                         continue
                     await _import_profile_record(db, record, aid, tally, line_num)
 

@@ -985,6 +985,28 @@ def _wrap(name: str, handler):
                     required=required,
                     detail=detail,
                 )
+        creates_under = _ROW_CREATING_SCOPE.get(name)
+        target = arguments.get(creates_under) if creates_under else None
+        if isinstance(target, str) and target and reserved_for_new_rows(target):
+            logger.warning(
+                "ACL denial (reserved agent id): client=%s tool=%s agent=%s",
+                principal.client_id,
+                name,
+                target,
+            )
+            return _denial(
+                name,
+                principal.client_id,
+                agent_id=target,
+                required=PERM_WRITE,
+                detail=(
+                    "per_subject is configured, so the "
+                    f"{ALIAS_PREFIX!r} prefix is subject alias space and only an "
+                    "alias the ledger has issued may receive rows; a name created "
+                    "here would make the next server start refuse — choose another "
+                    "agent_id"
+                ),
+            )
         result = await handler(arguments)
         if resolved_alias and isinstance(result, dict):
             # The @auto idiom (resolved_project_id): a resolution the server
@@ -1015,9 +1037,10 @@ def reserved_agent_id_collisions(agent_ids, known_aliases=frozenset()) -> list[s
     tenant's data). ``known_aliases`` — the ledger's issued set — is exempt
     (bug-267): those names ARE issued aliases, and refusing them meant the
     server's own issuance failed its next boot. The ``@me`` sentinel is never
-    exempt; the ledger cannot issue it. Checked at startup, only when some
-    client row declared per_subject: an existing deployment that never opts in
-    keeps every name it has.
+    exempt; the ledger cannot issue it. Checked at startup and before every
+    write that adds rows (``reserved_for_new_rows``), only when some client row
+    declared per_subject: an existing deployment that never opts in keeps every
+    name it has.
     """
     return sorted(
         aid
@@ -1025,6 +1048,40 @@ def reserved_agent_id_collisions(agent_ids, known_aliases=frozenset()) -> list[s
         if aid == SELF_SENTINEL
         or (aid.startswith(ALIAS_PREFIX) and aid not in known_aliases)
     )
+
+
+#: The argument naming the agent a tool adds rows under, for every tool whose
+#: rows land in a table the per-subject boot check reads (memories, episodes,
+#: profiles, pending tasks). Deletes, edits and locks are absent on purpose: they
+#: add nothing, and refusing them would stop an operator from clearing out an
+#: alias the ledger no longer records. import_memories also takes agent ids from
+#: the file it reads; its handler asks ``reserved_for_new_rows`` per record.
+_ROW_CREATING_SCOPE = {
+    "store": "agent_id",
+    "archive_episode": "agent_id",
+    "update_profile": "agent_id",
+    "merge_memories": "target_agent_id",
+    "import_memories": "target_agent_id",
+}
+
+
+def reserved_for_new_rows(agent_id: str) -> bool:
+    """Whether a running server must refuse to add rows under ``agent_id``.
+
+    The boot check refuses to start while the database holds a reserved name the
+    alias ledger has not issued. The same predicate is asked before every write
+    that would add rows, under the same condition (only while some client row
+    declares per_subject), so a running server never creates the state its next
+    start refuses.
+    """
+    acl_config = _active_config
+    if acl_config is None or not acl_config.per_subject_clients:
+        return False
+    if agent_id != SELF_SENTINEL and not agent_id.startswith(ALIAS_PREFIX):
+        return False
+    ledger = _active_ledger
+    issued = ledger.issued_aliases() if ledger is not None else frozenset()
+    return bool(reserved_agent_id_collisions([agent_id], issued))
 
 
 def install(registry) -> None:

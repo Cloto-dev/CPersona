@@ -38,7 +38,7 @@ import numpy as np
 
 from cpersona import config
 from cpersona import fileperms
-from cpersona.isolation import isolation_where
+from cpersona.isolation import isolation_where, source_id_matches
 from cpersona.utils import SCORING_VERSION
 
 MAGIC = b"CPXIDX01"
@@ -872,19 +872,22 @@ def select(
         mask &= np.isin(index.channel_code, _axis_codes(index.channels, {channel, ""}))
 
     if source_id:
-        # The SQL is a prefix LIKE over a JSON field. Resolved here against the
+        # The SQL is `source_id_where` over a JSON field: one id compared whole,
+        # or a namespace compared as a prefix. Resolved here against the
         # header's string table, which is small because the values are: the
         # per-row test is integer membership. A NULL source id carries NULL_CODE
-        # and matches nothing, exactly as LIKE against NULL does.
+        # and matches nothing, exactly as the SQL comparison against NULL does.
+        # `source_id_matches` draws the id/namespace line in the one place the
+        # SQL draws it, so the two arms answer the same question.
         codes = np.array(
-            # str(): `json_extract(source, '$.id')` hands back whatever type the
-            # JSON held, and SQLite returns a JSON number as an int. The scan
-            # this mirrors filters with LIKE, which coerces the number to text
-            # and matches it (bug-276) — so a non-string id must be compared the
-            # same way here, not raise. The obligation above is one-directional:
-            # matching a row the authority would drop costs wasted work, while
-            # raising takes down the query the index exists to accelerate.
-            [i for i, v in enumerate(index.sources) if v is not None and str(v).startswith(source_id)],
+            # str() inside the helper: `json_extract(source, '$.id')` hands back
+            # whatever type the JSON held, and SQLite returns a JSON number as an
+            # int. The scan this mirrors compares the number as text and matches
+            # it (bug-276) — so a non-string id must be compared the same way
+            # here, not raise. The obligation above is one-directional: matching
+            # a row the authority would drop costs wasted work, while raising
+            # takes down the query the index exists to accelerate.
+            [i for i, v in enumerate(index.sources) if source_id_matches(v, source_id)],
             dtype="<i4",
         )
         mask &= np.isin(index.source_code, codes)

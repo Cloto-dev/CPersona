@@ -137,9 +137,9 @@ Interning is cheap because the axes are low-cardinality. A production corpus has
 set costs 16 bytes per row, next to 3,072 bytes of embedding.
 
 `source_code` exists because the cardinality was measured rather than assumed.
-The source filter is a prefix match against a JSON field, which looks like
-something an index cannot do. But with 38 distinct values, the prefix resolves
-against the string table into a small set of codes, and the per-row test is
+The source filter matches a JSON field (one id whole, or a namespace by prefix),
+which looks like something an index cannot do. But with 38 distinct values, the
+match resolves against the string table into a small set of codes, and the per-row test is
 integer membership. Without it, every recall from a multi-user conversation
 would fall back to the old path, which is a large share of real traffic.
 

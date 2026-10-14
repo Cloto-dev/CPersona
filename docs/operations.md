@@ -263,8 +263,10 @@ first).**
 **Pattern B — differential updates with an external content-hash ledger.**
 
 1. `store` each chunk with a stable `msg_id` (for example `path#heading`) and
-   the source document in `source.id`. The `source_id` recall argument
-   (prefix-match) then doubles as a per-document filter.
+   the source document in `source.id`. The `source_id` recall argument then
+   doubles as a per-document filter: a value that ends in a letter or digit
+   (`docs/a.md`) matches that one document exactly, and a value that ends in a
+   delimiter (`docs/`) matches every document under it.
 2. Keep a caller-side ledger of `key → content hash`, and process only chunks
    whose hash changed.
 3. **Changed chunks must go through `update_memory`**, or `delete_memory` plus

@@ -2787,6 +2787,29 @@ async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
     return [issue]
 
 
+def _server_path(path: str, agent_id: str) -> dict:
+    """``{"path": path}`` for the whole-database report, ``{}`` for a scoped one.
+
+    Where the server keeps its files is the operator's view. The unscoped report
+    is that view (under ACL it takes read on every agent), while an agent-scoped
+    call needs read on one agent only, and every other figure it gets is about
+    that agent alone (the bug-062 rule). The finding still reaches it; the host
+    layout does not.
+    """
+    return {} if agent_id else {"path": path}
+
+
+def _without_server_path(text: str, path: str, agent_id: str) -> str:
+    """``text`` with ``path`` cut down to its file name for an agent-scoped report.
+
+    An OS error carries the path it failed on, so the finding's own message would
+    otherwise put back the path ``_server_path`` left out.
+    """
+    if not agent_id or not path:
+        return text
+    return text.replace(path, os.path.basename(path))
+
+
 async def check_operating_context_parse(db, agent_id: str = "", fix: bool = False) -> list[dict]:
     """Sidecar present but unusable (v2.5.1 §8). The feature degrades to dormant
     rather than failing the boot, so this finding is the only surface where a
@@ -2796,8 +2819,8 @@ async def check_operating_context_parse(db, agent_id: str = "", fix: bool = Fals
         return [
             {
                 "type": "operating_context_parse_error",
-                "path": state["path"],
-                "detail": state["parse_error"],
+                **_server_path(state["path"], agent_id),
+                "detail": _without_server_path(state["parse_error"], state["path"], agent_id),
                 "hint": "operating context is dormant until the sidecar parses; edit the file",
             }
         ]
@@ -2813,7 +2836,7 @@ async def check_operating_context_size(db, agent_id: str = "", fix: bool = False
         return [
             {
                 "type": "operating_context_summary_oversized",
-                "path": state["path"],
+                **_server_path(state["path"], agent_id),
                 "summary_len": state["summary_len"],
                 "budget": operating_context.SUMMARY_WARN_CHARS,
                 "hint": "move detail into [[doctrine]] sections (served via get_operating_context)",
@@ -3392,7 +3415,7 @@ async def check_file_permissions(db, agent_id: str = "", fix: bool = False) -> l
                 if owned.kind == "dir"
                 else "file_reachable_by_other_accounts"
             ),
-            "path": owned.path,
+            **_server_path(owned.path, agent_id),
             "mode": f"{mode:04o}",
             "holds": owned.holds,
             "writable_by_others": bool(mode & _OTHERS_WRITE),
@@ -3425,7 +3448,7 @@ async def check_file_permissions(db, agent_id: str = "", fix: bool = False) -> l
                 # Reported rather than raised: one unwritable path must not cost
                 # the operator the rest of the repair pass.
                 issue["fixed"] = False
-                issue["fix_error"] = str(exc)
+                issue["fix_error"] = _without_server_path(str(exc), owned.path, agent_id)
         issues.append(issue)
     return issues
 

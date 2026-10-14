@@ -164,6 +164,24 @@ def _store_skipped(reason: str, mem_id: int | None = None) -> dict:
     return body
 
 
+def _declared_source_id(source) -> str | None:
+    """The ``$.id`` a source declares, as text, or None when it declares none.
+
+    Text because that is how the ``source_id`` recall filter compares it: a JSON
+    number id and its decimal spelling are the same principal to every recall.
+    Takes the stored JSON or the already-parsed object.
+    """
+    if isinstance(source, str):
+        try:
+            source = json.loads(source)
+        except ValueError:
+            return None
+    if not isinstance(source, dict):
+        return None
+    value = source.get("id")
+    return None if value is None else str(value)
+
+
 async def do_store(
     agent_id: str,
     message: dict,
@@ -290,15 +308,33 @@ async def do_store(
                 # (e.g. update_memory) without a second lookup.
                 return _store_skipped("duplicate msg_id", row[0][0])
 
-        # Deduplicate by exact content match (γ-visible scope).
+        # Deduplicate by exact content match (γ-visible scope), per source id.
+        # A copy under another source id is a different principal's memory, so
+        # it does not answer this write: a skip tells the caller its text is
+        # already where its own source_id-scoped recall finds it, and the id it
+        # echoes is the row the lock and association riders act on. The probe
+        # reads every visible copy (one per exact bucket at most, so four rows)
+        # and decides from their sources.
         existing = await db.execute_fetchall(
-            f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({proj_in})"
-            f" AND channel IN ({chan_in}) AND content = ? LIMIT 1",
+            f"SELECT id, source, project_id, channel FROM memories WHERE agent_id = ?"
+            f" AND project_id IN ({proj_in}) AND channel IN ({chan_in}) AND content = ?",
             (agent_id, *proj_scope, *chan_scope, content),
         )
-        if existing:
-            # v2.5.2 additive: same id echo as the msg_id branch above.
-            return _store_skipped("duplicate content", existing[0][0])
+        own_source_id = _declared_source_id(normalized_source)
+        for row_id, row_source, _row_project, _row_channel in existing:
+            if _declared_source_id(row_source) == own_source_id:
+                # v2.5.2 additive: same id echo as the msg_id branch above.
+                return _store_skipped("duplicate content", row_id)
+        if any(row[2] == project_id and row[3] == channel for row in existing):
+            # The unique index allows one copy of a text per exact bucket, so
+            # this caller's copy cannot be written beside the other source's.
+            # Refused, not skipped: nothing was stored under this source, and a
+            # skip would have reported the write as harmlessly done.
+            return _store_rejected(
+                "this content is already stored under a different source id in the "
+                "same agent, project and channel; one copy is kept per bucket, so it "
+                "was not stored for this source"
+            )
 
     # Overflow tree (docs/OVERFLOW_TREE_DESIGN.md §3): whether this text runs past
     # the embedding window decides whether its nodes are queued. Asked alongside the
@@ -2394,11 +2430,12 @@ async def _do_recall(
     a tightly-tagged query may receive fewer than `limit` results — namespace
     partitioning is a follow-up.
 
-    source_id (v2.4.20): optional prefix filter applied to ``json_extract(source, '$.id')``.
-    Empty string disables the filter (default). Used by Discord multi-user
-    sessions to prevent cross-user memory contamination: pass e.g.
-    ``source_id="discord:12345"`` to restrict to one user, or
-    ``source_id="discord:"`` to scope to all Discord-sourced memories.
+    source_id (v2.4.20): optional filter applied to ``json_extract(source, '$.id')``
+    (``isolation.source_id_where``). Empty string disables the filter (default).
+    Used by Discord multi-user sessions to prevent cross-user memory
+    contamination: pass e.g. ``source_id="discord:12345"`` to restrict to that
+    one id, or ``source_id="discord:"`` -- a value ending in a delimiter -- to
+    scope to all Discord-sourced memories.
     Episodes are not source-tagged, so episode recall is skipped when
     ``source_id`` is non-empty — unless a ``channel`` filter (v2.4.22) is also
     set, in which case channel-scoped episodes are still recalled (the
@@ -3413,7 +3450,7 @@ async def do_recall_with_context(
     """Recall memories and merge with external conversation context.
 
     project_id (v2.4.17): γ filter — passed through to do_recall.
-    source_id (v2.4.20): per-user source prefix filter — passed through to do_recall.
+    source_id (v2.4.20): per-user source filter — passed through to do_recall.
     """
     ctx = external_context or []
 
@@ -4112,7 +4149,7 @@ async def _search_memories_keyword(
     """Search memories using FTS5 (preferred) or LIKE fallback.
 
     project_id (v2.4.17) applies the γ filter on both the bare and joined paths.
-    source_id (v2.4.20) applies a prefix filter against ``json_extract(source, '$.id')``.
+    source_id (v2.4.20) applies ``isolation.source_id_where`` to ``json_extract(source, '$.id')``.
     extra_terms (2.6) are matched as well as the query, by FTS phrase and by the
     LIKE fallback; see ``_build_fts_recall_query``.
     window (2.6, the cue arm) keeps rows whose timestamp is in ``[start, end)``,
