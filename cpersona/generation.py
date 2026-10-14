@@ -38,9 +38,18 @@ logger = logging.getLogger(__name__)
 #: asked per write, which would put a round trip in front of every record.
 REFRESH_INTERVAL_SECONDS = 300
 
+#: How soon a backend is asked again after it could not say what it is, while a
+#: fingerprint learned earlier is being kept. A failed ask is usually a restart,
+#: and the answer that ends it should not wait out the whole interval.
+RETRY_UNKNOWN_SECONDS = 30
+
 #: (when it was learned, what was learned). ``None`` for the second element means
-#: asked and not answered — which is *unknown*, never *unchanged*.
+#: no fingerprint has been learned: asked and not answered, which is *unknown*,
+#: never *unchanged*. Once one has been learned, an ask that cannot name the
+#: backend keeps it (see :func:`refresh`).
 _learned: tuple[float, str | None] | None = None
+#: When an unanswered ask is retried while a learned fingerprint is kept, or None.
+_retry_at: float | None = None
 #: The model name the backend gave in its last capability report, or None. A label for
 #: saying what produced a result, never a key for deciding whether vectors compare.
 _reported_model: str | None = None
@@ -48,9 +57,10 @@ _reported_model: str | None = None
 
 def reset() -> None:
     """Forget what was learned. For tests and for a client being replaced."""
-    global _learned, _reported_model
+    global _learned, _reported_model, _retry_at
     _learned = None
     _reported_model = None
+    _retry_at = None
 
 
 def fingerprint() -> str | None:
@@ -71,10 +81,19 @@ async def refresh(client=None) -> str | None:
     report, a failed request, or a backend that could not establish its own whole
     identity. Every one of those is unknown, and every one of them leaves this
     server writing the key it wrote before.
+
+    Which, once a fingerprint has been learned, is that fingerprint: an ask that
+    cannot name the backend keeps it, and the backend is asked again after
+    :data:`RETRY_UNKNOWN_SECONDS` rather than after the whole interval. Dropping
+    it moved the keys to the legacy pair for the interval, so every set stamped
+    with it read as stale, the block arm stopped examining its rows, and a build in
+    that window embedded it again under the legacy key — one failed request,
+    typically a restart, treated as a change. Only a fingerprint the backend
+    reports moves the key.
     """
-    global _learned, _reported_model
+    global _learned, _reported_model, _retry_at
     now = time.monotonic()
-    if _learned and now - _learned[0] < REFRESH_INTERVAL_SECONDS:
+    if _learned and now - _learned[0] < REFRESH_INTERVAL_SECONDS and (_retry_at is None or now < _retry_at):
         return _learned[1]
 
     if client is None:
@@ -82,9 +101,8 @@ async def refresh(client=None) -> str | None:
 
         client = vector._embedding_client
     if client is None or not callable(getattr(client, "capabilities_with_outcome", None)):
-        _learned = (now, None)
         _reported_model = None
-        return None
+        return _unknown(now, None)
 
     identity, outcome = await client.capabilities_with_outcome()
     # A report that could not complete its identity can still name its model.
@@ -93,17 +111,35 @@ async def refresh(client=None) -> str | None:
     # An identity the backend could not complete carries no fingerprint by
     # construction, so this reads the field rather than re-deriving the rule.
     learned = identity.fingerprint if identity is not None else None
+    if learned is None:
+        return _unknown(now, outcome.error)
     if learned != fingerprint():
-        # Worth a line either way: gaining one means new rows become checkable,
-        # and losing one means they stop being.
+        # Worth a line: gaining one means new rows become checkable, and a
+        # different one means the backend behind the URL changed.
         logger.info(
-            "Embedding backend identity: %s (was %s)%s",
-            learned or "unknown",
-            fingerprint() or "unknown",
-            f" — {outcome.error}" if learned is None and outcome.error else "",
+            "Embedding backend identity: %s (was %s)", learned, fingerprint() or "unknown"
         )
     _learned = (now, learned)
+    _retry_at = None
     return learned
+
+
+def _unknown(now: float, error: str | None) -> str | None:
+    """Record an ask that could not name the backend; return the fingerprint kept."""
+    global _learned, _retry_at
+    kept = fingerprint()
+    if kept is None:
+        _learned = (now, None)
+        return None
+    if _retry_at is None:
+        logger.info(
+            "Embedding backend identity: unknown%s; keeping %s until it answers",
+            f" — {error}" if error else "",
+            kept,
+        )
+    _learned = (now, kept)
+    _retry_at = now + RETRY_UNKNOWN_SECONDS
+    return kept
 
 
 def reported_model() -> str | None:

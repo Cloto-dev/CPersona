@@ -33,6 +33,7 @@ pass scans, and as one byte per dimension, which re-ranks what that pass ranked
 highest (§4b).
 """
 
+import bisect
 import logging
 import re
 import time
@@ -152,18 +153,33 @@ def _bracket_depth(text: str) -> list[int]:
     left above that one on the stack never closed. Matching only the top of the
     stack let one unclosed ( inside 「…」 hold the 」 back, so the quotation
     looked unclosed too and the divider cut inside it (bug-473).
+
+    The nearest matching opening is found through a stack per closing bracket,
+    holding the indices of that bracket's pending openings, so the pass is
+    linear. Searching the whole pending stack on every character made a record
+    of many unclosed openings quadratic, and this runs at read time on the event
+    loop for every record a recall quotes.
     """
     pending: list[tuple[str, int]] = []
+    by_closer: dict[str, list[int]] = {closer: [] for closer in _BRACKETS.values()}
     unmatched: set[int] = set()
     for i, ch in enumerate(text):
         if ch in _BRACKETS:
-            pending.append((_BRACKETS[ch], i))
+            closer = _BRACKETS[ch]
+            by_closer[closer].append(len(pending))
+            pending.append((closer, i))
             continue
-        for depth in range(len(pending) - 1, -1, -1):
-            if pending[depth][0] == ch:
-                unmatched.update(pos for _, pos in pending[depth + 1 :])
-                del pending[depth:]
-                break
+        waiting = by_closer.get(ch)
+        if not waiting:
+            continue
+        # Every opening above the match never closed. Each is the top of its own
+        # closer's stack, because the pending stack only ever shrinks from the top,
+        # and each opening leaves the stacks once, which keeps the pass linear.
+        depth = waiting.pop()
+        for closer, pos in pending[depth + 1 :]:
+            by_closer[closer].pop()
+            unmatched.add(pos)
+        del pending[depth:]
     unmatched.update(pos for _, pos in pending)
 
     depth = [0] * (len(text) + 1)
@@ -180,7 +196,12 @@ def _bracket_depth(text: str) -> list[int]:
 
 def _structural_cuts(text: str) -> set[int]:
     """Offsets the policy is willing to end a block at."""
+    # The fence ranges are sorted and disjoint (a fence starts a line, and a range
+    # ends where its closing fence's line does), so the one range that can hold a
+    # boundary is the last to start before it: a bisection rather than a test
+    # against every fence, which was quadratic on a record of many fences.
     protected = _fence_ranges(text)
+    starts = [a for a, _ in protected]
     depth = _bracket_depth(text)
     cuts: set[int] = set()
     for pattern in _BOUNDARIES:
@@ -188,7 +209,8 @@ def _structural_cuts(text: str) -> set[int]:
             end = m.end()
             if end <= 0 or end >= len(text):
                 continue
-            if any(a < end < b for a, b in protected):
+            at = bisect.bisect_left(starts, end) - 1
+            if at >= 0 and end < protected[at][1]:
                 continue
             if depth[end] > 0:
                 continue
@@ -1046,11 +1068,14 @@ async def backfill(payload: dict) -> str:
         if stopped_by is not None:
             break
 
-    if failed and not (built or needed_none or refused):
+    if failed and not (built or refused):
         # Nothing but failures: the shape of an embedding backend that is not
         # answering rather than of records that are awkward. Raised so the queue's
         # retry path waits and tries this same cursor again, instead of reporting
         # a successful run that did nothing and queueing another just like it.
+        # Only outcomes that reached the backend count against it: a record that
+        # needs no blocks is decided without an embedding call, so it says nothing
+        # about whether the backend answers, and a corpus always holds some.
         raise RuntimeError(f"block backfill: {failed} records failed and none were built")
 
     async with background_connection() as db:
