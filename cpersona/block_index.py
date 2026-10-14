@@ -261,8 +261,14 @@ async def build_block_index(path: str | None = None, width: int | None = None) -
             "built": False,
             "reason": "the database has no block change log; start the server once to migrate it to schema 19",
         }
-    tmp, bits_tmp = f"{out}.tmp", f"{out}.bits.tmp"
+    # Temp names of this build's own: every process on the database runs its own
+    # queue, and the command-line build can run beside them, so two builds of this
+    # file can overlap. Names derived from the output path alone were shared, and
+    # the second build truncated the first one's bits under it.
+    tmp = bits_tmp = None
     try:
+        tmp = fileperms.temp_beside(out)
+        bits_tmp = fileperms.temp_beside(out, ".bits.tmp")
         async with read_snapshot() as snap:
             header = await _write_rows(snap, tmp, bits_tmp, width)
         os.replace(tmp, out)
@@ -270,9 +276,10 @@ async def build_block_index(path: str | None = None, width: int | None = None) -
         return {"built": False, "reason": str(exc)}
     finally:
         # A half-written temp file is not the index and must not be left where a
-        # later build could mistake it for one.
+        # later build could mistake it for one. Only this build's names: another
+        # build's temp files are its own to publish or remove.
         for name in (tmp, bits_tmp):
-            if os.path.exists(name):
+            if name is not None and os.path.exists(name):
                 os.unlink(name)
     pruned = await _prune(header["generation"], header["built_seq"])
     return {

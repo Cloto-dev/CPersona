@@ -38,6 +38,7 @@ bytes" is a property a test can assert.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import struct
 from dataclasses import dataclass
@@ -50,6 +51,8 @@ from cpersona import vector_index
 from cpersona.isolation import isolation_where
 from cpersona.utils import SCORING_VERSION
 from cpersona.vector_index import IndexUnusable
+
+logger = logging.getLogger(__name__)
 
 MAGIC = b"CPXBIT01"
 FORMAT_VERSION = 1
@@ -148,18 +151,17 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
     stamps = []
     for r in plan.kept:
         value = r[plan.extra_offset]
-        if value is None:
+        if value is None or not vector_index._is_canonical(value):
+            # `datetime()` writes an instant from year 0000 on in the 19-character
+            # form. The one other answer it gives is a negative year (a bare number
+            # such as '2025' is read as a Julian day), which this fixed-width column
+            # cannot hold. Declining the build for it let one agent's record take
+            # the index away from every agent. As text it sorts below every
+            # canonical bound, so it falls in the periods an unreadable stamp falls
+            # in -- none -- and a period whose own bound is a negative year is
+            # answered by the live store (coarse_search._from_index).
             stamps.append(UNREADABLE_TIMESTAMP)
             continue
-        if not vector_index._is_canonical(value):
-            # `datetime()` writes every instant it can read in the 19-character
-            # form; any other answer is one this fixed-width column cannot hold,
-            # and holding it wrongly would put the row in the wrong periods.
-            return {
-                "built": False,
-                "reason": f"row {r[0]}: datetime(timestamp) returned {value!r}",
-                "watermark": plan.watermark,
-            }
         stamps.append(value.encode("ascii"))
 
     header = {
@@ -184,7 +186,11 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
     blob = json.dumps(header, sort_keys=True, separators=(",", ":")).encode("utf-8")
     blob += b" " * ((-(len(MAGIC) + 4 + len(blob))) % HEADER_ALIGN)
 
-    tmp = f"{out}.tmp"
+    # A temp name of this build's own: the command-line build and a server's
+    # check_health fix can build this file at once, and a name derived from the
+    # output path alone made them write one inode, so the first rename published
+    # a file the second build was still writing into.
+    tmp = fileperms.temp_beside(out)
     try:
         with fileperms.open_private(tmp, "wb") as fh:
             fh.write(MAGIC)
@@ -338,6 +344,43 @@ def cached_coarse_index(table: str = "memories", path: str | None = None) -> Coa
     index = load_coarse_index(table, src)
     _cache[src] = (key, index)
     return index
+
+
+def discard_if_holding(ids, table: str = "memories") -> bool:
+    """Remove the coarse index file when it holds any of `ids`; whether it did.
+
+    For a repair that rewrites a row's timestamp in place. The file copies each
+    row's `datetime(timestamp)` at build time and filters a period against that
+    copy, and no probe at query time re-reads it, so after such a repair the
+    file would keep the row in its old period (or in none) while the live store
+    places it in its new one. The file is a derived artifact, so it is removed
+    rather than patched, as a purge removes it: until it is built again a reader
+    falls back to the live store or reports the remainder skipped, and
+    check_coarse_index reports it absent. Rows the file does not hold (written
+    since the build, or named rather than held) are read live already and cost
+    no rebuild.
+    """
+    if not ids:
+        return False
+    src = index_path(table)
+    try:
+        index = cached_coarse_index(table, src)
+    except IndexUnusable:
+        return False  # never read, so nothing it holds can be answered from
+    if index is None or not np.isin(np.asarray(ids, dtype=np.int64), index.ids).any():
+        return False
+    try:
+        os.unlink(src)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning(
+            "Could not remove the coarse index %s after a timestamp repair; "
+            "build it again before trusting a period search through it: %s", src, exc,
+        )
+        return False
+    _cache.pop(src, None)
+    return True
 
 
 async def status(table: str = "memories") -> dict:

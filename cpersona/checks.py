@@ -1907,6 +1907,16 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
         )
     )[0][0]
     if fix:
+        # The coarse index holds each row's build-time datetime(timestamp) and
+        # filters periods by it; a row given a readable stamp here would stay in
+        # no period there. Named before the UPDATE, which is what changes them.
+        retimed = await db.execute_fetchall(
+            f"""SELECT id FROM memories
+                WHERE datetime(timestamp) IS NULL AND timestamp != ''
+                AND datetime(created_at) IS NOT NULL
+                AND locked = 0{iso.and_clause}""",
+            iso.params,
+        )
         # bug-229: write the CANONICAL AWARE form, not created_at verbatim.
         # created_at is SQLite-native `YYYY-MM-DD HH:MM:SS` (naive) while the
         # write path stores `...T...+00:00`, so copying it minted a `naive`
@@ -1923,6 +1933,9 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+        from cpersona import coarse_index
+
+        coarse_index.discard_if_holding([r[0] for r in retimed])
     return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
 
 
@@ -1986,6 +1999,17 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
         )
     )[0][0]
     if fix:
+        # The coarse index holds each row's build-time datetime(timestamp) and
+        # filters periods by it; a row moved back to its created_at here would
+        # stay in its old period there. Named before the UPDATE moves them.
+        retimed = await db.execute_fetchall(
+            f"""SELECT id FROM memories
+                WHERE strftime('%Y-%m-%d %H:%M:%f', timestamp) > strftime('%Y-%m-%d %H:%M:%f', ?)
+                AND datetime(created_at) IS NOT NULL
+                AND datetime(created_at) <= datetime(?)
+                AND locked = 0{iso.and_clause}""",
+            (boundary, boundary, *iso.params),
+        )
         # bug-098: locked = 0 -- check_health(fix=true) never alters a locked row.
         await db.execute(
             f"""UPDATE memories
@@ -1996,6 +2020,9 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
                 AND locked = 0{iso.and_clause}""",
             (boundary, boundary, *iso.params),
         )
+        from cpersona import coarse_index
+
+        coarse_index.discard_if_holding([r[0] for r in retimed])
     return [{"type": "future_timestamp", "count": ahead, "repairable": repairable}]
 
 

@@ -362,7 +362,11 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     blob = json.dumps(header, sort_keys=True, separators=(",", ":")).encode("utf-8")
     blob += b" " * ((-(len(MAGIC) + 4 + len(blob))) % HEADER_ALIGN)
 
-    tmp = f"{out}.tmp"
+    # A temp name of this build's own: two builds of this file can overlap (the
+    # command-line build beside a server's), and a name derived from the output
+    # path alone made them write one inode, so the first rename published a file
+    # the second build was still writing into.
+    tmp = fileperms.temp_beside(out)
     try:
         with fileperms.open_private(tmp, "wb") as fh:
             fh.write(MAGIC)
