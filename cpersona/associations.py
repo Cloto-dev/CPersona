@@ -978,6 +978,22 @@ class WalkGraph:
     rows: dict[str, dict] = field(default_factory=dict)
     # Entities whose `records` list was cut by the fetch bound.
     records_cut: set[int] = field(default_factory=set)
+    # Entities a loaded relation leads to that the neighbourhood did not expand:
+    # past the hop bound, or past NEIGHBOURHOOD_MAX_ENTITIES. A walk that steps
+    # onto one within its hop bound was cut by the entity bound.
+    unexpanded: set[int] = field(default_factory=set)
+
+
+#: How many entities one neighbourhood expands, the starts included, for the
+#: reconstruct walk and traverse alike. The hop bound caps depth, not breadth: on a
+#: connected graph five hops reach nearly every entity, and one relation from a hub
+#: reaches all of its spokes, so without this a read's cost grew with the graph
+#: while its answer stayed the size the caller asked for. Server policy, above
+#: TRAVERSE_MAX_LIMIT so that what traverse returns is unchanged until the cut. The
+#: entities kept at the hop where it binds are those the most recently declared
+#: relations reached -- the order the walk and traverse cut by -- and the relations
+#: past the cut are left unfollowed and reported as the hop bound's are.
+NEIGHBOURHOOD_MAX_ENTITIES = 256
 
 
 async def _neighbourhood(
@@ -988,10 +1004,13 @@ async def _neighbourhood(
     Returns `(edges, distance, recency)`:
 
     * `edges` — relation id → (subject, object, predicate, declared_at, anchor_ref,
-      declared_by), for every relation touching an entity within `max_hops`. The
-      relations of entities AT the bound are loaded too, so a caller can tell one
-      was left unfollowed; the entities they lead to get no distance.
-    * `distance` — entity → hops, for every entity within `max_hops`.
+      declared_by), for every relation touching an expanded entity. The relations
+      of entities AT the bound are loaded too, so a caller can tell one was left
+      unfollowed; the entities they lead to get no distance.
+    * `distance` — entity → hops, for every entity within `max_hops`, at most
+      NEIGHBOURHOOD_MAX_ENTITIES of them. Where that bound binds, expansion stops at
+      that hop, and the entities reached by the less recent relations get no
+      distance, as past the hop bound.
     * `recency` — relation id → position in one written order over `edges`: most
       recently declared first, then the lower relation id.
 
@@ -1006,7 +1025,8 @@ async def _neighbourhood(
     for hop in range(max_hops + 1):
         if not frontier:
             break
-        nxt: set[int] = set()
+        # entity -> the most recent relation that reached it, as `recency` orders them
+        nxt: dict[int, tuple[str, int]] = {}
         for offset in range(0, len(frontier), 250):
             batch = frontier[offset:offset + 250]
             marks = ",".join("?" for _ in batch)
@@ -1020,10 +1040,16 @@ async def _neighbourhood(
             ):
                 edges[rel_id] = (subject, obj, predicate, declared_at, anchor, declared_by)
                 for end in (subject, obj):
-                    if end not in distance:
-                        nxt.add(end)
+                    if end not in distance and (end not in nxt or (declared_at, -rel_id) > nxt[end]):
+                        nxt[end] = (declared_at, -rel_id)
         if hop == max_hops:
             break  # entities one hop past the bound are known, their edges are not needed
+        room = NEIGHBOURHOOD_MAX_ENTITIES - len(distance)
+        if len(nxt) > room:
+            newest_first = sorted(nxt, key=lambda e: (nxt[e], -e), reverse=True)
+            for e in newest_first[:max(room, 0)]:
+                distance[e] = hop + 1
+            break
         for e in nxt:
             distance[e] = hop + 1
         frontier = sorted(nxt)
@@ -1165,6 +1191,7 @@ async def walk_graph(
             graph.adjacency.setdefault(obj, []).append((recency[rel_id], rel_id, subject, predicate))
         for entries in graph.adjacency.values():
             entries.sort()
+        graph.unexpanded = {end for subject, obj, *_ in edges.values() for end in (subject, obj) if end not in distance}
 
         # Records are read for every entity some start reaches through at least one
         # relation. Distance from the union of the starts is not that: an entity one

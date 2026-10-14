@@ -632,7 +632,8 @@ def walk(
     cluster, `(ref, why, hops)` in the written order -- fewer hops first, then the
     more recently declared relation, then the lower record id -- and, per cluster,
     the bounds that cut it: `max_hops` when a relation was left unfollowed at the
-    hop bound, `max_evidence` when a reached entity had more records than the
+    hop bound or at the loader's entity bound (`associations.NEIGHBOURHOOD_MAX_ENTITIES`),
+    `max_evidence` when a reached entity had more records than the
     graph read held (see `associations.walk_graph`).
 
     A reached record is never an item and never repeated: one already in the
@@ -663,6 +664,10 @@ def walk(
                 via[other] = edge
             frontier = sorted(step)
         if any(other not in distance for entity in frontier for _, _, other, _ in graph.adjacency.get(entity, ())):
+            cuts[position].add(BOUND_HOPS)
+        # An entity the loader did not expand, stepped onto within the hop bound: the
+        # loader's entity bound cut the walk here, and a relation went unfollowed.
+        if any(entity in graph.unexpanded for entity in distance):
             cuts[position].add(BOUND_HOPS)
         best: dict[str, tuple] = {}
         for entity, hops in distance.items():

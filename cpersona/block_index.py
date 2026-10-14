@@ -48,6 +48,7 @@ import shutil
 import sqlite3
 import struct
 import time
+from array import array
 from dataclasses import dataclass
 
 import numpy as np
@@ -328,7 +329,20 @@ async def _write_rows(snap, tmp: str, bits_tmp: str, width: int | None) -> dict:
         raise _Declined(f"width {width} cannot be measured")
 
     tables: dict[str, dict[str, int]] = {"models": {}, "agents": {}, "projects": {}, "channels": {}}
-    columns: dict[str, list] = {name: [] for name in ("parent_id", "block_index", "agent", "project", "channel", "model", "kind", "measurable")}
+    # Typed arrays, not lists: a list holds a pointer and an int object per row,
+    # about 100 bytes a row across these eight columns, for every agent's blocks at
+    # once inside the server process. Typed, they hold 30. Each is widened to its
+    # file type only when written; the model code is checked against 16 bits below.
+    columns: dict[str, array] = {
+        "parent_id": array("q"),
+        "block_index": array("i"),
+        "agent": array("i"),
+        "project": array("i"),
+        "channel": array("i"),
+        "model": array("i"),
+        "kind": array("B"),
+        "measurable": array("B"),
+    }
     zeros = bytes(width)
     count = 0
 
