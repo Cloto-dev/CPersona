@@ -9,11 +9,11 @@
       "discovered": "2026-06-14T00:00:00Z",
       "version": "2.4.22",
       "commit": "77c9d34",
-      "file": "config.py",
-      "pattern": "CPERSONA_EMBEDDING_MODE\", \"none\"",
-      "expected": "absent",
+      "file": "cpersona/config.py",
+      "pattern": "os\\.environ\\.get\\(\"CPERSONA_EMBEDDING_MODE\"\\) or os\\.environ\\.get\\(\"EMBEDDING_MODE\"\\)",
+      "expected": "present",
       "status": "fixed",
-      "fix_note": "config.py now reads the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys with a CPERSONA_* override (specific > generic, matching the CScheduler convention and the marketplace catalog), so a catalog-installed cpersona enables embeddings instead of silently running FTS-only. Pending version bump."
+      "fix_note": "config.py now reads the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys with a CPERSONA_* override (specific > generic, matching the CScheduler convention and the marketplace catalog), so a catalog-installed cpersona enables embeddings instead of silently running FTS-only. Pending version bump. Re-anchored with bug-592 on the package module: the old anchor named the root config.py removed in 2.4.34, which the verifier counted as fixed whatever the code did. The pattern pins the fallback to the generic name; tests/test_bug592_moved_anchors.py::test_the_generic_embedding_names_configure_embeddings turns red without it."
     },
     {
       "id": "bug-002",
@@ -22,11 +22,11 @@
       "discovered": "2026-06-14T00:00:00Z",
       "version": "2.4.22",
       "commit": "77c9d34",
-      "file": "memory_handlers.py",
-      "pattern": "fts_query = \" \"\\.join",
-      "expected": "absent",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "terms\\.extend\\(tok\\[i : i \\+ 3\\] for i in range\\(len\\(tok\\) - 2\\)\\)",
+      "expected": "present",
       "status": "fixed",
-      "fix_note": "Replaced query.split() with _build_fts_query() (CJK trigram-OR decomposition) so the trigram FTS index is exercised for space-less scripts. Paired with the RSF merge (RECALL_MODE=rsf) which keeps the keyword channel's bm25 magnitude. Pending version bump."
+      "fix_note": "Replaced query.split() with _build_fts_query() (CJK trigram-OR decomposition) so the trigram FTS index is exercised for space-less scripts. Paired with the RSF merge (RECALL_MODE=rsf) which keeps the keyword channel's bm25 magnitude. Pending version bump. Re-anchored with bug-592 on the package module (the old anchor named the root memory_handlers.py). The pattern pins the trigram decomposition of a space-less run; tests/test_bug592_moved_anchors.py::test_a_japanese_query_becomes_trigrams_not_one_phrase turns red without it."
     },
     {
       "id": "bug-003",
@@ -8798,11 +8798,12 @@
       "version": "2.6.10",
       "file": "qa/issue-registry.json",
       "pattern": "\"file\": \"config\\.py\",",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Re-anchor bug-001 and bug-002 to cpersona/config.py and cpersona/memory_handlers.py, and add a test that reloads config with only EMBEDDING_MODE / EMBEDDING_HTTP_URL set. Optionally make verify-issues.sh treat a missing file on an absent entry as an error unless the entry is explicitly marked as anchored to a deleted file.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-001, bug-002, and the same fail-open class as bug-309, bug-400, bug-431 and bug-432."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-001, bug-002, and the same fail-open class as bug-309, bug-400, bug-431 and bug-432.",
+      "fix_note": "bug-001 and bug-002 are re-anchored on cpersona/config.py and cpersona/memory_handlers.py with present patterns that pin their fixes, and tests/test_bug592_moved_anchors.py checks both behaviours (the generic embedding names configure embeddings in a fresh process; a Japanese query becomes trigrams). The pattern here, a registry line naming the root config.py, is now absent. The verifier still counts an absent pattern in a missing file as fixed; that rule is left as it is."
     },
     {
       "id": "bug-593",
