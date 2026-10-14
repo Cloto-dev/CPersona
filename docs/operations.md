@@ -30,12 +30,16 @@ Recommended, in order:
 
 3. **Logical backup** (recommended as a low-frequency complement):
    `export_memories` writes JSONL that is independent of the schema version,
-   and `import_memories` is idempotent (duplicates are skipped) — so restore
-   drills are safe to rehearse. Monthly is a reasonable cadence. The file
-   carries the declared associations (entities, aliases, mentions and
-   relations) as well as the records, and a restore points them at the
-   records it restores. A file written by an earlier version has no
-   associations in it and still imports as it always did.
+   and `import_memories` is idempotent (memories and episodes already present
+   are skipped). A profile is the one record an import replaces rather than
+   skips: the file's copy replaces the stored one unless the stored one is
+   newer, in which case the stored profile is kept and the line is reported
+   in `errors`. A drill with an older export therefore does not move a
+   profile backwards. Monthly is a reasonable cadence. The file carries the
+   declared associations (entities, aliases, mentions and relations) as well
+   as the records, and a restore points them at the records it restores. A
+   file written by an earlier version has no associations in it and still
+   imports as it always did.
 
 **The `.db` is not the whole instance.** State lives outside it that none of
 the backup forms above touch:

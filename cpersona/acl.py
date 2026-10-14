@@ -345,29 +345,63 @@ def _scoped(required: int, key: str = "agent_id") -> Demands:
     return demands
 
 
-def _file_io_demands(key: str) -> Demands:
+def _import_file_demands(args: dict) -> list[tuple[str, int]]:
+    """Read on every agent the import file names (header and records)."""
+    from cpersona.admin_handlers import import_file_agents
+
+    agents = import_file_agents(args.get("input_path") or "")
+    if WILDCARD in agents:
+        return [(WILDCARD, PERM_READ)]
+    return [(agent, PERM_READ) for agent in sorted(agents)]
+
+
+def _export_file_demands(args: dict) -> list[tuple[str, int]]:
+    """Write on the agent the file at the destination belongs to, if any."""
+    from cpersona.admin_handlers import export_file_owner
+
+    owner = export_file_owner(args.get("output_path") or "")
+    return [] if owner is None else [(owner, PERM_WRITE)]
+
+
+def _file_io_demands(key: str, file_demands: Demands) -> Demands:
     """export_memories / import_memories: caller-directed file I/O.
 
     With ``CPERSONA_EXPORT_DIR`` unset (the shipped default) the path argument
     is caller-chosen anywhere on the filesystem, so the blast radius is not
     one agent's data — the demand escalates to read-write on ``"*"`` (review
-    finding on PR #112, extending D4). With the confinement configured, the
-    agent-scoped read-write demand of §6 applies.
+    finding on PR #112, extending D4).
+
+    With the confinement configured, the directory is still one namespace
+    shared by every agent, and a file in it belongs to the agents it holds,
+    not to whoever names it. So the agent-scoped read-write demand of §6 is
+    joined by what the file itself demands: import reads every agent the file
+    names, and export replaces the file at its destination, which takes write
+    on the agent that file belongs to. A call already demanding write on
+    ``"*"`` covers both, and the file is not read for it.
     """
 
     def demands(args: dict) -> list[tuple[str, int]]:
         if not config.EXPORT_DIR:
             return [(WILDCARD, PERM_WRITE)]
-        return [(_agent_arg(args, key), PERM_WRITE)]
+        own = _agent_arg(args, key)
+        if own == WILDCARD:
+            return [(WILDCARD, PERM_WRITE)]
+        return [(own, PERM_WRITE)] + [d for d in file_demands(args) if d[0] != own]
 
-    demands._sweep_cause = lambda args: (  # type: ignore[attr-defined]
-        ""
-        if config.EXPORT_DIR
-        else (
-            "CPERSONA_EXPORT_DIR is unset, so the path argument is caller-chosen "
-            "anywhere on the filesystem and the call is not confined to one agent"
-        )
-    )
+    def sweep_cause(args: dict) -> str:
+        if not config.EXPORT_DIR:
+            return (
+                "CPERSONA_EXPORT_DIR is unset, so the path argument is caller-chosen "
+                "anywhere on the filesystem and the call is not confined to one agent"
+            )
+        if any(pattern == WILDCARD for pattern, _ in file_demands(args)):
+            return (
+                "the file at the path belongs to every agent: it is an export of "
+                "every agent, or it is not an export that names its agent"
+            )
+        return ""
+
+    demands._sweep_cause = sweep_cause  # type: ignore[attr-defined]
     return demands
 
 
@@ -526,10 +560,11 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     # Calibration state is per-agent mutable state.
     "calibrate_threshold": _scoped(PERM_WRITE),
     "set_recall_precision": _scoped(PERM_WRITE),
-    # D4 (amended twice): caller-directed file I/O — read-write, escalating to
-    # the wildcard demand while CPERSONA_EXPORT_DIR leaves paths unconfined.
-    "export_memories": _file_io_demands("agent_id"),
-    "import_memories": _file_io_demands("target_agent_id"),
+    # D4 (amended three times): caller-directed file I/O — read-write, escalating
+    # to the wildcard demand while CPERSONA_EXPORT_DIR leaves paths unconfined,
+    # and joined by what the file demands while the directory is shared.
+    "export_memories": _file_io_demands("agent_id", _export_file_demands),
+    "import_memories": _file_io_demands("target_agent_id", _import_file_demands),
     "merge_memories": _merge_demands,
     # Empty agent_id sweeps every agent on these; _scoped maps "" to "*".
     "check_health": _health_demands,

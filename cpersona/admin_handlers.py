@@ -2548,6 +2548,109 @@ def _confine_io_path(path: str) -> str | None:
     return path
 
 
+# The ACL pattern meaning "every agent". Spelled out rather than imported: the
+# guard imports this module lazily, and this one must not import the guard.
+_EVERY_AGENT = "*"
+
+
+def _header_agent(header: dict) -> str:
+    """The agent an export header says the file belongs to.
+
+    An export of one agent records that agent. An export of every agent records
+    an empty agent_id, so the file belongs to every agent; a header that names
+    no string at all cannot be tied to anyone and is treated the same way.
+    """
+    owner = header.get("agent_id")
+    return owner if isinstance(owner, str) and owner else _EVERY_AGENT
+
+
+def import_file_agents(input_path: str) -> set[str]:
+    """Every agent an import file names, in its header and in its records.
+
+    Under CPERSONA_EXPORT_DIR the export directory is shared by every agent, and
+    a file's name says nothing about whose rows it holds. The ACL guard demands
+    read on each agent returned here, so restoring a file into one agent
+    requires being allowed to read every agent the file came from.
+
+    The file is read the way do_import_memories reads it: confined, a regular
+    file, bounded by MAX_IMPORT_BYTES, UTF-8 and one JSON object per line. A
+    file the import would refuse to read names nothing; the import then
+    returns its own error. A record without an agent_id names no agent; one
+    whose agent_id is not a string names every agent.
+    """
+    confined = _confine_io_path(input_path)
+    if confined is None:
+        return set()
+    try:
+        st = os.stat(confined)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > config.MAX_IMPORT_BYTES:
+            return set()
+        with open(confined, "rb") as f:
+            raw = f.read(config.MAX_IMPORT_BYTES + 1)
+        if len(raw) > config.MAX_IMPORT_BYTES:
+            return set()
+        lines = raw.decode("utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return set()
+    agents: set[str] = set()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        rtype = record.get("_type")
+        if rtype == "header":
+            agents.add(_header_agent(record))
+        elif rtype in ("memory", "episode", "profile"):
+            aid = record.get("agent_id")
+            if isinstance(aid, str):
+                if aid:
+                    agents.add(aid)
+            elif aid is not None:
+                agents.add(_EVERY_AGENT)
+    return agents
+
+
+def export_file_owner(output_path: str) -> str | None:
+    """The agent an existing file at an export destination belongs to.
+
+    do_export_memories replaces whatever is at its destination, and the export
+    directory is shared by every agent. The ACL guard demands write on the
+    agent returned here, so replacing a file requires being allowed to write the
+    agent that file belongs to.
+
+    None when nothing is there to replace (or the path is refused, which the
+    export reports itself). The header's agent for an export. Every agent for
+    anything that is not an export -- a file whose first line is not an export
+    header cannot be shown to belong to any one agent.
+    """
+    confined = _confine_io_path(output_path)
+    if confined is None:
+        return None
+    try:
+        st = os.stat(confined)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _EVERY_AGENT
+    if not stat.S_ISREG(st.st_mode):
+        return _EVERY_AGENT
+    try:
+        with open(confined, "rb") as f:
+            first = f.readline(64 * 1024)
+        header = json.loads(first.decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return _EVERY_AGENT
+    if not isinstance(header, dict) or header.get("_type") != "header":
+        return _EVERY_AGENT
+    return _header_agent(header)
+
+
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
     """Export memories, episodes, profiles and the declared graph to a JSONL file.
 
@@ -2909,6 +3012,19 @@ def _validate_import_preconditions(
     return confined, None
 
 
+def _null_as_empty(record: dict, key: str):
+    """A record field, with JSON null read as the empty value a missing key gets.
+
+    bug-527: these fields land in NOT NULL columns. A null bound straight in was
+    dropped without a word by the memory INSERT OR IGNORE and aborted the whole
+    restore on the episode and profile INSERTs, while the preview -- which binds
+    nothing -- counted the row as imported. Read on both arms, before the
+    dry_run split, as bug-094 does for keywords.
+    """
+    value = record.get(key)
+    return "" if value is None else value
+
+
 async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
     """Import one memory row, or account for why it was skipped.
 
@@ -2943,9 +3059,17 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
             "and was truncated"
         )
 
-    msg_id = record.get("msg_id", "")
-    pid = record.get("project_id", "")
-    chan = record.get("channel", "")
+    msg_id = _null_as_empty(record, "msg_id")
+    pid = _null_as_empty(record, "project_id")
+    chan = _null_as_empty(record, "channel")
+    # bug-527: the timestamp is bound on the real arm only, but the future-stamp
+    # report below parses it on both, so a value that is not a string aborted the
+    # preview and the restore alike. It is refused for this line instead.
+    timestamp = _null_as_empty(record, "timestamp")
+    if not isinstance(timestamp, str):
+        tally.skipped_memories += 1
+        tally.errors.append(f"Line {line_num}: memory timestamp is not a string; it was not imported")
+        return
 
     # bug-044: dedup on the full identity (agent_id, project_id,
     # msg_id) — the same axes do_store and the idx_memories_dedup_msg_id
@@ -2983,7 +3107,6 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
 
     if not tally.dry_run:
         source = json.dumps(record.get("source", {}))
-        timestamp = record.get("timestamp", "")
         metadata = json.dumps(record.get("metadata", {}))
         # bug-016: carry the project_id / channel γ-axes, the locked
         # flag and the embedding through, and INSERT OR IGNORE so a
@@ -3016,7 +3139,14 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
             ),
         )
         if cur.rowcount == 0:
+            # bug-527: both dedup keys were probed above, so an insert the database
+            # still ignored was dropped for another reason -- OR IGNORE absorbs
+            # NOT NULL and CHECK failures as well. Counting it as a duplicate would
+            # hide a lost row behind the counter that means "already there".
             tally.skipped_memories += 1
+            tally.errors.append(
+                f"Line {line_num}: memory was not stored (the database ignored the insert)"
+            )
             return
         tally.queue_remote(aid, f"mem:{cur.lastrowid}", content)
         tally.map_record("mem", record, cur.lastrowid)
@@ -3044,7 +3174,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     # So the finding is surfaced twice instead, in both directions: here as a
     # count on the run that carried them in, and afterwards by the
     # `future_timestamp` health check, which can name and repair the rows.
-    if future_timestamp_issue(record.get("timestamp", "")):
+    if future_timestamp_issue(timestamp):
         tally.future_timestamps += 1
     tally.imported_memories += 1
 
@@ -3087,8 +3217,8 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     else:
         keywords = str(keywords or "")
 
-    ep_pid = record.get("project_id", "")
-    ep_chan = record.get("channel", "")
+    ep_pid = _null_as_empty(record, "project_id")
+    ep_chan = _null_as_empty(record, "channel")
     # bug-220: dedup against what is already stored. The dry_run arm carries the
     # within-file set for the same reason the memory path does (bug-070): a
     # preview has no INSERT of its own to collide against, while a real run sees
@@ -3177,6 +3307,30 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             "and was truncated"
         )
 
+    user_id = _null_as_empty(record, "user_id")
+    # bug-528: a restore does not move a profile backwards. The upsert below
+    # replaces the stored row with the file's, so an older backup imported over a
+    # live store -- a restore drill -- replaced newer text, moved updated_at back
+    # and reported profile_updated. Memories and episodes skip what is already
+    # there; a profile has no content key to deduplicate on, so its stamp decides.
+    # Asked on both arms so the preview says what the real run will do. A file
+    # stamp that does not parse makes no claim to be older, and is applied.
+    stamp = record.get("updated_at")
+    file_time = _parse_timestamp_utc(stamp) if isinstance(stamp, str) else None
+    if file_time is not None:
+        stored = await db.execute_fetchall(
+            "SELECT updated_at FROM profiles WHERE agent_id = ? AND user_id = ?",
+            (aid, user_id),
+        )
+        stored_stamp = stored[0][0] if stored else None
+        stored_time = _parse_timestamp_utc(stored_stamp) if isinstance(stored_stamp, str) else None
+        if stored_time is not None and stored_time > file_time:
+            tally.errors.append(
+                f"Line {line_num}: the stored profile (updated {stored_stamp}) is newer than "
+                f"the file's ({stamp}); the stored profile was kept"
+            )
+            return
+
     if not tally.dry_run:
         # bug-223: carry the record's own updated_at, as memories and episodes carry
         # created_at (bug-092). A restore that re-stamps every profile with import time
@@ -3190,10 +3344,10 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             "   updated_at = excluded.updated_at",
             (
                 aid,
-                record.get("project_id", ""),
-                record.get("user_id", ""),
+                _null_as_empty(record, "project_id"),
+                user_id,
                 content,
-                record.get("updated_at"),
+                stamp,
             ),
         )
     tally.profile_updated = True
