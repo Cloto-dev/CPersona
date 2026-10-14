@@ -170,9 +170,10 @@ async def log_clock(db) -> tuple[int, int, int, int] | None:
 async def start_logging_on(db) -> int | None:
     """Turn the change log on, on the caller's transaction; the generation it runs under.
 
-    For a build that runs inside a transaction of its own (a repair run). The
-    rows that build reads are read on the same transaction, so a write the log
-    misses cannot land between the two.
+    For a build that reads its rows on the transaction the caller holds: the rows
+    are then read on the same transaction, so a write the log misses cannot land
+    between the two. The server's own builds (the operator command and the
+    coarse repair, which runs after its fix run commits) use ``start_logging``.
     """
     clock = await log_clock(db)
     if clock is None:
@@ -642,9 +643,10 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     The change log must be on before ``db`` reads its first row (bug-514): the
     file records the log's head, and a reader takes every row logged after it
     from the live table. ``start_logging`` turns it on in a commit of its own,
-    before a snapshot is opened; ``start_logging_on`` on the transaction a build
-    runs in. Without it the build declines, and the caller prunes the log after
-    the file is published (``prune_log``).
+    before a snapshot is opened, as the operator command and the coarse repair
+    do; ``start_logging_on`` on a transaction the caller holds. Without it the
+    build declines, and the caller prunes the log after the file is published
+    (``prune_log``).
     """
     out = path or index_path(table)
     # Read before any row: a purge counted after this may have committed after the

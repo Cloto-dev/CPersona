@@ -731,21 +731,15 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_associations_reconstruct.py",),
         target="associative invariant 3 — a reached record is never an item",
         file="cpersona/reconstruct.py",
-        find=(
-            "        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, extra, links)\n"
-            "        providers.check_structure(item, {row.ref for row in rows} | {row.ref for row, _, _ in extra})\n"
-            "        if position >= len(window):\n"
-            "            # Said in the words recall uses for the same row, so one reading covers both.\n"
-            "            item[\"admission\"] = \"reservation\"\n"
-            "        selected.append(item)"
-        ),
+        find="    selected = [structured(position, bounds_max_evidence) for position in range(len(item_rows))]\n",
         replace=(
-            "        item, _ = p.reconstructor.structure(rows, why_by_ref, spans, bounds_max_evidence, (), links)\n"
-            "        if position >= len(window):\n"
-            "            item[\"admission\"] = \"reservation\"\n"
-            "        selected.append(item)\n"
+            "    selected = []\n"
+            "    for position in range(len(item_rows)):\n"
+            "        rows, extra = item_rows[position]\n"
+            "        item_rows[position] = (rows, [])\n"
+            "        selected.append(structured(position, bounds_max_evidence))\n"
             "        for row, label, hops in extra:\n"
-            "            selected.append(structure([row], {}, spans, bounds_max_evidence)[0])"
+            "            selected.append(structure([row], {}, spans, bounds_max_evidence)[0])\n"
         ),
         breaks="records the walk reached become items of their own, so a declaration reorders and pads the window",
         expect="test_associations_reconstruct.py::test_entity_relations_leave_item_heads_and_order_unchanged",
@@ -1642,8 +1636,8 @@ MUTATIONS += [
         tests=('tests/test_blocks_segment.py',),
         target='segment — a closer passes over an unclosed opening (bug-473)',
         file='cpersona/blocks.py',
-        find='        for depth in range(len(pending) - 1, -1, -1):\n',
-        replace='        for depth in range(len(pending) - 1, len(pending) - 2, -1):\n',
+        find='        waiting = by_closer.get(ch)\n        if not waiting:\n            continue\n',
+        replace='        waiting = by_closer.get(ch)\n        if not waiting or waiting[-1] != len(pending) - 1:\n            continue\n',
         breaks='one unclosed ( inside a quotation makes the quotation look unclosed, so it is cut inside',
         expect='test_blocks_segment.py::test_an_unclosed_bracket_inside_a_quotation_does_not_open_the_quotation',
     ),
@@ -2212,8 +2206,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_v1.py',),
         target='config — reconstruct returns 10 items when the caller omits count (2.6.0)',
         file='cpersona/config.py',
-        find='    else min(10, RECONSTRUCT_MAX_COUNT)\n',
-        replace='    else min(1, RECONSTRUCT_MAX_COUNT)\n',
+        find='_parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", min(10, RECONSTRUCT_MAX_COUNT))',
+        replace='_parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", min(1, RECONSTRUCT_MAX_COUNT))',
         breaks='a caller that omits count gets one item, not the configuration that was measured',
         expect='test_reconstruct_v1.py::test_unconfigured_count_policy_is_the_measured_default',
     ),
@@ -2222,8 +2216,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_v1.py',),
         target='config — an unset default count follows a lowered maximum',
         file='cpersona/config.py',
-        find='    else min(10, RECONSTRUCT_MAX_COUNT)\n',
-        replace='    else 10\n',
+        find='_parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", min(10, RECONSTRUCT_MAX_COUNT))',
+        replace='_parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 10)',
         breaks='lowering only the maximum becomes a startup error',
         expect='test_reconstruct_v1.py::test_an_unset_default_follows_a_lowered_maximum',
     ),
@@ -2311,8 +2305,8 @@ MUTATIONS += [
         tests=('tests/test_recall_cue.py',),
         target='time cue — an empty query without a period keeps the storage order',
         file='cpersona/memory_handlers.py',
-        find='if window is not None else "created_at DESC"',
-        replace='if True else "created_at DESC"',
+        find='if window is not None else "created_at DESC, id DESC"',
+        replace='if True else "created_at DESC, id DESC"',
         breaks="the ordinary empty-query recall stops listing the most recently stored records first",
         expect='test_recall_cue.py::test_the_keyword_search_without_a_period_still_lists_the_most_recently_stored_first',
     ),
@@ -3073,8 +3067,8 @@ MUTATIONS += [
         tests=('tests/test_coarse_index_health.py',),
         target='coarse_index health — absence below the size that matters is silent',
         file='cpersona/checks.py',
-        find='        if far_rows < INDEX_MATTERS_ROWS:\n            return []\n',
-        replace='        if far_rows < 0:\n            return []\n',
+        find='        if far_rows < INDEX_MATTERS_ROWS and not fix:\n            return []\n',
+        replace='        if far_rows < 0 and not fix:\n            return []\n',
         breaks='a few records past the window raise a warning that costs nothing to ignore',
         expect='test_coarse_index_health.py::test_a_far_stratum_too_small_to_cost_anything_says_nothing',
     ),
@@ -4023,7 +4017,7 @@ MUTATIONS += [
         tests=('tests/test_store_flat_form.py',),
         target='the connection agent is echoed as resolved_agent_id',
         file='cpersona/acl.py',
-        find='            result["resolved_agent_id"] = defaulted_agent',
+        find='            echo["resolved_agent_id"] = defaulted_agent',
         replace='            pass',
         breaks='the caller cannot learn which agent it wrote to',
         expect='test_store_flat_form.py::test_an_omitted_agent_id_lands_in_the_one_agent_the_connection_can_write',
@@ -4207,8 +4201,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_modes.py',),
         target="mode — the longest prefix that fits, not the shortest",
         file='cpersona/reconstruct.py',
-        find='                    fits, low = (attempt, attempt_quoted, attempt_shaped), middle + 1\n',
-        replace='                    fits, high = (attempt, attempt_quoted, attempt_shaped), middle - 1\n',
+        find='                attempt_shaped = _shaped(attempt)\n                if attempt_shaped["used_tokens"] <= limit:\n                    fits, low = (attempt, attempt_quoted, attempt_shaped), middle + 1\n',
+        replace='                attempt_shaped = _shaped(attempt)\n                if attempt_shaped["used_tokens"] <= limit:\n                    fits, high = (attempt, attempt_quoted, attempt_shaped), middle - 1\n',
         breaks="a cap returns less than it holds",
         expect='test_reconstruct_modes.py::test_the_cap_holds_counts_itself_and_returns_the_longest_prefix',
     ),

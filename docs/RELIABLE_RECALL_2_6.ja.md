@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d2e1215a70d0c733c1fe7926708ff9872204ffbf -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:8ff17cd8ea4eb638cc2e6b7e45c7ed19527fc332 -->
 
 # Reliable Recall — 2.6 系
 

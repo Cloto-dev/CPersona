@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:b56dd938688d371ef1b98f3b3ba3e7a5f256cd07 -->
+<!-- i18n-source: docs/BINARY_COARSE_SEARCH_DESIGN.md@blob:154947e65d1be422f5b004702900deef15c4738a -->
 
 # 1 ビット粗探索 — 設計 { #binary-coarse-search-design }
 
