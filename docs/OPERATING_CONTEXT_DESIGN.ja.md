@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:4afbe86856c01d6bd14be44a6ee23c1606399cb1 -->
+<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:1a5cfc16e5a5d128d2cb7dd6dc63aca02ceeddd1 -->
 
 # サーバー供給の運用コンテキスト (グローバル設定 + MCP instructions 配布)
 
@@ -128,7 +128,8 @@ body = """..."""
 `Server(server_name)`、`_vendored_mcp_common/mcp_utils.py:73`)。
 
 組み立ての規則は、CPersona 自身の案内を先頭に置き、そのあとに `instructions.summary` を
-そのまま続けることです。案内 (`server.SERVER_INSTRUCTIONS`、約 500 文字) は、CPersona の
+そのまま続けることです。案内 (`server.SERVER_INSTRUCTIONS`、約 200 文字。ツールを一覧にするたびに案内を繰り返す
+クライアントがあるので短くしている) は、CPersona の
 ツールをいつ使うかを示します。Claude Code のツール検索のようにツールの定義を後から
 読み込むクライアントは、セッションの開始時にツールの名前とこの instructions しか
 エージェントに見せないからです。Claude Code は instructions を 2,048 文字で切り詰めるので、

@@ -690,14 +690,18 @@ _AUTO_PROJECT_ID_CLAUSE = (
 # (Claude Code's tool search) shows an agent only the tool names and these
 # instructions at session start, so they say when to look for CPersona's tools;
 # Claude Code cuts them at 2,048 characters, so the operator's summary follows.
+#
+# They say only when to use the three tools loaded with the session, because a
+# client may repeat them with every tool it lists: Codex in code mode prefixes each
+# CPersona tool description with these instructions when an agent looks the tools
+# up, and an agent there looks them up several times a session. Every character
+# here is paid once per tool per lookup on such a client. The other tools are
+# reached from these (get_contents expands a reconstruct quote) or when the user
+# asks about the store, and every client lists their names.
 SERVER_INSTRUCTIONS = (
-    "CPersona is this agent's long-term memory: decisions, rules, preferences and "
-    "findings from earlier sessions, stored as records that can be quoted. Use "
-    "reconstruct when a session starts and whenever a question depends on something "
-    "from before this conversation; use store when something should outlive this "
-    "conversation, and archive_episode when the session ends. get_contents reads a "
-    "quoted record further. The maintenance tools (check_health, list_memories, "
-    "list_episodes) are for when the user asks about the store itself."
+    "CPersona is this agent's long-term memory. Use reconstruct when a session starts "
+    "and before answering from earlier work, store for what should outlive the "
+    "session, and archive_episode when it ends."
 )
 
 

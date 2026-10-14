@@ -127,7 +127,8 @@ it through the vendored `ToolRegistry.__init__`, which is currently
 (`_vendored_mcp_common/mcp_utils.py:73`).
 
 Composition rule: CPersona's own guidance first, then `instructions.summary`
-verbatim. The guidance (`server.SERVER_INSTRUCTIONS`, about 500 characters) says
+verbatim. The guidance (`server.SERVER_INSTRUCTIONS`, about 200 characters, short because
+a client may repeat it with every tool it lists) says
 when to use CPersona's tools: a client that defers tool definitions, as Claude
 Code's tool search does, shows an agent only the tool names and these
 instructions at session start. Claude Code cuts the instructions at 2,048
