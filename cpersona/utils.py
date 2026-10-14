@@ -30,6 +30,19 @@ from cpersona.config import (
 )
 
 
+# SQLite stores INTEGER as a signed 64-bit value, and binding a Python int outside
+# that range raises OverflowError instead of matching nothing. Ids arrive from
+# callers as unbounded JSON integers (or digit runs inside a ref), so every seam
+# that binds one asks this first.
+_SQLITE_INTEGER_MIN = -(2**63)
+_SQLITE_INTEGER_MAX = 2**63 - 1
+
+
+def fits_sqlite_integer(value: int) -> bool:
+    """Whether ``value`` can be bound as an SQLite INTEGER. No row id lies outside it."""
+    return _SQLITE_INTEGER_MIN <= value <= _SQLITE_INTEGER_MAX
+
+
 def _clamp_limit(limit: int, cap: int) -> int:
     """Clamp a user-supplied limit to [0, cap], preventing negative bypass."""
     return min(max(0, limit), cap)
@@ -172,7 +185,10 @@ def _parse_timestamp_utc(ts_raw: str) -> datetime | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
-    except (ValueError, OSError):
+    except (ValueError, OSError, OverflowError):
+        # OverflowError: a well-formed stamp at the edge of the range whose offset
+        # carries its UTC instant past year 1 or year 9999 ('0001-01-01T00:00:00+01:00').
+        # No instant can be placed for it, so it reads as unparseable like any other.
         return None
 
 

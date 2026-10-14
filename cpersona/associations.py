@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where, source_id_where
-from cpersona.utils import episode_timestamp
+from cpersona.utils import episode_timestamp, fits_sqlite_integer
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,13 @@ def parse_ref(ref) -> tuple[str, int] | None:
     if not isinstance(ref, str):
         return None
     m = _REF.match(ref.strip())
-    return (m.group(1), int(m.group(2))) if m else None
+    if not m:
+        return None
+    row_id = int(m.group(2))
+    # A digit run past SQLite's INTEGER range names no record, and binding it
+    # raised OverflowError out of the whole declaration -- after store had
+    # already committed the memory the declaration rides on.
+    return (m.group(1), row_id) if fits_sqlite_integer(row_id) else None
 
 
 def canonical_ref(ref) -> str | None:
@@ -88,8 +94,11 @@ def canonical_ref(ref) -> str | None:
 
 
 def _is_id(value) -> bool:
-    """An integer id. JSON true / false arrive as bool, which Python counts as an int (bug-447)."""
-    return isinstance(value, int) and not isinstance(value, bool)
+    """An integer id. JSON true / false arrive as bool, which Python counts as an int (bug-447).
+
+    One SQLite cannot hold is no id either: binding it raises instead of matching nothing.
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and fits_sqlite_integer(value)
 
 
 def _now() -> str:
@@ -217,6 +226,10 @@ async def _endpoint(db, scope: _Scope, value, declared_by: str, now: str) -> tup
         if not await _record_exists(db, scope, kind, row_id):
             return f"{value.strip()} is not a record of this agent"
         return kind, row_id
+    if isinstance(value, str) and _REF.match(value.strip()):
+        # Shaped as a record ref, but its id is past SQLite's range: no record has
+        # it, and registering the string as an entity name would invent one.
+        return f"{value.strip()} is not a record of this agent"
     name = _text(value)
     if name is None:
         return "endpoint must be an entity name or a record ref"

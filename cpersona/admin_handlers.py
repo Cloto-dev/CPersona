@@ -57,6 +57,7 @@ from cpersona.utils import (
     _parse_timestamp_utc,
     _try_parse_json,
     error_response,
+    fits_sqlite_integer,
     future_timestamp_issue,
     json_dumps_finite,
     sanitize_content_with_flag,
@@ -438,6 +439,9 @@ async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str 
             {"ok": True, "deleted_id": memory_id}, "delete_memory", key
         )
     _warn_if_unscoped("do_delete_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        # No row has an id SQLite cannot hold, and binding it would raise.
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     # aiosqlite 0.22 has execute_fetchall but no execute_fetchone — using the
     # former avoids a silent AttributeError that previously broke every delete.
     async with connection() as db:
@@ -498,6 +502,8 @@ async def do_update_memory(
     if not content or not content.strip():
         return error_response("Content cannot be empty")
     _warn_if_unscoped("do_update_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
 
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT locked, agent_id FROM memories WHERE id = ?", (memory_id,))
@@ -605,6 +611,8 @@ async def do_lock_memory(memory_id: int, agent_id: str = "", session_key: str = 
             {"ok": True, "locked_id": memory_id}, "lock_memory", key
         )
     _warn_if_unscoped("do_lock_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -629,6 +637,8 @@ async def do_unlock_memory(memory_id: int, agent_id: str = "", session_key: str 
             {"ok": True, "unlocked_id": memory_id}, "unlock_memory", key
         )
     _warn_if_unscoped("do_unlock_memory", memory_id, agent_id)
+    if not fits_sqlite_integer(memory_id):
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
     async with connection() as db:
         rows = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (memory_id,))
     if not rows:
@@ -2554,6 +2564,8 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
             {"ok": True, "deleted_id": episode_id}, "delete_episode", key
         )
     _warn_if_unscoped("do_delete_episode", episode_id, agent_id)
+    if not fits_sqlite_integer(episode_id):
+        return error_response(f"Episode {episode_id} not found or not owned by agent")
     # Read the owner up front so the remote-vector removal below targets the namespace
     # the episode was indexed under (cpersona:{owner}), matching how do_delete_memory
     # resolves the owner for its bug-023 removal even when the caller omits agent_id.

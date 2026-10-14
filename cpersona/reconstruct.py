@@ -282,6 +282,12 @@ SHORTFALL_EXHAUSTED_CANDIDATES = "exhausted_candidates"
 SHORTFALL_BUDGET_EXHAUSTED = "budget_exhausted"
 
 
+def _source_field(source, key: str) -> str:
+    """One field of a row's source as text; absent, null or no source at all is ''."""
+    value = source.get(key) if isinstance(source, dict) else None
+    return "" if value is None else str(value)
+
+
 class _Candidate:
     """One recall row, normalised to the fields the four stages read.
 
@@ -307,8 +313,13 @@ class _Candidate:
         self.ts = _parse_timestamp_utc(self.timestamp)
         self.msg_id = (msg.get("id") or "").strip()
         source = msg.get("source")
-        self.source_id = (source.get("id") or "").strip() if isinstance(source, dict) else ""
-        self.source_type = source.get("type", "") if isinstance(source, dict) else ""
+        # Read as text whatever the row holds. The legacy `message` form and the
+        # serde fold store a source's id and type as the caller sent them, so an
+        # integer id or a null type reaches here; `.strip()` on an int, and the
+        # adjacency sort comparing None or an int with a string, failed every
+        # reconstruct whose candidate pool held such a row.
+        self.source_id = _source_field(source, "id").strip()
+        self.source_type = _source_field(source, "type")
         self.context = None  # (project, channel), hydrated from the scoped candidate rows
         # Relevance rank, 0 = most relevant. do_recall emits its ranked list
         # REVERSED (most relevant last) so that a truncated tail keeps the

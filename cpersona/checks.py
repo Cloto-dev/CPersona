@@ -2294,9 +2294,11 @@ async def check_timestamp_format_drift(db, agent_id: str, fix: bool) -> list[dic
     for row_id, ts, locked in aware_rows:
         try:
             parsed = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        except ValueError:
+            canon = parsed.astimezone(datetime.timezone.utc).isoformat()
+        except (ValueError, OverflowError):
+            # OverflowError: the offset carries the instant past the representable
+            # range, so there is no UTC form to normalise it to.
             continue
-        canon = parsed.astimezone(datetime.timezone.utc).isoformat()
         if canon == ts:
             continue
         if locked:
@@ -2362,9 +2364,10 @@ async def check_episode_timestamp_format_drift(db, agent_id: str, fix: bool) -> 
             if cls == "aware":
                 try:
                     parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-                except ValueError:
+                    canon = parsed.astimezone(datetime.timezone.utc).isoformat()
+                except (ValueError, OverflowError):
+                    # As in the memories check: no UTC form exists to normalise to.
                     continue
-                canon = parsed.astimezone(datetime.timezone.utc).isoformat()
                 if canon != value:
                     repairs.append((row_id, column, canon))
             elif cls == "naive":

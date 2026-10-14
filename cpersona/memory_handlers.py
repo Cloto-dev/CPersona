@@ -78,6 +78,7 @@ from cpersona.utils import (
     _content_excluded,
     _parse_timestamp_utc,
     episode_timestamp,
+    fits_sqlite_integer,
     future_timestamp_issue,
     _sanitize_content,
     sanitize_content_with_flag,
@@ -3779,7 +3780,9 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
                 row_id = int(raw)
             except (TypeError, ValueError):
                 row_id = -1
-            if kind not in ("mem", "ep") or row_id <= 0:
+            # An id past SQLite's INTEGER range names no row, and binding it would
+            # raise and fail the whole batch rather than this one ref.
+            if kind not in ("mem", "ep") or row_id <= 0 or not fits_sqlite_integer(row_id):
                 missing.append(ref)
                 continue
             if kind == "mem":

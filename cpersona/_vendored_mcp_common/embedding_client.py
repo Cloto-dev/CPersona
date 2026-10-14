@@ -54,6 +54,23 @@ class EmbeddingResponseError(ValueError):
     """
 
 
+def _decode_json(response) -> object:
+    """Parse a backend body, mapping a nesting overflow to a rejection.
+
+    The JSON decoder answers nesting deeper than the interpreter's recursion limit
+    with RecursionError. A body like that is a few dozen kilobytes, far inside the
+    byte budget, and RecursionError is not in any failure boundary's except tuple,
+    so it escaped the client and aborted the caller's store or recall instead of
+    reaching it as a failed call.
+    """
+    try:
+        return response.json()
+    except RecursionError:
+        raise EmbeddingResponseError(
+            "embedding response is nested deeper than the parser can follow"
+        ) from None
+
+
 @dataclass(frozen=True)
 class EmbedOutcome:
     """What one :meth:`EmbeddingClient.embed_with_outcome` call did.
@@ -643,7 +660,7 @@ class EmbeddingClient:
         """
         limit = self._max_response_bytes
         if limit <= 0:
-            return response.json()
+            return _decode_json(response)
 
         declared = None
         headers = getattr(response, "headers", None)
@@ -668,7 +685,7 @@ class EmbeddingClient:
                 f"embedding response is {len(body)} bytes, over the {limit}-byte budget"
             )
 
-        return response.json()
+        return _decode_json(response)
 
     def _validate_batch(self, raw: object, expected_count: int) -> list[list[float]]:
         """Steps 3-7: shape, cardinality, dimension, finite numbers, consistency.

@@ -294,14 +294,29 @@ async def do_store_boundary(
     # object argument over as {}, so `is not None` ran an empty declaration on
     # every store and added an `associations` key to every response. An empty
     # object declares nothing and is treated as absent.
+    #
+    # Both riders run after the memory has committed, each in a transaction of its
+    # own. An exception from either one used to replace the whole response, so the
+    # caller was told the store failed for a row that exists (and, when the
+    # associations rider raised, the lock rider never ran). A rider failure is
+    # therefore reported in the rider's own field, next to `result` and `id`.
     if associations and isinstance(result.get("id"), int) and result["id"] > 0:
-        result["associations"] = await associations_module.declare(
-            agent_id,
-            associations,
-            project_id=resolved,
-            channel=channel,
-            anchor_ref=f"mem:{result['id']}",
-        )
+        try:
+            result["associations"] = await associations_module.declare(
+                agent_id,
+                associations,
+                project_id=resolved,
+                channel=channel,
+                anchor_ref=f"mem:{result['id']}",
+            )
+        except Exception as exc:
+            logger.warning("store: associations rider failed for mem:%s: %r", result["id"], exc)
+            result["associations"] = {
+                "entities": [],
+                "mentions": 0,
+                "relations": [],
+                "dropped": [{"item": "associations", "reason": f"declaration failed: {exc}"}],
+            }
     # The lock rider: the same row the associations rider anchors to, for the same
     # reason. A store answered by an existing row is still a request that this
     # memory end up locked. A paused, refused or id-less (unique-index race) store
@@ -310,7 +325,11 @@ async def do_store_boundary(
         row_id = result.get("id")
         locked = False
         if isinstance(row_id, int) and row_id > 0:
-            outcome = await do_lock_memory(row_id, agent_id=agent_id, session_key=session_key)
+            try:
+                outcome = await do_lock_memory(row_id, agent_id=agent_id, session_key=session_key)
+            except Exception as exc:
+                logger.warning("store: lock rider failed for mem:%s: %r", row_id, exc)
+                outcome = {}
             # A paused lock answers ok:true with its id nulled, so the id is the test.
             locked = outcome.get("ok") is True and outcome.get("locked_id") == row_id
         result["locked"] = locked

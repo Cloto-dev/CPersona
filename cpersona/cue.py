@@ -254,4 +254,11 @@ def sql_instant(value: datetime) -> str:
     on every platform, and a clipped bound at year 1 would then compare as text
     against four-digit years in the wrong order.
     """
-    return value.astimezone(timezone.utc).isoformat(sep=" ", timespec="seconds")[:19]
+    try:
+        value = value.astimezone(timezone.utc)
+    except OverflowError:
+        # A caller's bound at the edge of the range whose offset carries its UTC
+        # instant past it (year 1 east of UTC, year 9999 west of it) is clipped to
+        # the end it passed, as a margin that reaches past one is (bug-443).
+        value = _EARLIEST if value.utcoffset() > timedelta(0) else _LATEST
+    return value.isoformat(sep=" ", timespec="seconds")[:19]
