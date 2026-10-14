@@ -89,6 +89,12 @@ def _changed_keys(full: dict, stripped: dict) -> list[tuple]:
     paths = []
 
     def walk(a, b, path):
+        # A recorded table is a list of rows, and an entry can name a column of
+        # one row by its position, so lists are walked in step as well.
+        if isinstance(a, list) and isinstance(b, list):
+            for i, (v, w) in enumerate(zip(a, b)):
+                walk(v, w, (*path, i))
+            return
         if not isinstance(a, dict):
             return
         for k, v in a.items():
@@ -105,6 +111,11 @@ def _restore(obs: dict, past: dict, path: tuple) -> None:
     """Put the golden's value for one key path back into the observation."""
     src, dst = past, obs
     for key in path[:-1]:
+        if isinstance(key, int) and isinstance(src, list) and isinstance(dst, list):
+            if key >= len(src) or key >= len(dst):
+                return
+            src, dst = src[key], dst[key]
+            continue
         if not isinstance(src, dict) or not isinstance(dst, dict):
             return
         src, dst = src.get(key), dst.get(key)

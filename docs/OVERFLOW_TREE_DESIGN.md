@@ -138,7 +138,9 @@ come to point at a different record. A node whose `embedding_model` differs from
 the current model is treated as missing and rebuilt, as record embeddings are.
 Nodes are not exported: they are derived from text the export already carries.
 An import does not queue them; the health check's `missing_nodes` repair
-builds them for imported records, as for any record written without them. A node is read only through its parent, so it
+builds them for imported records, as for any record written without them.
+`merge_memories` does queue them for the records it copies, once its transaction
+has committed: a move deletes the source records, and their nodes with them. A node is read only through its parent, so it
 inherits the parent's isolation axes and access control.
 
 ## 5. Invariants

@@ -3325,6 +3325,145 @@ class _ImportErrors(list):
         return [*self, f"{self.omitted} more errors were not listed"]
 
 
+#: Episodes read in one statement while an agent's summary digests are collected.
+_EPISODE_KEY_PAGE = 500
+
+
+class _EpisodeSummaryIndex:
+    """Where an agent's stored episode summaries live, for the episode dedup gate.
+
+    Episodes have no uniqueness constraint and no index holding ``summary``, so the
+    gate used to be one probe per incoming episode that SQLite answered by reading
+    every episode in the (agent_id, project_id) bucket -- each row of a merge or a
+    restore paid for everything stored before it, rows of the same run included, with
+    the write lock held: quadratic in the bucket. Without a schema change, the bucket
+    is read once instead: the first probe for an agent walks its episodes in keyset
+    pages and keeps a 16-byte digest of each (project_id, channel, summary) mapped to
+    the row id, and every later probe is a dictionary lookup. The summaries themselves
+    are never kept, so what stays resident is a fixed few dozen bytes per episode,
+    not the corpus.
+
+    A digest hit is confirmed against the row by its primary key before it is
+    believed, so a digest collision cannot skip a distinct episode. A value that is
+    not text (a summary stored as a BLOB, say) cannot be digested with the meaning
+    SQL's ``=`` gives it, so it falls back to the original probe.
+    """
+
+    def __init__(self) -> None:
+        self._agents: dict[str, dict[bytes, int]] = {}
+        # Agents holding a row the digest cannot stand for: every probe asks SQL.
+        self._untyped: set[str] = set()
+
+    @staticmethod
+    def _key(project_id, channel, summary) -> bytes | None:
+        if not (isinstance(project_id, str) and isinstance(channel, str) and isinstance(summary, str)):
+            return None
+        h = hashlib.blake2b(digest_size=16)
+        for part in (project_id, channel, summary):
+            raw = part.encode("utf-8", "surrogatepass")
+            # Length-prefixed, so ("ab", "c") and ("a", "bc") cannot share a digest.
+            h.update(len(raw).to_bytes(8, "little"))
+            h.update(raw)
+        return h.digest()
+
+    async def _keys_for(self, db, agent_id: str) -> dict[bytes, int]:
+        keys = self._agents.get(agent_id)
+        if keys is not None:
+            return keys
+        keys = {}
+        last_id = 0
+        while True:
+            # The unary plus walks the primary key from the last id, as the merge's
+            # source reads do; an agent index would sort the agent's rows per page.
+            rows = await db.execute_fetchall(
+                "SELECT id, project_id, channel, summary FROM episodes"
+                " WHERE +agent_id = ? AND id > ? ORDER BY id LIMIT ?",
+                (agent_id, last_id, _EPISODE_KEY_PAGE),
+            )
+            if not rows:
+                break
+            last_id = rows[-1][0]
+            for row_id, project_id, channel, summary in rows:
+                key = self._key(project_id, channel, summary)
+                if key is None:
+                    self._untyped.add(agent_id)
+                else:
+                    keys.setdefault(key, row_id)
+        self._agents[agent_id] = keys
+        return keys
+
+    async def _probe(self, db, agent_id: str, project_id, channel, summary) -> int | None:
+        rows = await db.execute_fetchall(
+            "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
+            " AND summary = ? LIMIT 1",
+            (agent_id, project_id, channel, summary),
+        )
+        return rows[0][0] if rows else None
+
+    async def find(self, db, agent_id: str, project_id, channel, summary) -> int | None:
+        """The id of an episode the agent holds with this summary in this bucket."""
+        keys = await self._keys_for(db, agent_id)
+        key = self._key(project_id, channel, summary)
+        if key is None or agent_id in self._untyped:
+            return await self._probe(db, agent_id, project_id, channel, summary)
+        row_id = keys.get(key)
+        if row_id is None:
+            return None
+        rows = await db.execute_fetchall(
+            "SELECT 1 FROM episodes WHERE id = ? AND agent_id = ? AND project_id = ? AND channel = ?"
+            " AND summary = ?",
+            (row_id, agent_id, project_id, channel, summary),
+        )
+        if rows:
+            return row_id
+        return await self._probe(db, agent_id, project_id, channel, summary)
+
+    def add(self, agent_id: str, project_id, channel, summary, row_id: int) -> None:
+        """Record an episode this run inserted, so a repeat later in the run finds it."""
+        keys = self._agents.get(agent_id)
+        key = self._key(project_id, channel, summary)
+        if keys is None:
+            return  # not read yet: the first probe will read this row from the table
+        if key is None:
+            self._untyped.add(agent_id)
+        else:
+            keys.setdefault(key, row_id)
+
+
+async def _queue_derived_builds(agent_id: str, items: list[dict], session_key: str) -> None:
+    """Queue node and block construction for the records a merge inserted.
+
+    store and update_memory queue these for the record they write; a merge inserts
+    rows by the batch and used to queue none, so a copied record had no blocks (and,
+    past the token window, no nodes) until a restart's backfill or a health repair
+    came round to it -- and a move had already dropped the source's blocks with the
+    source row. (An import is documented not to queue them: OVERFLOW_TREE_DESIGN §4.)
+    ``items`` are the remote-index entries the run queued, which are exactly the rows
+    it inserted: ``{"id": "<kind>:<row id>", "text": ...}``.
+
+    Called after the commit: the token report is a network call and must not run under
+    the write lock. Never raises -- the records are stored, and the derived layer's
+    absence changes no answer; the health check still finds anything missed here.
+    """
+    if not items:
+        return
+    records = []
+    for item in items:
+        kind, _, row_id = item["id"].partition(":")
+        records.append((kind, int(row_id), item["text"]))
+    if nodes.building_enabled():
+        try:
+            past_window = await nodes.overflowing(records)
+        except Exception as e:  # the report is advisory to the write path
+            logger.warning("token report failed after a bulk write, no nodes queued: %s", e)
+            past_window = None
+        for kind, row_id, _text in past_window or ():
+            await nodes.queue_build(kind, row_id, agent_id, session_key)
+    if blocks.building_enabled():
+        for kind, row_id, _text in records:
+            await blocks.queue_build(kind, row_id, agent_id, session_key)
+
+
 @dataclass
 class _ImportTally:
     """The state one import run threads through its per-record handlers.
@@ -3398,6 +3537,8 @@ class _ImportTally:
     seen_content: set = field(default_factory=set)
     # bug-220: the episode axis of the same preview problem (bug-071's import twin).
     seen_episode: set = field(default_factory=set)
+    # The episode dedup gate, read once per agent rather than once per record.
+    episode_keys: _EpisodeSummaryIndex = field(default_factory=_EpisodeSummaryIndex)
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: dict[str, list[dict]] = field(default_factory=dict)
     # Whether each agent id the file names may receive rows, asked once per id.
@@ -3811,15 +3952,11 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     # bug-220: dedup against what is already stored. The dry_run arm carries the
     # within-file set for the same reason the memory path does (bug-070): a
     # preview has no INSERT of its own to collide against, while a real run sees
-    # its own uncommitted rows on the shared connection.
-    existing = await db.execute_fetchall(
-        "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
-        " AND summary = ? LIMIT 1",
-        (aid, ep_pid, ep_chan, summary),
-    )
-    if existing or (tally.dry_run and (aid, ep_pid, ep_chan, summary) in tally.seen_episode):
+    # its own uncommitted rows (recorded in episode_keys as it inserts them).
+    existing = await tally.episode_keys.find(db, aid, ep_pid, ep_chan, summary)
+    if existing is not None or (tally.dry_run and (aid, ep_pid, ep_chan, summary) in tally.seen_episode):
         tally.skipped_episodes += 1
-        tally.map_record("ep", record, existing[0][0] if existing else None)
+        tally.map_record("ep", record, existing)
         return
 
     if truncated:
@@ -3850,6 +3987,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
                 created_at,
             ),
         )
+        tally.episode_keys.add(aid, ep_pid, ep_chan, summary, cur.lastrowid)
         tally.queue_remote(aid, f"ep:{cur.lastrowid}", summary)
         tally.map_record("ep", record, cur.lastrowid)
     else:
@@ -4223,9 +4361,17 @@ class _MergeTally:
     # bare INSERT, so intra-batch dedup relies on the target existing-check seeing the
     # real run's own uncommitted rows. dry_run inserts nothing, so two source episodes
     # with the same summary were both counted as merged. Track within-batch summaries so
-    # the dry_run preview matches (memories don't need this — the source's own UNIQUE
-    # indexes already make intra-batch content/msg_id collisions impossible).
+    # the dry_run preview matches.
     seen_summary: set = field(default_factory=set)
+    # The memory axes of the same preview problem. The source's UNIQUE indexes would
+    # make intra-batch content/msg_id collisions impossible, but their creation is best
+    # effort (bug-349): on a database where it failed the source can hold two identical
+    # rows, the real run skips the second against its own uncommitted copy, and a
+    # preview that remembers nothing counted both as merged.
+    seen_msgid: set = field(default_factory=set)
+    seen_content: set = field(default_factory=set)
+    # The episode dedup gate, read once for the target rather than once per row.
+    episode_keys: _EpisodeSummaryIndex = field(default_factory=_EpisodeSummaryIndex)
     # bug-218/bug-222: the SOURCE ids this merge actually copied. mode='move' deletes
     # exactly these, so a row the copy pass skipped — a profile the target already holds
     # under the same user_id (profiles have no content-equivalence key, unlike the
@@ -4317,9 +4463,9 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
                 "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
                 (target_agent_id, project_id, msg_id),
             )
-            if existing:
+            if existing or (tally.dry_run and (project_id, msg_id) in tally.seen_msgid):
                 tally.skipped_memories += 1
-                tally.map_record("mem", src_id, existing[0][0])
+                tally.map_record("mem", src_id, existing[0][0] if existing else None)
                 continue
         # bug-349: the import twin, for the same reason -- strategy='skip' must not
         # depend on an index whose creation is allowed to fail. Measured on a database
@@ -4329,9 +4475,13 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
             "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
             (target_agent_id, project_id, channel, content),
         )
-        if dup:
+        if dup or (tally.dry_run and (project_id, channel, content) in tally.seen_content):
             tally.skipped_memories += 1
-            tally.map_record("mem", src_id, await _equal_memory_id(db, target_agent_id, project_id, channel, content))
+            tally.map_record(
+                "mem",
+                src_id,
+                await _equal_memory_id(db, target_agent_id, project_id, channel, content) if dup else None,
+            )
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -4361,6 +4511,10 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
                 continue
             tally.copied_memory_ids.append(src_id)
             tally.queue_remote(f"mem:{cur.lastrowid}", content)
+        else:
+            if msg_id:
+                tally.seen_msgid.add((project_id, msg_id))
+            tally.seen_content.add((project_id, channel, content))
         tally.map_record("mem", src_id, None if tally.dry_run else cur.lastrowid)
         tally.merged_memories += 1
 
@@ -4413,17 +4567,14 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
         # the same summary text under ANY other project/channel bucket, and
         # mode='move' then deleted it with the source agent (permanent
         # cross-project data loss). The dry_run seen_summary key carries the same
-        # axes so the preview counts match a real run.
-        existing = await db.execute_fetchall(
-            "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
-            " AND summary = ? LIMIT 1",
-            (target_agent_id, ep_project_id, ep_channel, summary),
-        )
-        if existing or (
+        # axes so the preview counts match a real run. The probe reads the target's
+        # episodes once (_EpisodeSummaryIndex) instead of scanning the bucket per row.
+        existing = await tally.episode_keys.find(db, target_agent_id, ep_project_id, ep_channel, summary)
+        if existing is not None or (
             tally.dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in tally.seen_summary
         ):
             tally.skipped_episodes += 1
-            tally.map_record("ep", src_id, existing[0][0] if existing else None)
+            tally.map_record("ep", src_id, existing)
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -4446,6 +4597,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
                 ),
             )
             tally.copied_episode_ids.append(src_id)
+            tally.episode_keys.add(target_agent_id, ep_project_id, ep_channel, summary, cur.lastrowid)
             tally.queue_remote(f"ep:{cur.lastrowid}", summary)
         else:
             tally.seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
@@ -4463,11 +4615,15 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
     did not edit. The import path, which takes content from outside this DB and
     does overwrite, goes through the seam instead.
     """
+    # updated_at rides along like created_at does on the memory (bug-131) and episode
+    # (bug-219) passes, and as the import path keeps it (bug-223): stamping the merge
+    # time made a long-stale profile look current, and deep_stale_profile, which reads
+    # nothing else, stayed silent about it for its whole window.
     rows = await db.execute_fetchall(
-        "SELECT id, user_id, content, project_id FROM profiles WHERE agent_id = ?",
+        "SELECT id, user_id, content, project_id, updated_at FROM profiles WHERE agent_id = ?",
         (source_agent_id,),
     )
-    for src_id, user_id, content, prof_project_id in rows:
+    for src_id, user_id, content, prof_project_id, updated_at in rows:
         if not content:
             continue
         # bug-218: this probe is pure existence on (agent_id, user_id) — profiles have
@@ -4484,8 +4640,8 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
         if not tally.dry_run:
             await db.execute(
                 "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-                " VALUES (?, ?, ?, ?, datetime('now'))",
-                (target_agent_id, prof_project_id, user_id, content),
+                " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                (target_agent_id, prof_project_id, user_id, content, updated_at),
             )
             tally.copied_profile_ids.append(src_id)
         tally.profile_copied = True
@@ -4703,6 +4859,9 @@ async def do_merge_memories(
     # Outside the transaction: no rollback covers this. A preview arrives with
     # an empty queue by construction — see _MergeTally.queue_remote.
     await vector.remote_index_upsert(target_agent_id, tally.remote_items)
+    # The copies are new rows with no blocks or nodes of their own (and a move's
+    # delete trigger has dropped the source's); queue them as store would.
+    await _queue_derived_builds(target_agent_id, tally.remote_items, key)
     move_result = None
     if move_counts is not None:
         # bug-218/bug-222: the agent-level teardown (its calibration, its remote
