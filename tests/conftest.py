@@ -23,14 +23,20 @@ import os
 import tempfile
 
 # Pin a hermetic environment before cpersona is imported anywhere in the suite. conftest
-# is imported by pytest ahead of every test module, so these defaults win the import-order
+# is imported by pytest ahead of every test module, so these values win the import-order
 # race that individual test files would otherwise each have to handle by hand.
-os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "conftest.db"))
-os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
+#
+# Assigned, never setdefault: a value inherited from the shell must not survive. With
+# CPERSONA_DB_PATH exported at a real store (as the operations docs' shell commands
+# encourage), setdefault bound config.DB_PATH to it and the fixtures' unscoped
+# DELETE FROM memories wiped every agent's memories there; an exported
+# CPERSONA_EMBEDDING_MODE=http likewise sent test content to a live endpoint.
+os.environ["CPERSONA_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "conftest.db")
+os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 # Same hermeticity rule for the 2.5.1 operating-context sidecar: a developer's real
 # ~/.cpersona/operating-context.toml must not leak warnings/instructions into the
 # suite. Tests that exercise the feature opt back in per-test via monkeypatch.
-os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
+os.environ["CPERSONA_OPERATING_CONTEXT"] = "off"
 
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
