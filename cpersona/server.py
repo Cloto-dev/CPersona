@@ -631,8 +631,10 @@ async def do_reconstruct_boundary(
         budget=budget,
         lite=lite,
         mode=mode,
-        # What _oc_annotate adds below, so that a mode's token cap counts it too.
-        envelope=_oc_annotate({}, project_id, pid, warning),
+        # What _oc_annotate adds below, and what the ACL guard adds after this
+        # returns (the resolved_agent_id echo), so that a mode's token cap and
+        # used_tokens count them too.
+        envelope={**_oc_annotate({}, project_id, pid, warning), **acl.response_echo()},
         **({"time_cue": time_cue} if time_cue else {}),
     )
     # bug-485: no preview cut here. Heads are already cut where they are quoted --
