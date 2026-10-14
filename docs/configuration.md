@@ -101,6 +101,16 @@ smaller answer. Raise these deliberately rather than waiting for a symptom.
 | `CPERSONA_NORMALIZATION_SCAN_CAP` | `10000` | Rows `deep_unnormalized_content` reads per run. Unicode normalisation cannot be a SQL predicate — SQLite has no NFC function — so this is the check that must read the text to answer at all, and the cap is what keeps that from meaning "read the corpus". Past it the result says `complete: false` rather than letting a floor be read as a total |
 | `CPERSONA_CALIBRATE_MAX_SAMPLE` | `5000` | Hard ceiling on `calibrate_threshold`'s `sample_size`, whatever the caller asks for. It feeds the same O(n²) matrix as the near-duplicate cap and exists to stop an unbounded value from exhausting memory for every agent on the connection, so raise it only as far as the machine can hold (see the measurements above) |
 
+## Export and import
+
+`export_memories` and `import_memories` write and read a file on the server's
+machine, at a path the caller supplies.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_EXPORT_DIR` | *(unset)* | The directory both tools' paths must stay in. When set, a path is accepted only if it resolves, symlinks followed, to this directory or to something under it; a sibling directory whose name merely starts with the same characters is outside it. When unset, only a path with a `..` segment is refused, and with an ACL file both tools then demand access to every agent ([ACL design](ACL_DESIGN.md)) |
+| `CPERSONA_MAX_IMPORT_BYTES` | `104857600` | The largest file `import_memories` reads, in bytes (100 MiB). A larger file is refused before a line of it is imported, with an error that names this variable. `export_memories` has no such cap, so the export of a large corpus, or one written with `include_embeddings=true`, can be larger than an import accepts: raise this before restoring such a file |
+
 ## Remote (HTTP) transport
 
 The default transport is stdio, where the MCP client owns the process and no

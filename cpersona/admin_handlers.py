@@ -3060,6 +3060,41 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     return result
 
 
+# How many per-line messages an import lists before it only counts the rest.
+_IMPORT_ERRORS_SHOWN = 100
+
+
+class _ImportErrors(list):
+    """An import's per-line messages, kept to the first ``_IMPORT_ERRORS_SHOWN``.
+
+    Every bad line used to add one message, and the whole list went back in the
+    response. A file of short lines that are not export records -- a log or a CSV
+    named by mistake, up to the size cap -- then held one string per line in memory
+    and answered with a response some 24 times the size of the file. The first
+    messages say what is wrong with the file; the rest are counted, so the report
+    stays bounded and still says how many lines failed.
+
+    Every handler adds through ``append``, which is why the bound lives here rather
+    than at each of the sites that report a line.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.omitted = 0
+
+    def append(self, message: str) -> None:
+        if len(self) < _IMPORT_ERRORS_SHOWN:
+            super().append(message)
+        else:
+            self.omitted += 1
+
+    def reported(self) -> list[str]:
+        """The messages for the response, with a count of those not listed."""
+        if not self.omitted:
+            return list(self)
+        return [*self, f"{self.omitted} more errors were not listed"]
+
+
 @dataclass
 class _ImportTally:
     """The state one import run threads through its per-record handlers.
@@ -3096,7 +3131,7 @@ class _ImportTally:
     # reported, never refused — see _import_memory_record for why a restore is
     # not the seam that gets to say no.
     future_timestamps: int = 0
-    errors: list[str] = field(default_factory=list)
+    errors: _ImportErrors = field(default_factory=_ImportErrors)
     # bug-091: track the header and the per-type record counts actually present in
     # the file, so a truncated backup (mid-export crash, partial copy) is rejected
     # instead of silently restoring a partial corpus with ok:true.
@@ -3182,7 +3217,7 @@ def _validate_import_preconditions(
         return None, error_response(f"input_path is not a regular file: {confined}")
     if st.st_size > config.MAX_IMPORT_BYTES:
         return None, error_response(
-            f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {confined}"
+            f"input file exceeds CPERSONA_MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {confined}"
         )
     # Snapshot once: a TTL boundary mid-loop must not leave a half-written corpus.
     # bug-079: only gate the WRITE path on no-persist (the bug-048 fix, applied to the
@@ -3666,7 +3701,7 @@ async def do_import_memories(
             raw = f.read(config.MAX_IMPORT_BYTES + 1)
         if len(raw) > config.MAX_IMPORT_BYTES:
             return error_response(
-                f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {input_path}"
+                f"input file exceeds CPERSONA_MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {input_path}"
             )
         # split('\n') rather than splitlines(): exports are '\n'-separated, and
         # splitlines() would also cut on U+2028/U+2029, which are legal unescaped
@@ -3759,7 +3794,7 @@ async def do_import_memories(
             "profile_updated": False,
         }
         if tally.errors:
-            result["errors"] = tally.errors
+            result["errors"] = tally.errors.reported()
         return result
 
     # Outside the transaction, so nothing here is covered by its rollback. A
@@ -3782,7 +3817,7 @@ async def do_import_memories(
     if tally.future_timestamps:
         result["future_timestamps"] = tally.future_timestamps
     if tally.errors:
-        result["errors"] = tally.errors
+        result["errors"] = tally.errors.reported()
     return result
 
 
