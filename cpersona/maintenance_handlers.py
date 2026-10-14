@@ -7,6 +7,7 @@ implementation shared by the MCP tools, the pytest fixtures, and the
 behaviour live there, response envelopes live here.
 """
 
+import contextlib
 import logging
 
 from cpersona import __version__
@@ -377,13 +378,42 @@ async def do_deep_check(
     selected = list(dict.fromkeys(checks)) if checks else list(checks_registry.DEEP_CHECK_NAMES)
     results: dict[str, dict] = {}
 
-    async def _run(db, names: list[str]) -> None:
+    async def _run(db, names: list[str], *, savepoints: bool = False) -> None:
+        if savepoints:
+            # The loop below turns a check's exception into an error entry, so
+            # nothing escapes to transaction()'s rollback, and a repair that raised
+            # part way (short_content deletes in chunks, anonymous_source updates
+            # row by row) used to commit the statements that ran before the fault
+            # under a response that reported only the error. Each check gets its
+            # own savepoint instead, as run_health_checks does since bug-361: one
+            # failed repair is undone while the others in the run still commit.
+            # The outer savepoint is never released -- RELEASE of an outermost
+            # savepoint commits -- so transaction() still owns the end of the run.
+            await db.execute("SAVEPOINT deep_run")
         for name in names:
+            savepoint = f"deep_check_{name}" if savepoints else None
+            if savepoint:
+                await db.execute(f'SAVEPOINT "{savepoint}"')
+            effects = checks_registry.remote_index_effects.get()
+            effects_mark = len(effects) if effects is not None else 0
             try:
                 results[name] = await checks_registry.DEEP_CHECKS[name](db, agent_id, fix)
             except Exception as e:
+                if savepoint:
+                    with contextlib.suppress(Exception):
+                        await db.execute(f'ROLLBACK TO "{savepoint}"')
+                    # The rows this check noted for the remote index are back as they
+                    # were, so its notes go too (bug-539), as in run_health_checks.
+                    if effects is not None:
+                        del effects[effects_mark:]
                 logger.warning("deep check %s crashed: %s", name, e)
                 results[name] = {"error": str(e)}
+            finally:
+                if savepoint:
+                    # ROLLBACK TO keeps the savepoint open; RELEASE pops it on both
+                    # paths. Never the outermost one, so this never commits.
+                    with contextlib.suppress(Exception):
+                        await db.execute(f'RELEASE "{savepoint}"')
 
     # bug-324: only the checks declared fix-capable can write, and the whole
     # registry used to run inside the transaction anyway -- so a fix run held the
@@ -411,7 +441,7 @@ async def do_deep_check(
         token = checks_registry.remote_index_effects.set(remote_effects)
         try:
             async with transaction() as db:
-                await _run(db, writing)
+                await _run(db, writing, savepoints=True)
         finally:
             checks_registry.remote_index_effects.reset(token)
         if remote_effects:

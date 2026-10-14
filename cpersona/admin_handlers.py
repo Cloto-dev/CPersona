@@ -56,6 +56,7 @@ from cpersona.utils import (
     _try_parse_json,
     error_response,
     future_timestamp_issue,
+    json_dumps_finite,
     sanitize_content_with_flag,
     sanitize_profile_with_flag,
 )
@@ -3106,8 +3107,11 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         return
 
     if not tally.dry_run:
-        source = json.dumps(record.get("source", {}))
-        metadata = json.dumps(record.get("metadata", {}))
+        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;
+        # written back as bare tokens they are JSON SQLite rejects (see
+        # json_dumps_finite), so the restore writes null in their place.
+        source = json_dumps_finite(record.get("source", {}))
+        metadata = json_dumps_finite(record.get("metadata", {}))
         # bug-016: carry the project_id / channel γ-axes, the locked
         # flag and the embedding through, and INSERT OR IGNORE so a
         # collision with the v12 dedup UNIQUE index is a counted skip

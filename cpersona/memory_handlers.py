@@ -83,6 +83,7 @@ from cpersona.utils import (
     sanitize_content_with_flag,
     _try_parse_json,
     error_response,
+    json_dumps_finite,
     normalize_source,
 )
 from cpersona.vector import _search_vector
@@ -196,9 +197,12 @@ async def do_store(
     # justify (would corrupt attribution and defeat anonymous_source).
     raw_source = message.get("source", {})
     normalized_source, _mapped = normalize_source(raw_source)
-    source = json.dumps(normalized_source if normalized_source is not None else {})
+    # json_dumps_finite: a NaN / Infinity here would be stored as a bare token
+    # SQLite rejects as JSON, and the invalid_json repair would then blank the
+    # whole object.
+    source = json_dumps_finite(normalized_source if normalized_source is not None else {})
     timestamp = message.get("timestamp", datetime.now(timezone.utc).isoformat())
-    metadata = json.dumps(message.get("metadata", {}))
+    metadata = json_dumps_finite(message.get("metadata", {}))
     project_id = coerce_for_write(project_id)
 
     if not raw_content:

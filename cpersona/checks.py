@@ -103,8 +103,10 @@ from cpersona.database import FTS_TABLE_SQL, SCHEMA_VERSION, connection, release
 from cpersona.utils import (
     _MEMORY_ANNOTATION_PATTERN,
     _MENTION_PATTERN,
+    _parse_timestamp_utc,
     canonical_source_types_sql,
     future_timestamp_boundary,
+    json_dumps_finite,
     normalize_source,
 )
 
@@ -1891,6 +1893,18 @@ async def axis_distribution(db, agent_id: str = "") -> dict:
     return out
 
 
+def _reencode_json_object(raw) -> str:
+    """Valid JSON text for an object column SQLite called invalid: the same object
+    re-encoded when Python's more lenient parser still reads one, else '{}'."""
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError, RecursionError):
+        return "{}"
+    if not isinstance(value, dict):
+        return "{}"
+    return json_dumps_finite(value)
+
+
 async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     # bug-380: no guard around the two counts. One guard over both meant a failure
@@ -1925,13 +1939,30 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
         # check_health(fix=true) must never alter a locked memory (same guard on
         # invalid_timestamp / timestamp_format_drift / invalid_source_type /
         # deep_anonymous_source).
-        await db.execute(
-            f"UPDATE memories SET source = '{{}}' WHERE json_valid(source) = 0 AND locked = 0{iso.and_clause}", iso.params
-        )
-        await db.execute(
-            f"UPDATE memories SET metadata = '{{}}' WHERE json_valid(metadata) = 0 AND locked = 0{iso.and_clause}",
+        #
+        # An object Python can still parse is re-encoded rather than blanked. The
+        # usual case is a bare NaN / Infinity token written by a json.dumps with
+        # allow_nan=True: SQLite rejects the whole text for that one value, and
+        # writing '{}' threw away every other key with it -- the producer
+        # attribution in source, which source_id-scoped recall reads, included.
+        # Anything that does not parse to an object still becomes '{}'; the CASE
+        # keeps that fallback if a re-encoding were ever rejected by SQLite too.
+        bad_rows = await db.execute_fetchall(
+            f"""SELECT id, source, metadata, json_valid(source) = 0, json_valid(metadata) = 0
+                FROM memories
+                WHERE (json_valid(source) = 0 OR json_valid(metadata) = 0)
+                AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+        for row_id, source, metadata, source_bad, metadata_bad in bad_rows:
+            for column, raw, bad in (("source", source, source_bad), ("metadata", metadata, metadata_bad)):
+                if not bad:
+                    continue
+                await db.execute(
+                    f"UPDATE memories SET {column} = CASE WHEN json_valid(?1) THEN ?1 ELSE '{{}}' END "
+                    "WHERE id = ?2 AND locked = 0",
+                    (_reencode_json_object(raw), row_id),
+                )
     return [
         {
             "type": "invalid_json",
@@ -1940,6 +1971,30 @@ async def check_invalid_json(db, agent_id: str, fix: bool) -> list[dict]:
             "repairable": repairable,
         }
     ]
+
+
+def _sqlite_readable_stamp(ts: str) -> str | None:
+    """The instant the package's readers see in ``ts``, spelled so SQLite reads it.
+
+    SQLite's datetime() is stricter than ``datetime.fromisoformat``: it rejects an
+    offset with no colon ('+0900', '+09'), the ISO basic format ('20250102T010000Z')
+    and a comma fraction, all of which ``_parse_timestamp_utc`` -- the parser every
+    scoring and recall path uses -- reads. Such a stamp is not corrupt; only its
+    spelling is foreign to SQL. Returns None when the readers cannot parse it either.
+
+    An aware stamp is converted to the canonical UTC form (the same instant). A naive
+    one keeps its wall-clock reading and stays naive: inventing a zone for it is the
+    fabrication timestamp_format_drift refuses.
+    """
+    if _parse_timestamp_utc(ts) is None:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.isoformat()
+        return parsed.astimezone(datetime.timezone.utc).isoformat()
+    except (ValueError, OverflowError):
+        return None
 
 
 async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
@@ -1952,28 +2007,44 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     )[0][0]
     if bad_ts == 0:
         return []
+    # A stamp SQLite cannot read but the Python readers can still names the
+    # caller's event time, and the created_at copy below would replace that with the
+    # row's insertion time -- a backdated memory would rank as brand new in recall.
+    # Those rows are respelled instead (same instant), and only a stamp nothing can
+    # parse falls back to created_at. The respelled form is checked against SQLite
+    # itself so a row is never counted repairable by a rewrite SQL still rejects.
+    rows = await db.execute_fetchall(
+        f"""SELECT id, timestamp, locked FROM memories
+            WHERE datetime(timestamp) IS NULL AND timestamp != ''{iso.and_clause}""",
+        iso.params,
+    )
+    respell: list[tuple[int, str]] = []
+    for row_id, ts, locked in rows:
+        canon = _sqlite_readable_stamp(ts) if isinstance(ts, str) else None
+        if canon is None or locked:
+            continue
+        if (await db.execute_fetchall("SELECT datetime(?) IS NOT NULL", (canon,)))[0][0]:
+            respell.append((row_id, canon))
+    respell_ids = {row_id for row_id, _canon in respell}
     # Before the repair (it rewrites the very rows this counts), and with the
     # fixer's own locked = 0 / parseable-created_at guards so the two agree.
-    repairable = (
-        await db.execute_fetchall(
-            f"""SELECT COUNT(*) FROM memories
-                WHERE datetime(timestamp) IS NULL AND timestamp != ''
-                AND datetime(created_at) IS NOT NULL
-                AND locked = 0{iso.and_clause}""",
-            iso.params,
-        )
-    )[0][0]
-    if fix:
-        # The coarse index holds each row's build-time datetime(timestamp) and
-        # filters periods by it; a row given a readable stamp here would stay in
-        # no period there. Named before the UPDATE, which is what changes them.
-        retimed = await db.execute_fetchall(
+    fallback_ids = {
+        r[0]
+        for r in await db.execute_fetchall(
             f"""SELECT id FROM memories
                 WHERE datetime(timestamp) IS NULL AND timestamp != ''
                 AND datetime(created_at) IS NOT NULL
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+    }
+    repairable = len(respell_ids | fallback_ids)
+    if fix:
+        # bug-098: locked = 0 on the write as on the scan.
+        for row_id, canon in respell:
+            await db.execute(
+                "UPDATE memories SET timestamp = ? WHERE id = ? AND locked = 0", (canon, row_id)
+            )
         # bug-229: write the CANONICAL AWARE form, not created_at verbatim.
         # created_at is SQLite-native `YYYY-MM-DD HH:MM:SS` (naive) while the
         # write path stores `...T...+00:00`, so copying it minted a `naive`
@@ -1990,9 +2061,13 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+        # The coarse index holds each row's build-time datetime(timestamp) and
+        # filters periods by it; a row given a readable stamp here, respelled or
+        # copied from created_at, would stay in no period there. Both sets were
+        # named above, before the UPDATEs that change them.
         from cpersona import coarse_index
 
-        coarse_index.discard_if_holding([r[0] for r in retimed])
+        coarse_index.discard_if_holding(sorted(respell_ids | fallback_ids))
     return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
 
 
@@ -3620,7 +3695,9 @@ HEALTH_CHECKS: list[Check] = [
     # own created_at) and their predicates are disjoint by construction: a stamp
     # SQLite cannot read is the first one's, a stamp it reads as ahead of the
     # clock is this one's. Ordered so a row that somehow satisfied both would be
-    # repaired into a readable past stamp rather than the other way round.
+    # repaired into a readable past stamp rather than the other way round. It also
+    # lets this check see a future stamp invalid_timestamp has just respelled from
+    # a form only Python reads ('+0900') into one SQL compares.
     Check("future_timestamp", "warn", True, check_future_timestamp),
     # bug-208: info, not warn — since bug-213 the read paths score these rows by
     # created_at anyway; the fix materialises that fallback for direct readers.

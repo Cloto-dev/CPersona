@@ -427,6 +427,33 @@ def _try_parse_json(s: str) -> dict:
         return {}
 
 
+def _finite_json_value(value):
+    """``value`` with every NaN / +-Infinity float replaced by None (JSON null)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _finite_json_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite_json_value(v) for v in value]
+    return value
+
+
+def json_dumps_finite(value) -> str:
+    """``json.dumps`` for a JSON column: non-finite floats are written as null.
+
+    The default ``allow_nan=True`` writes them as bare ``NaN`` / ``Infinity``
+    tokens, which RFC 8259 does not admit and SQLite's json_valid() rejects. A row
+    stored that way is then flagged by ``invalid_json``, whose repair can no
+    longer keep the object, and strict JSON readers of an export cannot parse it.
+    null is the value JSON has for a number it cannot represent. Finite input
+    serialises byte-for-byte as before.
+    """
+    try:
+        return json.dumps(value, allow_nan=False)
+    except ValueError:
+        return json.dumps(_finite_json_value(value), allow_nan=False)
+
+
 # Canonical source contract (2.5.2).
 # The wire shape is {"type": <"User"|"Agent"|"System">, "id": str, "name": str}.
 # ~75 % of production memories carried legacy variants that survived a write path
