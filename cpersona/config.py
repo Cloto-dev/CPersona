@@ -540,6 +540,17 @@ def validate_content_caps() -> None:
 # — bound what arrives from outside, detect what is being moved within.
 MAX_METADATA_LENGTH = _parse_int("CPERSONA_MAX_METADATA_LENGTH", 8000)
 
+# The fields store takes beside the payload. The caller's id, channel and
+# project_id are keys: each is written into the row and into the dedup indexes, so
+# an unbounded one cost several times its own size per call while the content
+# beside it was capped. A timestamp is one ISO-8601 instant, at most about 32
+# characters spelled out. Like the JSON sidecars, neither is cut to fit -- a
+# shortened key names a different bucket or row -- so a longer value is refused.
+# Fixed rather than configurable: both are published as the schema's maxLength,
+# the same 256 the session key carries.
+MAX_KEY_FIELD_LENGTH = 256
+MAX_TIMESTAMP_LENGTH = 64
+
 # The caps above are the last line, not the first: every one of them is applied
 # by a tool handler, and a handler runs only after the ASGI body has been
 # received in full and json.loads has built the whole document. Measured on this

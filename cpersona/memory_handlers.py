@@ -54,8 +54,10 @@ from cpersona.config import (
     EPISODE_DECAY_RATE,
     EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
+    MAX_KEY_FIELD_LENGTH,
     MAX_MEMORIES,
     MAX_METADATA_LENGTH,
+    MAX_TIMESTAMP_LENGTH,
     PRIOR_AGE_ANCHOR,
     PRIOR_AGE_FLOOR,
     PRIOR_AGE_RATE,
@@ -156,6 +158,18 @@ def _store_rejected(reason: str) -> dict:
     return {"ok": False, "result": "rejected", "reason": reason}
 
 
+def _key_field_too_long(**fields: object) -> str | None:
+    """The refusal for the first key field longer than MAX_KEY_FIELD_LENGTH, else None.
+
+    Shared by store and archive_episode so both name the field and the bound the
+    same way. A value that is not a string is left to the caller's other checks.
+    """
+    for name, value in fields.items():
+        if isinstance(value, str) and len(value) > MAX_KEY_FIELD_LENGTH:
+            return f"{name} too long ({len(value)} chars, max {MAX_KEY_FIELD_LENGTH})"
+    return None
+
+
 def _store_skipped(reason: str, mem_id: int | None = None) -> dict:
     """Nothing was written, and that is the correct outcome for this request."""
     body = {"ok": True, "result": "skipped", "reason": reason}
@@ -226,6 +240,17 @@ async def do_store(
 
     if not raw_content:
         return _store_rejected("empty content")
+
+    # The key fields are bounded like the JSON sidecars below, and refused rather
+    # than cut: a shortened id, channel or project_id names a different row or
+    # bucket. See MAX_KEY_FIELD_LENGTH for why they need a bound at all.
+    too_long = _key_field_too_long(id=msg_id, channel=channel, project_id=project_id)
+    if too_long:
+        return _store_rejected(too_long)
+    # Only the length is refused here. A stamp nothing parses is still stored and
+    # left to the invalid_timestamp check, which owns those rows.
+    if isinstance(timestamp, str) and len(timestamp) > MAX_TIMESTAMP_LENGTH:
+        return _store_rejected(f"timestamp too long ({len(timestamp)} chars, max {MAX_TIMESTAMP_LENGTH})")
 
     # audit C12: content has been capped since 2.1, its JSON sidecars never were.
     # A field that cannot be truncated (valid JSON has no valid prefix) and is not
@@ -4187,7 +4212,11 @@ async def _search_memories_keyword(
         # A period is measured on the records' own time, so its newest records are
         # newest by that time (bug-502). created_at is when a row was stored, which an
         # import leaves unrelated to the period, and at one-second resolution ties.
-        newest_first = "datetime(timestamp) DESC, id ASC" if window is not None else "created_at DESC"
+        # Without a period this is the "recent memories" listing, ordered by when rows
+        # were stored. A batch stored within one second ties on created_at, and the
+        # rowid breaks the tie the same way: the row stored last comes first, so the
+        # limit keeps the newest rows of that second rather than its earliest.
+        newest_first = "datetime(timestamp) DESC, id ASC" if window is not None else "created_at DESC, id DESC"
         rows = await db.execute_fetchall(
             f"""SELECT id, msg_id, content, source, timestamp
                FROM memories
@@ -4252,7 +4281,7 @@ async def _search_memories_keyword(
            FROM memories
            WHERE {iso.clause}{src_clause_bare}
            AND {like_clause}
-           ORDER BY created_at DESC
+           ORDER BY created_at DESC, id DESC
            LIMIT ?""",
         (*iso.params, *src_params_bare, *patterns, scan_limit),
     )
@@ -4299,6 +4328,10 @@ async def do_archive_episode(
             "episode_id": None,
             "error": "summary is required to archive an episode",
         }
+    # The same bound store applies to these keys, for the same reason.
+    too_long = _key_field_too_long(channel=channel, project_id=project_id)
+    if too_long:
+        return {"ok": False, "episode_id": None, "error": too_long}
 
     row = await _prepare_episode_row(
         agent_id, history, summary, keywords, resolved, project_id, channel

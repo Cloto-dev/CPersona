@@ -1049,6 +1049,7 @@ registry.auto_tool(
             },
             "id": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": "Optional caller id: a later store with the same id in the same project is skipped as a duplicate.",
             },
             "source": {
@@ -1082,6 +1083,7 @@ registry.auto_tool(
             },
             "timestamp": {
                 "type": "string",
+                "maxLength": config.MAX_TIMESTAMP_LENGTH,
                 "description": "ISO-8601 with an offset, e.g. '2026-07-22T12:00:00+00:00'. Default: now.",
             },
             "metadata": {
@@ -1106,23 +1108,25 @@ registry.auto_tool(
                 "description": "The older form of content, id, source, timestamp and metadata.",
                 "properties": {
                     "content": {"type": "string"},
-                    "id": {"type": "string"},
+                    "id": {"type": "string", "maxLength": config.MAX_KEY_FIELD_LENGTH},
                     "source": {
                         # bug-398: the shapes the write seam folds. bug-140: null and
                         # {} converge at the write seam; recall echoes {} for both.
                         "type": ["object", "string", "null"],
                         "description": "Also a bare 'user' / 'assistant' word, or null, stored as the anonymous {}.",
                     },
-                    "timestamp": {"type": "string"},
+                    "timestamp": {"type": "string", "maxLength": config.MAX_TIMESTAMP_LENGTH},
                     "metadata": {"type": "object"},
                 },
             },
             "channel": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": "Memory channel for context separation (e.g. 'chat'). Default: '' (shared).",
             },
             "project_id": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": (
                     "Isolation bucket; omit or '' for the global pool (a recall in 'X' reads "
                     "'X' and the global pool). '@auto' resolves this agent's default from the "
@@ -1934,10 +1938,12 @@ registry.auto_tool(
             },
             "project_id": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool. " + _AUTO_PROJECT_ID_CLAUSE,
             },
             "channel": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": (
                     "v2.4.22 conversation-channel tag (e.g. a Discord channel id). "
                     "Default '' (= unscoped). Channel-scoped recall returns episodes "
