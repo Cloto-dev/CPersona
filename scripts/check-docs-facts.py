@@ -49,6 +49,7 @@ Run from the repository root (CI does): `uv run python scripts/check-docs-facts.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -250,6 +251,10 @@ def parsed_env_defaults() -> dict[str, str]:
             note(m.group(1), m.group(2), where)
         for m in re.finditer(r'os\.environ\.get\("(CPERSONA_\w+)"\s*,\s*"([^"]*)"\)', text):
             note(m.group(1), m.group(2), where)
+        # An on/off setting: the default is a literal True or False, documented as
+        # `true` / `false`.
+        for m in re.finditer(r'\b_?parse_bool\(\s*"(CPERSONA_\w+)",\s*(True|False)\b', text):
+            note(m.group(1), m.group(2).lower(), where)
         # A word-valued setting: the default is the second argument, and the tuple
         # after it is the closed set of accepted values.
         for m in re.finditer(r'_parse_choice\(\s*"(CPERSONA_\w+)",\s*"([^"]*)"', text):
@@ -264,6 +269,9 @@ def parsed_env_defaults() -> dict[str, str]:
         ):
             note(m.group(1), m.group(2), where)
 
+    for var, default in measured_computed_defaults(set(found)).items():
+        note(var, default, "config.py (measured)")
+
     defaults: dict[str, str] = {}
     for var, by_default in found.items():
         if len(by_default) > 1:
@@ -274,6 +282,58 @@ def parsed_env_defaults() -> dict[str, str]:
             )
         defaults[var] = next(iter(by_default))
     return defaults
+
+
+# A top-level config.py statement: the assigned name, then everything up to the next
+# line that starts a statement of its own (continuation lines are indented or close
+# a bracket), or the end of the file.
+_CONFIG_STATEMENT = re.compile(r"^([A-Z][A-Z0-9_]*) = (.*?)(?=^[^\s)\]]|\Z)", re.M | re.S)
+_CONFIG_READ = re.compile(r'\b_parse_(?:int|float|bool)\(\s*"(CPERSONA_\w+)"')
+
+
+def measured_computed_defaults(parsed: set[str]) -> dict[str, str]:
+    """{VAR: default} for the config.py settings whose default is computed.
+
+    Some defaults follow another setting -- the tail quote size follows a lower
+    quote size, the budgets follow the preview tier -- so the call names an
+    expression, not a literal, and no static shape reads it. What a reader is
+    told is the value with nothing set, so that is what is measured: config.py
+    is imported in a fresh process with every CPERSONA_* variable removed, and
+    the module attribute each such read assigns is read back.
+    """
+    text = (ROOT / "cpersona" / "config.py").read_text()
+    names: dict[str, str] = {}
+    for m in _CONFIG_STATEMENT.finditer(text):
+        read = _CONFIG_READ.search(m.group(2))
+        if read and read.group(1) not in parsed:
+            names[m.group(1)] = read.group(1)
+    if not names:
+        return {}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CPERSONA_")}
+    env["PYTHONPATH"] = str(ROOT)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json, sys; from cpersona import config; "
+            "print(json.dumps({n: getattr(config, n) for n in sys.argv[1:]}))",
+            *names,
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=ROOT,
+        check=False,
+    )
+    if proc.returncode != 0:
+        fail(f"config.py: could not measure the computed defaults ({proc.stderr.strip()[-300:]})")
+        return {}
+    values = json.loads(proc.stdout.strip().splitlines()[-1])
+    out: dict[str, str] = {}
+    for name, var in names.items():
+        value = values[name]
+        out[var] = ("true" if value else "false") if isinstance(value, bool) else str(value)
+    return out
 
 
 def measured_volatile_stats() -> dict[str, float]:

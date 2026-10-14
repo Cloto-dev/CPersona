@@ -50,7 +50,11 @@ _TRUE_WORDS = ("true", "1", "yes", "on")
 _FALSE_WORDS = ("false", "0", "no", "off")
 
 
-def _parse_bool(env_key: str, default: bool) -> bool:
+def _parse_bool(env_key: str, default: bool, unreadable: bool | None = None) -> bool:
+    """The setting as on or off. ``unreadable`` is what a value that is neither
+    answer means, when that is not the default: a switch whose "on" opens an
+    outbound connection reads an unreadable value as off, because the operator
+    who wrote one was trying to say something other than the default."""
     raw = os.environ.get(env_key)
     if raw is None or raw == "":
         return default
@@ -59,13 +63,14 @@ def _parse_bool(env_key: str, default: bool) -> bool:
         return True
     if val in _FALSE_WORDS:
         return False
+    fallback = default if unreadable is None else unreadable
     logger.warning(
-        "invalid value for %s=%r; expected true/false (or 1/0, yes/no, on/off), using default %r",
+        "invalid value for %s=%r; expected true/false (or 1/0, yes/no, on/off), using %r",
         env_key,
         raw,
-        "true" if default else "false",
+        "true" if fallback else "false",
     )
-    return default
+    return fallback
 
 
 # An optional override (unset means "no override") has no number to fall back to:
@@ -809,8 +814,10 @@ TASK_QUEUE_ENABLED = _parse_bool("CPERSONA_TASK_QUEUE_ENABLED", True)
 # on any surface, and check_update answers `state=disabled`. That is the switch
 # for an air-gapped or egress-controlled deployment, and for an operator who
 # wants no outbound connection they did not ask for. Updating is never
-# automatic either way.
-UPDATE_CHECK_ENABLED = _parse_bool("CPERSONA_UPDATE_CHECK", True)
+# automatic either way. A value that is neither answer turns it off: before the
+# flag accepted `0` / `no` / `off`, every value but `true` was off, and an
+# operator who wrote `disabled` to stop the request must not start sending it.
+UPDATE_CHECK_ENABLED = _parse_bool("CPERSONA_UPDATE_CHECK", True, unreadable=False)
 # How long a fetched verdict stays usable. A release is not news twice a day,
 # and the sidecar makes a restart loop cost one request rather than one per
 # start.

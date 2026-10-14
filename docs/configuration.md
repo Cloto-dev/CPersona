@@ -4,7 +4,8 @@
 > sensible defaults. This page is the canonical reference; the README keeps
 > only the quick-start subset. An on/off setting accepts `true`, `1`, `yes` or
 > `on` and `false`, `0`, `no` or `off`, in any case; an empty value is unset, and
-> any other value keeps the documented default and logs a warning.
+> any other value keeps the documented default and logs a warning (except
+> `CPERSONA_UPDATE_CHECK`, which such a value turns off).
 
 ## Core settings
 
@@ -41,7 +42,7 @@
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | Result sets smaller than this are never autocut. Autocut fires on similarity-scale signals — under confidence ordering (`CPERSONA_CONFIDENCE_ORDERING=legacy`), or on the homogeneous raw-cosine list `cascade` produces — and is deliberately inert under `rsf`/`rrf` ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)), so the fusion mode decides whether this knob does anything |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | The post-fusion quality gate. Disabling it is a last resort: filtering falls back to the pool-size heuristic, which is coarser but still rejects weak matches — what you lose is the operating point measured for this corpus |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | Attach an `advisory` to recall responses while embeddings are unavailable ([runbook](operations.md#detecting-a-dead-embedding-server)) |
-| `CPERSONA_UPDATE_CHECK` | `true` | Check pypi.org once per process start for a newer — or withdrawn — release of this server, and report it through `recall` / `check_health` / `check_update` ([what it sends](architecture.md#transports)). `false` disables the feature entirely: no request, no cache file, no notice. Updating is never automatic either way |
+| `CPERSONA_UPDATE_CHECK` | `true` | Check pypi.org once per process start for a newer — or withdrawn — release of this server, and report it through `recall` / `check_health` / `check_update` ([what it sends](architecture.md#transports)). `false` disables the feature entirely: no request, no cache file, no notice. A value that is neither on nor off disables it too, with a warning, rather than taking the default as other on/off settings do. Updating is never automatic either way |
 | `CPERSONA_UPDATE_CHECK_INTERVAL_SECONDS` | `86400` | How long that verdict stays usable, cached in `update-check.json` beside the database — a restart inside the window makes no request |
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | Episode boundary penalty ([contract §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | Penalty decay rate per hour before the boundary |

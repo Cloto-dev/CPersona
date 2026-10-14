@@ -5,7 +5,8 @@
 > **対象: CPersona {{ version_line }}。** 設定はすべて環境変数で、妥当な既定値を持ちます。
 > このページが正本で、README は quick start に必要な部分集合だけを持ちます。
 > on/off の設定は `true`・`1`・`yes`・`on` と `false`・`0`・`no`・`off` を大文字小文字を
-> 問わず受け付けます。空の値は未設定として扱い、それ以外の値は文書の既定値のまま警告を記録します。
+> 問わず受け付けます。空の値は未設定として扱い、それ以外の値は文書の既定値のまま警告を記録します
+> (`CPERSONA_UPDATE_CHECK` だけは、そのような値で off になります)。
 >
 > **翻訳について**: 正本は英語版です。変数名・既定値・型は原文のまま保持して
 > います (訳すと設定できなくなるため)。
@@ -45,7 +46,7 @@
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | この件数未満の結果集合は autocut されません。autocut は類似度スケールのシグナル — confidence による並べ替えの下 (`CPERSONA_CONFIDENCE_ORDERING=legacy`)、あるいは `cascade` が作る生 cosine だけの均質なリスト — に対して発火し、`rsf`/`rrf` では意図的に不活性です ([契約 §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals))。したがってこのつまみが働くかどうかを決めるのは融合モードです |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | 融合後の品質ゲート。無効化は最終手段です: フィルタはプール規模のヒューリスティックにフォールバックし、粗くはなりますが弱い一致は依然として弾かれます — 失うのはこのコーパスに対して測定された動作点です |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | 埋め込みが利用不能な間、recall 応答に `advisory` を付ける ([runbook](operations.md#detecting-a-dead-embedding-server)) |
-| `CPERSONA_UPDATE_CHECK` | `true` | プロセス起動ごとに 1 回 pypi.org を参照し、このサーバーの新しい — あるいは撤回された — リリースを検出して `recall` / `check_health` / `check_update` で報告する ([何を送るか](architecture.md#transports))。`false` で機能全体を無効化します: リクエストもキャッシュファイルも通知もありません。どちらの設定でも更新が自動で行われることはありません |
+| `CPERSONA_UPDATE_CHECK` | `true` | プロセス起動ごとに 1 回 pypi.org を参照し、このサーバーの新しい — あるいは撤回された — リリースを検出して `recall` / `check_health` / `check_update` で報告する ([何を送るか](architecture.md#transports))。`false` で機能全体を無効化します: リクエストもキャッシュファイルも通知もありません。on とも off とも読めない値も、他の on/off の設定のように既定値を取らず、警告を記録して無効化します。どちらの設定でも更新が自動で行われることはありません |
 | `CPERSONA_UPDATE_CHECK_INTERVAL_SECONDS` | `86400` | その判定が有効な期間。データベースの隣の `update-check.json` にキャッシュされ、この時間内の再起動ではリクエストが発生しません |
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | エピソード境界ペナルティ ([契約 §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | 境界より前の記憶に対する 1 時間あたりの減衰率 |

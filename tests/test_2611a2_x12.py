@@ -226,11 +226,17 @@ def test_the_usual_spellings_of_false_are_false(monkeypatch, fresh_config, var, 
     assert getattr(cfg, attr) is False, f"{var}={raw!r} was read as on"
 
 
+# The switches an unreadable value turns off rather than leaving at the default:
+# on, they open an outbound connection (tests/test_2611a2_x17.py).
+_OFF_WHEN_UNREADABLE = {"CPERSONA_UPDATE_CHECK"}
+
+
 @pytest.mark.parametrize("var, attr, default", _FLAGS, ids=_FLAG_IDS)
 def test_an_unrecognised_value_keeps_the_default_and_warns(monkeypatch, fresh_config, caplog, var, attr, default):
+    expected = False if var in _OFF_WHEN_UNREADABLE else default
     with caplog.at_level("WARNING"):
         cfg = _reload(monkeypatch, **{var: "enabled"})
-    assert getattr(cfg, attr) is default, f"{var}=enabled did not keep the documented default"
+    assert getattr(cfg, attr) is expected, f"{var}=enabled did not read as {expected}"
     assert _warned(caplog, var), f"{var}=enabled was read without a warning"
 
 
