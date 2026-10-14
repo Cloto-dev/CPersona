@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 # Rows per remote /remove or /index request, the width the other bulk remote posts use.
 _REMOTE_SYNC_CHUNK = 128
 
+# The two NULL-embedding checks and the table each one repairs.
+_NULL_EMBEDDING_TABLES = (("null_embedding", "memories"), ("null_episode_embedding", "episodes"))
+
 
 async def _sync_remote_index(effects: list) -> None:
     """Post a committed repair run's deletes and rewrites to the remote index (bug-539).
@@ -126,11 +129,30 @@ async def do_check_health(
     if "embedding_model" in checks_run:
         await generation.refresh()
 
+    # The NULL-embedding repair embeds and writes only the tables whose check the caller
+    # selected. `checks` runs a subset, and a run scoped to one unrelated check used to
+    # send up to REEMBED_ROW_CAP rows per table to the backend (twice, with the second
+    # pass below) and write their vectors without a word in its issues.
+    reembed_tables = [table for check, table in _NULL_EMBEDDING_TABLES if check in checks_run]
+
     embedding_cache = None
+    backend_answered = False
     if fix:
-        async with connection() as db:
-            embedding_cache = await checks_registry.prefetch_null_embeddings(db, agent_id)
+        # The probe goes first so the prefetch can act on it: a probe that reached the
+        # backend and got a vector back outranks a fault latched earlier, and without it
+        # the prefetch skipped every NULL row of a backend that had just been restarted.
         expected_dim, reached_backend = await checks_registry.probe_embedding_dim()
+        backend_answered = bool(reached_backend and expected_dim)
+        if reembed_tables:
+            async with connection() as db:
+                embedding_cache = await checks_registry.prefetch_null_embeddings(
+                    db,
+                    agent_id,
+                    caps={table: checks_registry.REEMBED_ROW_CAP for table in reembed_tables},
+                    backend_answered=backend_answered,
+                )
+        else:
+            embedding_cache = {"memories": {}, "episodes": {}}
         embedding_cache["expected_dim"] = expected_dim
         # bug-248: the dimension and the liveness it used to imply are separate facts. A
         # probe served from the embedding client's cache returns the right dimension
@@ -218,12 +240,35 @@ async def do_check_health(
     # under a short transaction with the text revalidated inside the UPDATE itself
     # (bug-077), so a single fix run still converges without ever holding the lock
     # across HTTP.
-    if fix and vector._embedding_client:
+    #
+    # Only the selected tables, and only what the locked run left of the per-run cap:
+    # a fresh REEMBED_ROW_CAP here doubled the documented bound on a large backlog. What
+    # this pass writes is added to the finding's `re_embedded`, which is the repair's
+    # reported outcome; left out, these writes were reported nowhere.
+    if fix and vector._embedding_client and reembed_tables:
+        findings_by_table = {
+            table: next((i for i in issues if i.get("check") == check), None)
+            for check, table in _NULL_EMBEDDING_TABLES
+            if table in reembed_tables
+        }
+        caps = {
+            table: max(0, checks_registry.REEMBED_ROW_CAP - ((finding or {}).get("re_embedded") or 0))
+            for table, finding in findings_by_table.items()
+        }
         async with connection() as db:
-            second_pass = await checks_registry.prefetch_null_embeddings(db, agent_id)
+            second_pass = await checks_registry.prefetch_null_embeddings(
+                db, agent_id, caps=caps, backend_answered=backend_answered
+            )
         if second_pass["memories"] or second_pass["episodes"]:
             async with transaction() as db:
-                await checks_registry.apply_embedding_cache(db, second_pass)
+                for table, finding in findings_by_table.items():
+                    if not second_pass[table]:
+                        continue
+                    applied = await checks_registry.apply_embedding_cache(
+                        db, {"label": second_pass.get("label", ""), table: second_pass[table]}
+                    )
+                    if finding is not None and "re_embedded" in finding:
+                        finding["re_embedded"] += applied
 
     # bug-059: after a fix run, re-derive status/severity_summary from the RESIDUAL
     # state (read-only, post-commit) rather than from the issues that were FOUND.
@@ -249,10 +294,20 @@ async def do_check_health(
     # this report-only scan is the one bug-254 removed. (fts_integrity is not
     # part of the split at all: detection and repair stay atomic under the lock,
     # see the dispatch above.)
+    #
+    # The residual run is handed this run's probe result and nothing else. Without it,
+    # check_embedding_backend could see a dead backend only through a latched fault, and
+    # one failed probe does not latch one: the issues listed the unreachable warn while
+    # the verdict counted no warn and said healthy. The rest of the prefetch stays out:
+    # the node and block scans were taken before the repairs, so they are not the residue.
     if fix:
+        residual_cache = {
+            "expected_dim": embedding_cache["expected_dim"],
+            "dim_probe_reached_backend": embedding_cache["dim_probe_reached_backend"],
+        }
         async with connection() as db:
             _residual_issues, severity_summary = await checks_registry.run_health_checks(
-                db, agent_id=agent_id, fix=False, checks=checks
+                db, agent_id=agent_id, fix=False, checks=checks, embedding_cache=residual_cache
             )
 
     iso = isolation_where(agent_id=agent_id or None)

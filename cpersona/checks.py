@@ -755,15 +755,18 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
     - **unreachable** — ``warn``. Configured and not answering. Reads stay correct, so it
       is not ``critical``; it was invisible, which is why it is here.
     - **not probed** — ``info``. Liveness was not tested on this run, for either of two
-      reasons the finding names in ``reason``. Under ``fix=False`` nothing calls the
-      backend at all. Under ``fix=True`` the probe can be served from the embedding
+      reasons the finding names in ``reason``. Under ``fix=False`` this check is handed
+      no probe result: the run may still contact the backend (the dimension check embeds
+      a probe text, the model check asks for the backend's identity), but none of those
+      outcomes is read as liveness here. Under ``fix=True`` the probe can be served from the embedding
       client's cache: it embeds a constant, so it is the most cache-warm key in the
       process, and a cached vector carries the right dimension without a request leaving
       it (bug-248). Reading that number as an answer let a dead backend report as
       connected — this check being answered by the very silence it was built to remove.
       Saying nothing in either case would re-create that silence.
     - **connected** — no finding, the same way every other check reports "nothing wrong".
-      Claimed only for a probe that reached the backend.
+      Claimed only for a probe that reached the backend, and then it outranks a fault
+      latched earlier: the probe is this run's answer, the latch an older one.
 
     **No backend configured is not reported here**, and that is a decision rather than an
     omission. It is the one state that was never confusable with "the server is up" —
@@ -787,6 +790,12 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
 
     if probed is None and embedding_cache is not None:
         unreachable = True
+    elif embedding_cache is not None and reached_backend:
+        # This run's own probe went out and a vector came back: the backend answers now.
+        # A fault latched earlier is older evidence than that, and reading it here
+        # reported a restarted backend as down on every re-run, so the runbook's
+        # "re-run this check to confirm recovery" could never be satisfied.
+        unreachable = False
     else:
         # Nothing probed on this run. A fault latched by a recall is still evidence.
         unreachable = health.is_faulted()
@@ -819,7 +828,7 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
 
     if embedding_cache is None or not reached_backend:
         # bug-248: two ways for liveness to go untested, and the third state already
-        # existed for exactly this. Under fix=False nothing calls the backend. Under
+        # existed for exactly this. Under fix=False no probe result is handed in. Under
         # fix=True the call can be served from the client's embed cache, which returns
         # the right dimension without reaching the endpoint — that used to fall through
         # to "connected", so the check built to remove this silence was answered by it.
@@ -838,7 +847,8 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
                     )
                     if from_cache
                     else (
-                        "liveness was not tested on this run — it is probed under fix=true. "
+                        "liveness is not judged on a report-only run — only a fix=true "
+                        "run reads its probe as liveness evidence. "
                         "A finding-free result here is not evidence the backend is up"
                     )
                 ),
@@ -848,7 +858,9 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
     return []
 
 
-async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
+async def prefetch_null_embeddings(
+    db, agent_id: str = "", *, caps: dict[str, int] | None = None, backend_answered: bool = False
+) -> dict:
     """Pre-compute embeddings for NULL-embedding memory/episode rows OUTSIDE any write
     lock (bug-072). do_check_health calls this before taking the shared write lock so the
     batched embedding HTTP calls do not stall every other writer — do_store, the queue
@@ -857,18 +869,33 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     text the blob was computed from rides along so the write path can refuse to attach it
     to changed content (bug-077), and ``label`` is the ``embedding_model`` the blobs are
     written with. Empty tables and no label when there is no embedding client (the fix
-    loop then no-ops just as before)."""
+    loop then no-ops just as before).
+
+    ``caps`` maps a table to the most rows to embed from it; a table it leaves out is
+    not read at all. None is both tables at REEMBED_ROW_CAP. do_check_health uses it to
+    embed only the tables whose null-embedding check the caller selected, and to keep
+    its second pass inside what is left of the per-run cap.
+
+    ``backend_answered`` says a probe on this same run reached the backend and got a
+    vector back. A latched fault is then older evidence than that probe, and skipping
+    on it would leave a restarted backend's NULL rows unrepaired by the very run that
+    just watched it answer."""
     out: dict = {"memories": {}, "episodes": {}}
     if not vector._embedding_client:
         return out
     # bug-129: do not re-probe a backend already latched as faulted by recall.
-    if health.is_faulted():
+    if health.is_faulted() and not backend_answered:
+        return out
+    if caps is None:
+        caps = {"memories": REEMBED_ROW_CAP, "episodes": REEMBED_ROW_CAP}
+    if not any(n > 0 for n in caps.values()):
+        # Nothing to embed, so not even the label lookup goes out.
         return out
     # The label the blobs below are written with, learned before they are computed
     # and applied with them under the lock (no network there).
     out["label"] = await generation.record_label()
     iso = isolation_where(agent_id=agent_id or None)
-    tables = [("memories", "content"), ("episodes", "summary")]
+    tables = [(t, col) for t, col in (("memories", "content"), ("episodes", "summary")) if caps.get(t, 0) > 0]
     if not _blobs_are_stored():
         # bug-182: a memory BLOB is not written in this configuration, so nothing
         # downstream may apply one — computing them is one embed round-trip per
@@ -877,7 +904,7 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
         tables = [t for t in tables if t[0] != "memories"]
     for table, text_col in tables:
         rows = await db.execute_fetchall(
-            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, REEMBED_ROW_CAP)
+            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, caps[table])
         )
         for start in range(0, len(rows), EMBED_BATCH_SIZE):
             chunk = rows[start : start + EMBED_BATCH_SIZE]

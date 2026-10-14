@@ -2403,10 +2403,10 @@ registry.auto_tool(
     # was reported that way to someone whose import had silently embedded nothing.
     "Read it as a verdict on what is IN the database, not on whether the "
     "pipeline that fills it is working: a corpus whose every embedding is NULL scores healthy while "
-    "semantic recall is dead. Nothing contacts the embedding backend unless fix=true, so "
-    "on a report-only run the liveness findings cannot appear and their absence is not "
-    "evidence the backend answered; the `null_embedding` finding says why its repair "
-    "cannot run. "
+    "semantic recall is dead. Only fix=true judges the backend's liveness: a report-only "
+    "run still contacts it (a probe embed, its identity, token counts) but reads none of "
+    "that as liveness, so a quiet report-only run is not evidence the backend answered; "
+    "the `null_embedding` finding says why its repair cannot run. "
     # bug-230: an unrecognised name used to select nothing and answer 'healthy'.
     "`checks` runs a subset: an unknown name is rejected (ok=false), and every response "
     "echoes `checks_run`. "

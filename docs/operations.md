@@ -112,10 +112,15 @@ the calling agent should be instructed to watch the first.
    still *skips* rather than fails when the endpoint is unreachable, but the
    endpoint itself is now watched: `embedding_backend` reports `warn`, with
    the failing call's own evidence, when a configured backend does not answer.
-4. **Read `not_probed` for what it is.** `check_health(fix=false)` makes no
-   network call, so it cannot test liveness. It says so — `embedding_backend`
-   returns `not_probed` — rather than leaving you to infer health from
-   silence.
+   When the run's own probe reaches the backend and gets a vector back, that
+   answer outranks a fault latched earlier: a restarted backend reads as
+   connected, and its NULL rows are re-embedded on the same run.
+4. **Read `not_probed` for what it is.** `check_health(fix=false)` does not
+   judge liveness. It can still contact the backend — the dimension check
+   embeds a probe text, the model check asks the backend for its identity,
+   and the node scan asks for token counts — but it reads none of those
+   calls as liveness evidence. It says so — `embedding_backend` returns
+   `not_probed` — rather than leaving you to infer health from silence.
 
     A `fix=true` run returns it too when the probe was answered from the
     embedding client's five-minute embed cache: the dimension comes back

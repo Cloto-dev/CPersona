@@ -516,7 +516,9 @@ Two conditions produce it, and they are different conversations:
 Signals for when you are looking rather than being told: `store` responses
 carry `embedded`, and `check_health(agent_id, fix=true)` reports
 `embedding_backend_unreachable` with that same evidence. `check_health(fix=false)`
-makes no network call and says so (`embedding_backend_not_probed`) — a quiet
+does not judge liveness — it may still contact the backend (a probe embed, its
+identity, token counts) but reads none of it as liveness — and says so
+(`embedding_backend_not_probed`) — a quiet
 `fix=false` run is not evidence that the backend is up. A `fix=true` run reports
 the same finding when its probe was answered from the client's five-minute embed
 cache, because that call never reached the endpoint either; `reason` tells the two
