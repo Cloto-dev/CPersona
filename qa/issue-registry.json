@@ -11602,7 +11602,7 @@
     },
     {
       "id": "bug-783",
-      "summary": "(LOW) A lone UTF-16 surrogate (half of a pair, JSON `\"\\udfff\"`) is refused by store, archive_episode, recall, reconstruct and get_contents (bug-633), but the other handlers still bind it and raise from SQLite with a bare error: update_memory, update_profile, the list tools, delete/lock/unlock, import_memories, declare_associations and traverse.",
+      "summary": "(LOW) A lone UTF-16 surrogate (half of a pair, such as U+DFFF sent on its own) is refused by store, archive_episode, recall, reconstruct and get_contents (bug-633), but the other handlers still bind it and raise from SQLite with a bare error: update_memory, update_profile, the list tools, delete/lock/unlock, import_memories, declare_associations and traverse.",
       "severity": "LOW",
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",

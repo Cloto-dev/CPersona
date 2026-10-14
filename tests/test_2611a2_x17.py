@@ -9,12 +9,16 @@
                  setting whose default is computed from another one, with the
                  configuration page, instead of failing the row as compared with
                  nothing.
+  registry echo  No registry summary holds an escape that the verifier's
+                 `echo -e` turns into bytes that are not UTF-8 on Linux bash.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -145,3 +149,39 @@ def test_a_wrong_on_off_default_on_the_page_is_a_failure(cdf):
     defaults["CPERSONA_UPDATE_CHECK"] = "false"
     cdf.check_env_tables(defaults)
     assert any("CPERSONA_UPDATE_CHECK" in f and "`true` != package default `false`" in f for f in cdf.failures)
+
+
+# ---------------------------------------------------------------------------
+# Registry: a summary must survive the verifier's `echo -e`
+# ---------------------------------------------------------------------------
+
+# scripts/verify-issues.sh prints every summary with `echo -e`. bash 4.2 and later
+# (the CI runners') expand \u, \U and \x there; the bash 3.2 macOS ships does not
+# expand \u, so a summary that quotes a lone surrogate as `\udfff` printed fine on
+# a Mac and wrote the bytes ED BF BF on CI, which are not UTF-8, and the gate test
+# that reads the report failed to decode it.
+_ECHO_ESCAPES = re.compile(r"\\(u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|x[0-9a-fA-F]{1,2}|0[0-7]{0,3})")
+
+
+def _echo_e_bytes_are_utf8(text: str) -> bool:
+    for m in _ECHO_ESCAPES.finditer(text):
+        kind, digits = m.group(1)[0], m.group(1)[1:]
+        value = int(digits, 8 if kind == "0" else 16) if digits else 0
+        if kind in "x0":
+            if value >= 0x80:  # a raw byte past ASCII is not a character on its own
+                return False
+        elif value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
+            return False
+    return True
+
+
+def test_the_echo_check_refuses_what_bash_turns_into_invalid_bytes():
+    assert not _echo_e_bytes_are_utf8('a lone surrogate, `"\\udfff"`')
+    assert not _echo_e_bytes_are_utf8("a raw byte \\xed")
+    assert _echo_e_bytes_are_utf8("a NUL `\\u0000` and a path `%LOCALAPPDATA%\\uv\\cache`")
+
+
+def test_every_registry_summary_survives_the_verifiers_echo():
+    registry = json.loads((ROOT / "qa" / "issue-registry.json").read_text(encoding="utf-8"))
+    bad = [entry["id"] for entry in registry["issues"] if not _echo_e_bytes_are_utf8(entry.get("summary", ""))]
+    assert not bad, f"verify-issues.sh would print bytes that are not UTF-8 for {bad}"
