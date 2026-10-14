@@ -279,9 +279,16 @@ async def main():
 
 
 def _write_stdout(message: str):
-    """Write a JSON-RPC message to stdout."""
-    sys.stdout.write(message + "\n")
-    sys.stdout.flush()
+    """Write a JSON-RPC message to stdout, as UTF-8.
+
+    MCP's stdio transport is UTF-8, but sys.stdout encodes with the console's
+    code page when it is a pipe on Windows (cp1252, cp932), which either raises on
+    non-ASCII text or emits bytes the client cannot decode. Write the bytes
+    directly, as the stdin side already reads them.
+    """
+    out = sys.stdout.buffer
+    out.write((message + "\n").encode("utf-8"))
+    out.flush()
 
 
 def _write_error(request_line: bytes | str, error_msg: str):
