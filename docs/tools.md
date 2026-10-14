@@ -90,8 +90,9 @@ absent when there is nothing to say. It also appears in `check_health` as an
 `update_available` (info) or `version_yanked` (warn) issue.
 
 `recall` carries one more notice of the same kind: `suggestion`, once per
-session, when the recall's scope holds 1,000 or more records past the scan
-window and no coarse index exists for a time cue to search the rest of its
+session, when a recall that searches vectors locally has a scope (source filter
+included) holding 1,000 or more records with a stored vector past the scan
+window, and no coarse index exists for a time cue to search the rest of its
 period ([binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md#7-settings)). It
 holds a `message` to relay and the `fix` call that builds the index. Building it
 needs write access to every agent, so it is the user's decision.

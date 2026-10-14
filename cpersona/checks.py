@@ -3257,7 +3257,8 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     Silent unless one of those settings is on AND the scope holds records past
     the window: an index nothing reads is not worth a line. Then:
 
-    - **absent** (warn, from ``INDEX_MATTERS_ROWS`` records past the window).
+    - **absent** (warn, from ``INDEX_MATTERS_ROWS`` records past the window;
+      under ``fix``, from the first, so the call the remainder hint names builds).
       Unlike the contiguous index's absence this is stamped: the operator turned
       on a setting whose cost, without the file, is the size of the store.
     - **unusable**, **dimension drift**, **log refused** (warn): a file exists
@@ -3340,7 +3341,10 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
             "hint": hint,
         }
     if issue is None and index is None:
-        if far_rows < INDEX_MATTERS_ROWS:
+        # Below the line the absence goes unreported, but a repair run still builds:
+        # a time cue's remainder hint names this call from the first record past the
+        # window, and a call that declines there is advice that does nothing.
+        if far_rows < INDEX_MATTERS_ROWS and not fix:
             return []
         width = max(widths) if widths else 0
         issue = {

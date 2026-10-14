@@ -3290,8 +3290,13 @@ async def _do_recall(
         result["update"] = update
     # The coarse index suggestion (docs/BINARY_COARSE_SEARCH_DESIGN.md §7): the same
     # contract, for a scope that has grown past the window with no index to search
-    # the rest of a time cue's period. The count is the pool count read above.
-    suggestion = coarse_notice.notice(pool_memories, MAX_MEMORIES, session_key_resolved, session_key_declared)
+    # the rest of a time cue's period. Counted as the check that builds it counts, in
+    # the scope the cue arm searches; the pool count read above bounds it from above.
+    suggestion = await coarse_notice.scope_notice(
+        agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
+        pool_records=pool_memories, window=MAX_MEMORIES,
+        session_key=session_key_resolved, declared=session_key_declared,
+    )
     if suggestion is not None:
         result["suggestion"] = suggestion
     return result

@@ -395,9 +395,10 @@ With `CPERSONA_CUE_COARSE_ENABLED` unset, its default, a time cue asks the file
 only: without a usable one the part of a period past the window is not
 searched, and the recall says so in `time_cue.remainder`. While the far seats
 are off, no recall then pays for a missing file, so the same four states are
-reported as observations (info), not warnings. A recall whose scope holds 1,000 or more records past the window
-with no file also carries a `suggestion`, once per session, for the agent to
-relay to the user. Building the file is never automatic. `check_health(checks=["coarse_index"], fix=true)` builds the file again;
+reported as observations (info), not warnings. A recall that searches vectors locally, whose scope holds 1,000 or more
+records with a stored vector past the window and no file, also carries a
+`suggestion`, once per session, for the agent to relay to the user. Building the file is never automatic. `check_health(checks=["coarse_index"], fix=true)` builds the file again, from
+the first record past the window;
 it holds every agent's records, so the repair asks for write access to every
 agent. The findings reach `get_session_findings` like every other check's, so a
 monitor can hear of the cost before anyone notices it as latency. Whether a
