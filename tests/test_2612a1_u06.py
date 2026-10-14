@@ -199,10 +199,10 @@ async def _race_two_builds(db, monkeypatch, build, out):
     roles: list[str] = []
     first_paused, second_streamed, first_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
-    async def interleaved(conn, table, watermark, width):
+    async def interleaved(conn, table, watermark, width, *rest):
         role = "first" if not roles else "second"
         roles.append(role)
-        async for chunk in original(conn, table, watermark, width):
+        async for chunk in original(conn, table, watermark, width, *rest):
             yield chunk
             if role == "first" and not first_paused.is_set():
                 first_paused.set()

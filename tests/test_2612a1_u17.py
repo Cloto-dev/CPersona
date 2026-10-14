@@ -259,8 +259,8 @@ async def test_a_vector_index_build_does_not_republish_a_purged_agent(which, mon
         purged = {}
         original = vector_index.iter_embedding_chunks
 
-        async def chunks_then_purge(conn, table, watermark, width):
-            async for blobs in original(conn, table, watermark, width):
+        async def chunks_then_purge(conn, table, watermark, width, *rest):
+            async for blobs in original(conn, table, watermark, width, *rest):
                 yield blobs
             # Every embedding is read; the purge lands before the file is published.
             purged.update(await admin_handlers.do_delete_agent_data(VICTIM))

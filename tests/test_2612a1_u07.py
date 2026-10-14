@@ -103,8 +103,8 @@ async def test_health_repairs_update_the_remote_index(remote_index):
         agent,
         remote_index,
         [
-            ("ch1", "deploy runbook alpha"),  # duplicate_content survivor
-            ("ch2", "deploy runbook alpha"),  # duplicate_content deletes this one
+            ("", "deploy runbook alpha"),  # duplicate_content survivor
+            ("ch2", "deploy runbook alpha"),  # covered by the channel '' copy: deleted
             ("", "[Memory from carol] legacy deploy text"),  # memory_annotation rewrite
             ("", "<@123> mention body"),  # discord_mention rewrite
             ("", "keeper text"),
