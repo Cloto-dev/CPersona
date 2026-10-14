@@ -169,7 +169,15 @@ class _IssuerKeys:
         # channel carries the pairwise-subject refusal, which is a permanent
         # configuration verdict and the one explanation an operator needs for why
         # a whole set of clients cannot authenticate.
-        self.logged_at: float = -math.inf
+        #
+        # Keyed by the diagnostic as well (its message template). One discovery
+        # walk can write two lines about the same issuer, and with a single
+        # stamp the first -- a harmless note about a metadata document without
+        # a jwks_uri -- suppressed the pairwise verdict that followed it. The
+        # refresh cooldown and this window are the same length, so every later
+        # walk repeated the order and the verdict was never written. Templates
+        # are fixed strings in this module, so the map stays bounded.
+        self.logged_at: dict[str, float] = {}
         self.jwks_uri: str = ""
         self.lock = asyncio.Lock()
 
@@ -220,13 +228,14 @@ class IdpTokenVerifier:
         self._fetch = fetch or _http_get
         self._now = now
         self._cache: dict[str, _IssuerKeys] = {issuer: _IssuerKeys() for issuer in self._issuers}
-        # -inf, not 0.0, for the reason _IssuerKeys.last_attempt carries it:
+        # A diagnostic not yet in the map reads as -inf (see _log_outage), not
+        # 0.0, for the reason _IssuerKeys.last_attempt carries it:
         # ``time.monotonic`` is uptime on some platforms, so a 0.0 sentinel puts
         # a freshly started process inside the cooldown and the FIRST outage —
         # the one an operator most needs to see — is the one that goes unlogged.
         # Measured: the test for it passed on a long-running machine and failed
         # on a fresh CI runner.
-        self._outage_logged_at: float = -math.inf
+        self._outage_logged_at: dict[str, float] = {}
 
     # -- public surface ----------------------------------------------------
 
@@ -451,14 +460,32 @@ class IdpTokenVerifier:
         except Exception as exc:
             self._log_outage(issuer, "key set at %s is not a usable JWKS: %s", jwks_uri, exc)
             return
-        keys = {}
-        for key in key_set.keys:
-            # A key set may legitimately carry keys for other uses (encryption)
-            # and other algorithms. Keeping only what could sign a token this
-            # server accepts means a rotation that adds an encryption key does
-            # not read as "the signing key disappeared".
-            if getattr(key, "key_id", None) and (key.public_key_use in (None, "sig")):
-                keys[key.key_id] = key.key
+        # A key set may legitimately carry keys for other uses (encryption)
+        # and other algorithms. Keeping only what could sign a token this
+        # server accepts means a rotation that adds an encryption key does
+        # not read as "the signing key disappeared".
+        signing = [key for key in key_set.keys if key.public_key_use in (None, "sig")]
+        keys = {key.key_id: key.key for key in signing if getattr(key, "key_id", None)}
+        if not keys and len(signing) == 1:
+            # RFC 7517 §4.5 makes "kid" optional, and an issuer that publishes
+            # one key has no need of it. Kept under "", which no token can name
+            # (verify_token reads an absent or empty kid as ""), so it is served
+            # only the way _from_cache serves any sole key: to a token that
+            # names none. Dropping it made such an issuer authenticate nobody,
+            # with the log blaming its key set.
+            keys[""] = signing[0].key
+        if not keys and signing:
+            # Several keys and not one of them named: whichever a token without
+            # a kid was signed with cannot be told, and picking one would make
+            # the outcome depend on the order the issuer listed them in.
+            self._log_outage(
+                issuer,
+                "key set at %s carries %d signing keys and none of them carries a kid, "
+                "so a token cannot say which one signed it",
+                jwks_uri,
+                len(signing),
+            )
+            return
         if not keys:
             self._log_outage(issuer, "key set at %s carries no usable signing key", jwks_uri)
             return
@@ -587,7 +614,8 @@ class IdpTokenVerifier:
         return document if isinstance(document, dict) else None
 
     def _log_outage(self, issuer: str, message: str, *args) -> None:
-        """Warn about a provider-side failure at most once per cooldown, per issuer.
+        """Warn about a provider-side failure at most once per cooldown, per issuer
+        and per diagnostic.
 
         Per request would let an unauthenticated caller write the log; never
         would make an outage of the thing that authenticates everyone invisible.
@@ -595,8 +623,10 @@ class IdpTokenVerifier:
         The window belongs to the issuer the message is about. A verifier-wide
         one made two configured authorization servers share it, so the second's
         failure produced no record at all while the first was flapping. An issuer
-        with no entry -- there is none today -- falls back to the shared stamp
-        rather than logging unbounded.
+        with no entry -- there is none today -- falls back to the shared stamps
+        rather than logging unbounded. Within an issuer each diagnostic (the
+        message template, not its arguments) has its own window, so one line
+        cannot silence a different one about the same issuer.
 
         The verdict is still rate-limited rather than logged outright: it is
         reached from an unauthenticated request, so writing it every time would
@@ -604,13 +634,11 @@ class IdpTokenVerifier:
         """
         entry = self._cache.get(issuer)
         now = self._now()
-        last = entry.logged_at if entry is not None else self._outage_logged_at
+        windows = entry.logged_at if entry is not None else self._outage_logged_at
+        last = windows.get(message, -math.inf)
         if (now - last) < JWKS_MIN_REFETCH_SECONDS:
             return
-        if entry is not None:
-            entry.logged_at = now
-        else:
-            self._outage_logged_at = now
+        windows[message] = now
         logger.warning("OAuth verification degraded: " + message, *args)
 
 

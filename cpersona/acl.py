@@ -27,7 +27,7 @@ import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from cpersona import config
+from cpersona import config, fileperms
 from cpersona.aliases import ALIAS_PREFIX
 from cpersona._vendored_mcp_common import identity
 from cpersona._vendored_mcp_common.identity import Principal, hmac  # noqa: F401 (compatibility exports)
@@ -111,7 +111,11 @@ def load_config(path: str) -> AclConfig:
 
     try:
         mode = os.stat(path).st_mode
-        if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        # Where the bits are not the access control (Windows), os.stat
+        # synthesises them from the read-only attribute, so an ordinary file
+        # reads as 0o666: the warning fired on every start and advised a chmod
+        # that changes nothing. Same gate as the database warning.
+        if fileperms.mode_bits_are_enforced() and mode & (stat.S_IRWXG | stat.S_IRWXO):
             logger.warning(
                 "ACL file %s is group/world-accessible (mode %o); it carries "
                 "credentials and should be private to the service user",
@@ -765,18 +769,83 @@ def _intrinsic_sweep_detail(demands: Demands, arguments: dict, grants: dict[str,
     A classification that carries no cause still gets the part that is always
     true — scoping will not narrow this one — rather than an empty ``detail``.
     """
-    cause = ""
-    explain = getattr(demands, "_sweep_cause", None)
-    if explain is not None:
-        try:
-            cause = explain(arguments) or ""
-        except Exception:  # a classification that cannot explain itself must not raise here
-            cause = ""
+    cause = _stated_sweep_cause(demands, arguments)
     base = (
         "no agent scope narrows this call — it demands every agent by its nature, and "
         + _sweep_reach(grants)
     )
     return f"{cause}; {base}" if cause else base
+
+
+def _stated_sweep_cause(demands: Demands, arguments: dict) -> str:
+    """The reason a tool's classification gives for an intrinsic sweep, or ""."""
+    explain = getattr(demands, "_sweep_cause", None)
+    if explain is None:
+        return ""
+    try:
+        return explain(arguments) or ""
+    except Exception:  # a classification that cannot explain itself must not raise here
+        return ""
+
+
+def _per_subject_detail(demands: Demands, arguments: dict, agent_pattern: str) -> str:
+    """Why the per-subject boundary refused a demand, and whether "@me" helps.
+
+    The boundary confines a signed-in subject to its own alias, so any other
+    agent is refused whatever the grants allow. Whether "@me" is the way out
+    depends on where the demand came from, and that is asked rather than
+    assumed, with the same counterfactuals the grant path runs: when an agent
+    scope produced it, addressing the caller's own space is exactly the fix.
+    When it did not -- a process-wide switch, file I/O while
+    CPERSONA_EXPORT_DIR is unset, a repair that reaches every agent, or a file
+    in the export directory that belongs to another agent -- "@me" changes
+    nothing, and a caller that followed that advice was refused again with the
+    same words (resolving the sentinel on the way). Those are told the cause
+    instead.
+    """
+    if agent_pattern == WILDCARD:
+        if _widened_by_omission(demands, arguments):
+            return (
+                "this client partitions by signed-in subject "
+                "(per_subject), and this call demands every agent at "
+                'once — scope it to your own space with agent_id "@me"'
+            )
+        cause = _stated_sweep_cause(demands, arguments)
+        base = (
+            "no agent scope narrows this call — it demands every agent by its nature, and "
+            "this client partitions by signed-in subject (per_subject), which confines each "
+            "subject to its own alias, so the call is refused whatever agent_id names"
+        )
+        return f"{cause}; {base}" if cause else base
+    if not _demanded_whatever_the_scope(demands, arguments, agent_pattern):
+        return (
+            "this client partitions by signed-in subject "
+            "(per_subject): each subject reaches only its own alias "
+            '— address your own space as "@me"; the alias it '
+            "resolves to is echoed back as resolved_agent_id"
+        )
+    return (
+        "this client partitions by signed-in subject (per_subject), which confines each "
+        f"subject to its own alias, and this call reaches agent {agent_pattern!r} through "
+        "its other arguments rather than its agent scope (for export_memories and "
+        "import_memories, the file at the path belongs to that agent), so it is refused "
+        "whatever agent_id names"
+    )
+
+
+def _demanded_whatever_the_scope(demands: Demands, arguments: dict, agent_pattern: str) -> bool:
+    """Would this agent still be demanded with every scope argument replaced?
+
+    The named-agent twin of _widened_by_omission: a demand that survives the
+    probe did not come from agent_id, so no value of agent_id removes it.
+    """
+    probed = dict(arguments)
+    for key in _SCOPE_KEYS:
+        probed[key] = _SCOPE_PROBE
+    try:
+        return any(pattern == agent_pattern for pattern, _ in demands(probed))
+    except Exception:  # a demands function that dislikes the probe tells us nothing
+        return False
 
 
 def _denial(tool: str, client_id: str, *, agent_id: str = "", required: int = 0, detail: str = "") -> dict:
@@ -934,19 +1003,7 @@ def _wrap(name: str, handler):
                     name,
                     agent_pattern,
                 )
-                if agent_pattern == WILDCARD:
-                    detail = (
-                        "this client partitions by signed-in subject "
-                        "(per_subject), and this call demands every agent at "
-                        'once — scope it to your own space with agent_id "@me"'
-                    )
-                else:
-                    detail = (
-                        "this client partitions by signed-in subject "
-                        "(per_subject): each subject reaches only its own alias "
-                        '— address your own space as "@me"; the alias it '
-                        "resolves to is echoed back as resolved_agent_id"
-                    )
+                detail = _per_subject_detail(demands, arguments, agent_pattern)
                 return _denial(
                     name,
                     principal.client_id,
