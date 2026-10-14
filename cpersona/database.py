@@ -201,6 +201,15 @@ async def release_read_probe_transaction(db) -> bool:
     try:
         if db._conn is None or not db._conn.in_transaction:
             return False
+        # An in-memory database's read seam is the write connection itself.
+        # While a transaction() holds the write lock, the open transaction
+        # belongs to that writer, and rolling it back would discard the
+        # statements the writer has already run while it goes on to commit the
+        # rest and report success. The writer's commit ends the probe's
+        # statement along with its own. With the lock free, the open
+        # transaction is the probe's own and is released as on any reader.
+        if db is _db and _write_lock.locked():
+            return False
         await db.rollback()
         return True
     except Exception as exc:  # noqa: BLE001 - reclaiming a lock must not fail the caller
@@ -323,7 +332,7 @@ async def _copy_database(source: aiosqlite.Connection, target: aiosqlite.Connect
 
 @contextlib.asynccontextmanager
 async def transaction(scope_stats_neutral: bool = False):
-    """Write seam: write_lock + [writes] + commit, rollback on any exception.
+    """Write seam: write_lock + BEGIN IMMEDIATE + [writes] + commit, rollback on any exception.
 
     The single owner of the commit/rollback boundary on the shared connection
     (bug-042/043 serialisation + the bug-068 class: a failed multi-statement
@@ -346,6 +355,19 @@ async def transaction(scope_stats_neutral: bool = False):
     db = await get_db()
     async with _write_lock:
         try:
+            # Take SQLite's write lock before the body runs. _write_lock only
+            # serialises this process; on its own, the connection BEGINs at the
+            # body's first DML, so a read at the top of a body ran outside any
+            # transaction and another process sharing the file could commit
+            # between that read and the body's first write. A body that then
+            # wrote by id (merge's move, the short-content repair) destroyed
+            # the other process's committed edit or lock. BEGIN IMMEDIATE waits
+            # out busy_timeout like a first DML would. Not for an in-memory
+            # database: it is private to this one connection, so there is no
+            # other writer to exclude, and an open write transaction makes the
+            # backup behind _in_memory_snapshot refuse to copy it.
+            if DB_PATH != ":memory:" and not db.in_transaction:
+                await db.execute("BEGIN IMMEDIATE")
             yield db
             await db.commit()
             # After the commit, never on the rollback path: a generation bumped
