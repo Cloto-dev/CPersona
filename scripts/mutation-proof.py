@@ -650,12 +650,12 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_associations_reconstruct.py",),
         target="associative invariant 1 — recall does not read the graph",
         file="cpersona/memory_handlers.py",
-        find="    exclude_set: set[str] = set()\n    if exclude_contents:",
+        find="    exclude_set: ExcludeSet = ExcludeSet()\n    if exclude_contents:",
         replace=(
             "    if lexical_terms is None:\n"
             "        from cpersona import associations as _a\n"
             "        lexical_terms = (await _a.query_terms(agent_id, query, project_id=project_id, channel=channel))[0] or None\n"
-            "    exclude_set: set[str] = set()\n    if exclude_contents:"
+            "    exclude_set: ExcludeSet = ExcludeSet()\n    if exclude_contents:"
         ),
         breaks="recall expands declared aliases on its own, so the flat contract changes with every declaration",
         expect="test_associations_reconstruct.py::test_recall_is_unchanged_by_a_populated_graph",

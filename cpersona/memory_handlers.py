@@ -75,6 +75,7 @@ from cpersona.config import (
 from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
 from cpersona.database import beside, connection, transaction
 from cpersona.utils import (
+    ExcludeSet,
     _clamp_limit,
     _compute_confidence,
     _content_excluded,
@@ -2629,9 +2630,10 @@ async def _do_recall(
     # is observed at the embedding boundary in vector._search_vector. See health.py.
     health.observe_config()
 
-    exclude_set: set[str] = set()
+    # Indexed once here, because every candidate row of every arm is tested against it.
+    exclude_set: ExcludeSet = ExcludeSet()
     if exclude_contents:
-        exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
+        exclude_set = ExcludeSet(c.strip().lower() for c in exclude_contents if c.strip())
 
     # Filled by whichever fusion ran, with the one vector it embedded. Empty
     # wherever no local vector was produced -- no client, a remote search that
@@ -3341,7 +3343,6 @@ async def _do_recall(
             # non-fatal. bug-042/043: serialise the write behind the shared lock so
             # its commit cannot flush another handler's partial transaction.
             try:
-                placeholders = ",".join("?" * len(returned_ids))
                 # scope_stats_neutral: the statement below touches neither the row
                 # count nor a `timestamp` column — it increments recall_count and
                 # writes last_recalled_at on rows that already exist — so it cannot
@@ -3351,11 +3352,22 @@ async def _do_recall(
                 # exactly the configuration it exists for. The claim is about THESE
                 # statements; adding an INSERT/DELETE, or a `timestamp` update, to
                 # this body means dropping the keyword.
+                #
+                # Chunked at the width the recall-count read on this pass uses: the
+                # credited ids are bounded only by the caller's limit, and one
+                # statement over all of them failed past the variable ceiling as a
+                # whole, crediting no row. The chunks share one transaction, so a
+                # recall is still credited all or nothing; the ids are made unique
+                # first, as one IN (...) made them, so no row is credited twice.
+                unique_ids = list(dict.fromkeys(returned_ids))
                 async with transaction(scope_stats_neutral=True) as db:
-                    await db.execute(
-                        f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
-                        returned_ids,
-                    )
+                    for start in range(0, len(unique_ids), vector._ID_FETCH_CHUNK):
+                        chunk = unique_ids[start : start + vector._ID_FETCH_CHUNK]
+                        placeholders = ",".join("?" * len(chunk))
+                        await db.execute(
+                            f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
+                            chunk,
+                        )
             except Exception as e:
                 logger.warning("recall_count bump failed (non-fatal): %s", e)
 
@@ -4125,6 +4137,16 @@ COMMON_PHRASE_BOUND = _BM25_IDF_FLOOR * (_BM25_K1 + 1)
 _BM25_SUM_ROUNDING = 1e-9
 # How many indexed rows hold one phrase: the n_i of FTS5's own idf.
 _PHRASE_ROWS_SQL = "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH ?"
+# The most distinct trigrams _common_phrases counts, one statement each. The query's
+# length is the caller's, so without a bound a pasted passage issued one statement per
+# trigram on the connection every recall's lexical arms share, and then ran the whole
+# expression anyway whenever no phrase was common. A question of up to 66 CJK
+# characters stays under it; a longer query is ranked on the whole expression, which
+# is the answer the shortcut is only allowed to reproduce.
+COMMON_PHRASE_MAX_COUNTS = 64
+# SQLITE_MAX_LIKE_PATTERN_LENGTH as SQLite ships it: the longest LIKE pattern, in
+# bytes, that the keyword arm's fallback hands to SQLite.
+_LIKE_PATTERN_MAX_BYTES = 50_000
 
 
 async def _common_phrases(db, phrases: list[str]) -> set[str]:
@@ -4135,7 +4157,8 @@ async def _common_phrases(db, phrases: list[str]) -> set[str]:
     query, which the query builder cuts into trigrams. An ASCII phrase is counted in
     lower case, as the trigram tokenizer folds it, so "The" and "the" are counted once;
     any other script is left unclassified. An unclassified phrase stays in the ranking,
-    which is always safe.
+    which is always safe. A query with more than ``COMMON_PHRASE_MAX_COUNTS`` distinct
+    trigrams to count is left unclassified as a whole, for the same reason.
 
     The rows holding a phrase are counted with the phrase itself, one count per trigram,
     which is the n_i FTS5's bm25 counts. They were read from an fts5vocab table before,
@@ -4153,7 +4176,7 @@ async def _common_phrases(db, phrases: list[str]) -> set[str]:
             candidates[phrase] = word.lower()
         elif all(_CJK_RE.match(ch) for ch in word):
             candidates[phrase] = word
-    if not candidates:
+    if not candidates or len(set(candidates.values())) > COMMON_PHRASE_MAX_COUNTS:
         return set()
     n_rows = (await db.execute_fetchall("SELECT count(*) FROM memories_fts_docsize"))[0][0]
     if not n_rows:
@@ -4373,18 +4396,32 @@ async def _search_memories_keyword(
     scan_limit = min(MAX_MEMORIES, max(limit * 5, 50))
     patterns = [_like_escape_contains(query)]
     patterns += [_like_escape_contains(t) for t in dict.fromkeys(extra_terms or ()) if t.strip() and t != query]
+    # SQLite refuses the whole statement when one LIKE pattern is longer than its
+    # pattern limit ("LIKE or GLOB pattern too complex"), and the query's length is
+    # the caller's. Such a pattern could never run, so leaving it out loses no row
+    # the statement could have returned, and the others still match.
+    patterns = [p for p in patterns if len(p.encode("utf-8")) <= _LIKE_PATTERN_MAX_BYTES]
+    if not patterns:
+        return []
     like_clause = " OR ".join("content LIKE ? ESCAPE '\\'" for _ in patterns)
     if len(patterns) > 1:
         like_clause = f"({like_clause})"
-    rows = await db.execute_fetchall(
-        f"""SELECT id, msg_id, content, source, timestamp
-           FROM memories
-           WHERE {iso.clause}{src_clause_bare}
-           AND {like_clause}
-           ORDER BY created_at DESC, id DESC
-           LIMIT ?""",
-        (*iso.params, *src_params_bare, *patterns, scan_limit),
-    )
+    try:
+        rows = await db.execute_fetchall(
+            f"""SELECT id, msg_id, content, source, timestamp
+               FROM memories
+               WHERE {iso.clause}{src_clause_bare}
+               AND {like_clause}
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?""",
+            (*iso.params, *src_params_bare, *patterns, scan_limit),
+        )
+    except sqlite3.OperationalError as e:
+        # A build with a lower pattern limit than the default refuses a pattern the
+        # filter above let through. The keyword channel finding nothing is an empty
+        # arm, as it is for the FTS branch above (bug-326), not a failed recall.
+        logger.warning("Keyword LIKE search unavailable, the arm returns no rows: %s", e)
+        return []
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 
 

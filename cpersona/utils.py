@@ -4,9 +4,11 @@ No global mutable state; all functions are pure or depend only on imported
 config constants.
 """
 
+import bisect
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -64,6 +66,22 @@ _MEMORY_ANNOTATION_PATTERN = re.compile(r"\[Memory from [^\]]+\]\s*")
 EXCLUDE_PREFIX_MIN_CHARS = 32
 
 
+class ExcludeSet(frozenset):
+    """The entries ``_content_excluded`` tests rows against, indexed once per recall.
+
+    The list is the caller's (``exclude_contents``, or every ``external_context``
+    entry), and testing a row by walking it made one recall cost candidate rows x
+    entries of synchronous work on the event loop. Here an exact match is a set
+    lookup, and the entries at or above the prefix floor are kept sorted, so a row
+    is answered by a few bisections whatever the list's length.
+    """
+
+    def __new__(cls, entries=()):
+        self = super().__new__(cls, entries)
+        self.prefix_entries = sorted(e for e in self if len(e) >= EXCLUDE_PREFIX_MIN_CHARS)
+        return self
+
+
 def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     """Check if content matches any excluded string (starts-with, normalized).
 
@@ -72,6 +90,9 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     starts_with check in both directions accounts for this — but only for entries
     of at least ``EXCLUDE_PREFIX_MIN_CHARS`` (bug-217); a shorter entry has to be
     an exact (case-insensitive) match to exclude anything.
+
+    A caller testing many rows passes an ``ExcludeSet`` built once; a plain set is
+    indexed on every call.
     """
     if not exclude_set:
         return False
@@ -82,13 +103,31 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     # dedup hit — nothing meaningful to deduplicate against.
     if not normalized:
         return False
-    for excl in exclude_set:
-        if len(excl) < EXCLUDE_PREFIX_MIN_CHARS:
-            if normalized == excl:  # bug-217: exact match only below the floor
-                return True
-            continue
-        if normalized.startswith(excl) or excl.startswith(normalized):
+    index = exclude_set if isinstance(exclude_set, ExcludeSet) else ExcludeSet(exclude_set)
+    # An entry equal to the row excludes it at any length; below the floor that is
+    # the only way an entry excludes anything (bug-217).
+    if normalized in index:
+        return True
+    prefixed = index.prefix_entries
+    if not prefixed:
+        return False
+    # An entry that starts with the row: every such entry sorts at or right after it.
+    at = bisect.bisect_left(prefixed, normalized)
+    if at < len(prefixed) and prefixed[at].startswith(normalized):
+        return True
+    # An entry the row starts with. Take the greatest entry not above the row's
+    # head. When it is not a prefix of the head, no entry longer than their common
+    # prefix can be one (it would sort between the two), so the search goes on with
+    # that common prefix, which is strictly shorter than the head.
+    head = normalized
+    while len(head) >= EXCLUDE_PREFIX_MIN_CHARS:
+        at = bisect.bisect_right(prefixed, head) - 1
+        if at < 0:
+            return False
+        nearest = prefixed[at]
+        if head.startswith(nearest):
             return True
+        head = head[: len(os.path.commonprefix((head, nearest)))]
     return False
 
 
