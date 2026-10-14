@@ -61,6 +61,7 @@ Invariants this module holds (section 7, numbered as the doc numbers them):
 
 from __future__ import annotations
 
+import bisect
 import logging
 import math
 
@@ -1312,12 +1313,18 @@ def record_passages(
     ranked = rank_blocks(text, rows, bits, query_grams, vec)
     cosines = _int8_cosines(ranked, vec)
     passages: list[tuple] = []
+    # The ranges taken so far, kept sorted. They do not overlap one another, so in that
+    # order their ends do not decrease either, and a range overlaps one of them exactly
+    # when the last taken range that starts before it ends reaches past its start. One
+    # search per block, not a scan of every range taken: a record of one-character
+    # sentences divides into thousands of blocks.
     governed: list[tuple[int, int]] = []
     for n, row in enumerate(ranked):
         start, end, _ = blocks.context_range(text, spans, row[0])
-        if any(start < e and s < end for s, e in governed):
+        before = bisect.bisect_left(governed, (end,))
+        if before and governed[before - 1][1] > start:
             continue
-        governed.append((start, end))
+        bisect.insort(governed, (start, end))
         cosine = cosines[n] if cosines is not None else None
         if end - start > cap:
             passages.append((start, start + cap, cosine, end))
@@ -1378,11 +1385,35 @@ def whole_order(records: list[list[tuple]], whole: list[bool]) -> list[tuple[int
     return firsts + [entry for entry in order if not whole[entry[0]]]
 
 
-def _quoted_length(ranges: list[tuple[int, int]]) -> int:
-    """Characters of a quote showing ``ranges`` of one record: touching ranges as one,
-    the rest joined by the separator (excerpts.fill)."""
-    joined = excerpts._joined(sorted(ranges))
-    return sum(e - s for s, e in joined) + len(excerpts.SEPARATOR) * max(0, len(joined) - 1)
+def _step_costs(order: list[tuple], records: list[list[tuple]]):
+    """What each step of ``order`` adds to its record's quote, one step at a time.
+
+    A quote shows a record's ranges with touching ranges as one and the rest joined by
+    the separator (excerpts.fill). The passages of one record do not overlap
+    (``record_passages`` skips a range that overlaps a better one), so a new range can
+    only join the shown run that ends where it starts and the one that starts where it
+    ends. Keeping each record's runs by their two ends makes a step constant time;
+    re-joining the record's whole quote at every step made a record of thousands of
+    one-character passages quadratic, and the cut repeats it at every budget it tries.
+    """
+    separator = len(excerpts.SEPARATOR)
+    # Per record: {run end: run start}, {run start: run end}.
+    runs: dict[int, tuple[dict[int, int], dict[int, int]]] = {}
+    for i, j, _ in order:
+        start, end = records[i][j][:2]
+        by_end, by_start = runs.setdefault(i, ({}, {}))
+        before = len(by_start)
+        low, high = start, end
+        left = by_end.pop(start, None)
+        if left is not None:
+            del by_start[left]
+            low = left
+        right = by_start.pop(end, None)
+        if right is not None:
+            del by_end[right]
+            high = right
+        by_start[low], by_end[high] = high, low
+        yield (end - start) + separator * (max(0, len(by_start) - 1) - max(0, before - 1))
 
 
 def cut_sequence(
@@ -1395,16 +1426,11 @@ def cut_sequence(
     Returns ``({record: [passage, ...] in order taken}, characters used)``.
     """
     taken: dict[int, list[int]] = {}
-    shown: dict[int, list[tuple[int, int]]] = {}
     used = 0
-    for position, (i, j, _) in enumerate(order):
-        start, end = records[i][j][:2]
-        before = shown.get(i, [])
-        cost = _quoted_length(before + [(start, end)]) - _quoted_length(before)
+    for position, ((i, j, _), cost) in enumerate(zip(order, _step_costs(order, records))):
         if position and used + cost > budget:
             break
         used += cost
-        shown[i] = before + [(start, end)]
         taken.setdefault(i, []).append(j)
     return taken, used
 
@@ -1416,14 +1442,7 @@ def sequence_costs(order: list[tuple], records: list[list[tuple]]) -> list[int]:
     order, so the costs do not depend on the budget: ``cut_sequence`` at a budget
     takes the longest prefix whose running sum fits (the first always).
     """
-    shown: dict[int, list[tuple[int, int]]] = {}
-    costs = []
-    for i, j, _ in order:
-        start, end = records[i][j][:2]
-        before = shown.get(i, [])
-        costs.append(_quoted_length(before + [(start, end)]) - _quoted_length(before))
-        shown[i] = before + [(start, end)]
-    return costs
+    return list(_step_costs(order, records))
 
 
 def excerpt_costs(others: list[list[dict]]) -> list[int]:
@@ -1553,12 +1572,19 @@ async def do_reconstruct(
     # `bounds` in the compact response.
     bounds_max_hops = min(requested_hops, associations.TRAVERSE_MAX_HOPS)
     hops_lowered = bounds_max_hops < requested_hops
-    bounds_max_evidence = config.RECONSTRUCT_MAX_EVIDENCE if max_evidence is None else max(1, int(max_evidence))
+    requested_evidence = config.RECONSTRUCT_MAX_EVIDENCE if max_evidence is None else max(1, int(max_evidence))
+    # The evidence bound is the walk's per-entity read limit and the claims an item
+    # keeps, and structure() is quadratic in those claims. It shares traverse's
+    # per-entity ceiling, the same read, so one call stays bounded however many records
+    # mention an entity; the ceiling also keeps the read's LIMIT inside SQLite's integer
+    # range. A lowered value is reported as a lowered max_hops is.
+    bounds_max_evidence = min(requested_evidence, associations.TRAVERSE_MAX_LIMIT)
+    bound_lowered = hops_lowered or bounds_max_evidence < requested_evidence
 
     def _shaped(response: dict) -> dict:
         """The response as the caller receives it without the trace: compact, and under a
         mode its cap fields. The trace is an audit and is not held to the cap."""
-        out = _compact({k: v for k, v in response.items() if k != "trace"}, bound_lowered=hops_lowered, mode=mode)
+        out = _compact({k: v for k, v in response.items() if k != "trace"}, bound_lowered=bound_lowered, mode=mode)
         if mode:
             out.update(envelope or {})
             out["cap"] = MODE_CAPS[mode]

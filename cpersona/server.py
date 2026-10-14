@@ -1756,7 +1756,13 @@ registry.auto_tool(
             "max_evidence": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Maximum retained rows per item, bounding its claims and role targets. A cut is named in bounds.omitted and counted in the item's claims_omitted.",
+                "maximum": associations_module.TRAVERSE_MAX_LIMIT,
+                "description": (
+                    "Maximum retained rows per item, bounding its claims and role targets. A cut "
+                    "is named in bounds.omitted and counted in the item's claims_omitted. At most "
+                    f"{associations_module.TRAVERSE_MAX_LIMIT}, as traverse's limit: a larger value "
+                    "is lowered to it, and bounds.max_evidence then states the value applied."
+                ),
             },
             "deep": {
                 "type": "boolean",
