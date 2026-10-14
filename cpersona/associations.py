@@ -350,6 +350,20 @@ async def declare(
     return report
 
 
+def _retract_list(items, name: str, dropped: list) -> tuple[list, list[dict]]:
+    """The items of one retract list within MAX_ITEMS, and the report of those past it."""
+    if items is None:
+        return [], []
+    if not isinstance(items, list):
+        dropped.append({"item": f"retract.{name}", "reason": "must be a list"})
+        return [], []
+    excess = [
+        {"item": f"retract.{name}[{index}]", "reason": f"beyond the {MAX_ITEMS}-item bound"}
+        for index in range(MAX_ITEMS, len(items))
+    ]
+    return items[:MAX_ITEMS], excess
+
+
 async def retract(
     agent_id: str,
     *,
@@ -358,14 +372,21 @@ async def retract(
 ) -> dict:
     """Remove declarations of this agent. Ids of other agents are left alone and counted as such."""
     report = {"relations": 0, "mentions": 0, "dropped": []}
+    # Bounded like a declaration: each item is its own DELETE under the process-wide
+    # write lock, so an unbounded list held every writer of every agent for as long
+    # as the payload was long. Items past the bound are reported, never deleted, and
+    # the report is built before the lock is taken.
+    relations, relations_excess = _retract_list(relations, "relations", report["dropped"])
+    mentions, mentions_excess = _retract_list(mentions, "mentions", report["dropped"])
     async with transaction() as db:
-        for index, relation_id in enumerate(relations or []):
+        for index, relation_id in enumerate(relations):
             if not _is_id(relation_id):
                 report["dropped"].append({"item": f"retract.relations[{index}]", "reason": "must be an integer id"})
                 continue
             cur = await db.execute("DELETE FROM relations WHERE id = ? AND agent_id = ?", (relation_id, agent_id))
             report["relations"] += cur.rowcount
-        for index, item in enumerate(mentions or []):
+        report["dropped"].extend(relations_excess)
+        for index, item in enumerate(mentions):
             label = f"retract.mentions[{index}]"
             entity_id = item.get("entity") if isinstance(item, dict) else None
             ref = item.get("ref") if isinstance(item, dict) else None
@@ -378,6 +399,7 @@ async def retract(
                 (entity_id, canonical_ref(ref), agent_id),
             )
             report["mentions"] += cur.rowcount
+        report["dropped"].extend(mentions_excess)
     return report
 
 
@@ -1144,8 +1166,29 @@ async def walk_graph(
         for entries in graph.adjacency.values():
             entries.sort()
 
+        # Records are read for every entity some start reaches through at least one
+        # relation. Distance from the union of the starts is not that: an entity one
+        # start mentions is at distance 0 there, yet another start may reach it
+        # through a relation, and the walk (which runs per item) then found no
+        # records for it -- so bringing a second item into the window took walked
+        # evidence away from the first. Each start's own reach is followed over the
+        # adjacency just loaded, which holds every edge within max_hops of any start.
+        reached = {e for e, d in distance.items() if d >= 1}
+        for own in graph.mentions.values():
+            seen = set(own)
+            frontier = seen
+            for _ in range(max_hops):
+                frontier = {
+                    other for e in frontier for _, _, other, _ in graph.adjacency.get(e, ())
+                    if other not in seen and other in distance
+                }
+                if not frontier:
+                    break
+                seen |= frontier
+                reached |= frontier
+
         excluded = sorted(set(pool_refs))
-        for entity_id in sorted(e for e, d in distance.items() if d >= 1):
+        for entity_id in sorted(reached):
             found, _ = await _mentioning_records(
                 db, entity_id, agent_id=agent_id, project_id=project_id, channel=channel,
                 source_id=source_id, excluded=excluded, limit=per_entity + 1,
