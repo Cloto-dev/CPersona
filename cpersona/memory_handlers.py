@@ -87,6 +87,7 @@ from cpersona.utils import (
     _try_parse_json,
     error_response,
     json_dumps_finite,
+    lone_surrogate_issue,
     normalize_source,
 )
 from cpersona.vector import _search_vector
@@ -196,6 +197,83 @@ def _declared_source_id(source) -> str | None:
     return None if value is None else str(value)
 
 
+async def _store_dedup_answer(
+    db,
+    agent_id: str,
+    project_id: str,
+    channel: str,
+    msg_id: str,
+    content: str,
+    own_source_id: str | None,
+    *,
+    beyond_bucket: bool = False,
+) -> dict | None:
+    """What the dedup probes answer a store with, or None when it is to be written.
+
+    bug-106: the probes check the γ-VISIBLE scope, matching read semantics. A
+    bucket write ('X') collides with an identical row in the global pool —
+    recall('X') surfaces X ∪ '' and would return both copies — while a global
+    write probes the global pool only (a bucket copy must not hide the row from
+    every other bucket). Same shape on the channel axis. Import/merge keep
+    exact-bucket probes deliberately: a restore/merge must reconstruct legacy
+    corpora faithfully across buckets (bug-044/076 precedent). The v12 UNIQUE
+    indexes stay exact-bucket as the TOCTOU backstop.
+
+    ``beyond_bucket`` leaves the writer's own bucket out of the probes: that is
+    the part of the scope the unique indexes already guard, which is all a probe
+    repeated under the write lock needs to add to them.
+    """
+    proj_scope = (project_id, "") if project_id else ("",)
+    chan_scope = (channel, "") if channel else ("",)
+    # Deduplicate by msg_id if provided (γ-project-scoped — the same msg_id in
+    # two sibling buckets stays legitimately distinct, bug-044). Its unique index
+    # is per project, so the bucket it leaves out is the writer's project.
+    msg_scope = tuple(p for p in proj_scope if not (beyond_bucket and p == project_id))
+    if msg_id and msg_scope:
+        row = await db.execute_fetchall(
+            f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({','.join('?' * len(msg_scope))})"
+            " AND msg_id = ? LIMIT 1",
+            (agent_id, *msg_scope, msg_id),
+        )
+        if row:
+            # v2.5.2 additive: echo the existing row's id so callers can chain
+            # (e.g. update_memory) without a second lookup.
+            return _store_skipped("duplicate msg_id", row[0][0])
+
+    if beyond_bucket and not project_id and not channel:
+        # A global write sees only its own bucket.
+        return None
+    # Deduplicate by exact content match (γ-visible scope), per source id.
+    # A copy under another source id is a different principal's memory, so
+    # it does not answer this write: a skip tells the caller its text is
+    # already where its own source_id-scoped recall finds it, and the id it
+    # echoes is the row the lock and association riders act on. The probe
+    # reads every visible copy (one per exact bucket at most, so four rows)
+    # and decides from their sources.
+    outside = " AND NOT (project_id = ? AND channel = ?)" if beyond_bucket else ""
+    existing = await db.execute_fetchall(
+        f"SELECT id, source, project_id, channel FROM memories WHERE agent_id = ?"
+        f" AND project_id IN ({','.join('?' * len(proj_scope))})"
+        f" AND channel IN ({','.join('?' * len(chan_scope))}) AND content = ?{outside}",
+        (agent_id, *proj_scope, *chan_scope, content, *((project_id, channel) if beyond_bucket else ())),
+    )
+    for row_id, row_source, _row_project, _row_channel in existing:
+        if _declared_source_id(row_source) == own_source_id:
+            # v2.5.2 additive: same id echo as the msg_id branch above.
+            return _store_skipped("duplicate content", row_id)
+    if any(row[2] == project_id and row[3] == channel for row in existing):
+        # The unique index allows one copy of a text per exact bucket, so
+        # this caller's copy cannot be written beside the other source's.
+        # Refused, not skipped: nothing was stored under this source, and a
+        # skip would have reported the write as harmlessly done.
+        return _store_rejected(
+            "this content is already stored under a different source id in the "
+            "same agent, project and channel; one copy is kept per bucket, so it "
+            "was not stored for this source"
+        )
+    return None
+
+
 async def do_store(
     agent_id: str,
     message: dict,
@@ -222,7 +300,13 @@ async def do_store(
             {"ok": True, "result": "skipped", "id": 0, "embedded": False}, "store", key
         )
 
-    msg_id = message.get("id", "")
+    # A key given as None is a key left out. Every value the INSERT below binds
+    # into a NOT NULL column is settled before it, because that INSERT is OR
+    # IGNORE and IGNORE skips a row that breaks NOT NULL as readily as one that
+    # breaks UNIQUE: a None reaching it was dropped and answered as a duplicate.
+    msg_id = message.get("id")
+    if msg_id is None:
+        msg_id = ""
     raw_content = message.get("content", "")
     # 2.5.2: normalize known legacy source shapes at the write seam.
     # Unknown shapes are stored verbatim so the health check still surfaces them
@@ -234,10 +318,17 @@ async def do_store(
     # SQLite rejects as JSON, and the invalid_json repair would then blank the
     # whole object.
     source = json_dumps_finite(normalized_source if normalized_source is not None else {})
-    timestamp = message.get("timestamp", datetime.now(timezone.utc).isoformat())
+    timestamp = message.get("timestamp")
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc).isoformat()
     metadata = json_dumps_finite(message.get("metadata", {}))
     project_id = coerce_for_write(project_id)
+    # channel is the other isolation axis, so a non-string is the default channel
+    # by the same rule.
+    channel = coerce_for_write(channel)
 
+    if agent_id is None:
+        return _store_rejected("agent_id is required")
     if not raw_content:
         return _store_rejected("empty content")
 
@@ -251,6 +342,14 @@ async def do_store(
     # left to the invalid_timestamp check, which owns those rows.
     if isinstance(timestamp, str) and len(timestamp) > MAX_TIMESTAMP_LENGTH:
         return _store_rejected(f"timestamp too long ({len(timestamp)} chars, max {MAX_TIMESTAMP_LENGTH})")
+    # Before anything binds them: the first statement to do so (the future-stamp
+    # verdict, the dedup probe) would raise instead of answering with a result.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, content=raw_content, id=msg_id, channel=channel,
+        project_id=project_id, timestamp=timestamp,
+    )
+    if surrogate:
+        return _store_rejected(surrogate)
 
     # audit C12: content has been capped since 2.1, its JSON sidecars never were.
     # A field that cannot be truncated (valid JSON has no valid prefix) and is not
@@ -308,58 +407,11 @@ async def do_store(
                 f"(allowance {future_timestamp['allowance_seconds']}s)"
             )
 
-    # bug-106: the dedup probes check the γ-VISIBLE scope, matching read semantics.
-    # A bucket write ('X') collides with an identical row in the global pool —
-    # recall('X') surfaces X ∪ '' and would return both copies — while a global
-    # write probes the global pool only (a bucket copy must not hide the row from
-    # every other bucket). Same shape on the channel axis. Import/merge keep
-    # exact-bucket probes deliberately: a restore/merge must reconstruct legacy
-    # corpora faithfully across buckets (bug-044/076 precedent). The v12 UNIQUE
-    # indexes stay exact-bucket as the TOCTOU backstop.
-    proj_scope = (project_id, "") if project_id else ("",)
-    chan_scope = (channel, "") if channel else ("",)
-    proj_in = ",".join("?" * len(proj_scope))
-    chan_in = ",".join("?" * len(chan_scope))
+    own_source_id = _declared_source_id(normalized_source)
     async with connection() as db:
-        # Deduplicate by msg_id if provided (γ-project-scoped — the same msg_id in
-        # two sibling buckets stays legitimately distinct, bug-044).
-        if msg_id:
-            row = await db.execute_fetchall(
-                f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({proj_in}) AND msg_id = ? LIMIT 1",
-                (agent_id, *proj_scope, msg_id),
-            )
-            if row:
-                # v2.5.2 additive: echo the existing row's id so callers can chain
-                # (e.g. update_memory) without a second lookup.
-                return _store_skipped("duplicate msg_id", row[0][0])
-
-        # Deduplicate by exact content match (γ-visible scope), per source id.
-        # A copy under another source id is a different principal's memory, so
-        # it does not answer this write: a skip tells the caller its text is
-        # already where its own source_id-scoped recall finds it, and the id it
-        # echoes is the row the lock and association riders act on. The probe
-        # reads every visible copy (one per exact bucket at most, so four rows)
-        # and decides from their sources.
-        existing = await db.execute_fetchall(
-            f"SELECT id, source, project_id, channel FROM memories WHERE agent_id = ?"
-            f" AND project_id IN ({proj_in}) AND channel IN ({chan_in}) AND content = ?",
-            (agent_id, *proj_scope, *chan_scope, content),
-        )
-        own_source_id = _declared_source_id(normalized_source)
-        for row_id, row_source, _row_project, _row_channel in existing:
-            if _declared_source_id(row_source) == own_source_id:
-                # v2.5.2 additive: same id echo as the msg_id branch above.
-                return _store_skipped("duplicate content", row_id)
-        if any(row[2] == project_id and row[3] == channel for row in existing):
-            # The unique index allows one copy of a text per exact bucket, so
-            # this caller's copy cannot be written beside the other source's.
-            # Refused, not skipped: nothing was stored under this source, and a
-            # skip would have reported the write as harmlessly done.
-            return _store_rejected(
-                "this content is already stored under a different source id in the "
-                "same agent, project and channel; one copy is kept per bucket, so it "
-                "was not stored for this source"
-            )
+        answer = await _store_dedup_answer(db, agent_id, project_id, channel, msg_id, content, own_source_id)
+    if answer is not None:
+        return answer
 
     # Overflow tree (docs/OVERFLOW_TREE_DESIGN.md §3): whether this text runs past
     # the embedding window decides whether its nodes are queued. Asked alongside the
@@ -392,12 +444,25 @@ async def do_store(
     # transaction (and vice versa). The remote-index push below stays outside the
     # seam (network I/O, not a DB commit).
     async with transaction() as db:
-        cursor = await db.execute(
-            """INSERT OR IGNORE INTO memories
-               (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, embedding_model, channel)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, embedding_label, channel),
+        # The indexes are exact-bucket, and the probe above is wider: a bucket
+        # write is also answered by a copy in the global pool. A copy committed
+        # there since the probe ran is invisible to both, so the bucket copy was
+        # written beside it and a recall in the bucket returned the text twice.
+        # Under the write lock nothing can commit between this probe and the
+        # INSERT, so only the part of the scope the indexes cannot see is probed
+        # again; a copy in the writer's own bucket is still the index's to absorb.
+        answer = await _store_dedup_answer(
+            db, agent_id, project_id, channel, msg_id, content, own_source_id, beyond_bucket=True
         )
+        if answer is None:
+            cursor = await db.execute(
+                """INSERT OR IGNORE INTO memories
+                   (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, embedding_model, channel)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, embedding_label, channel),
+            )
+    if answer is not None:
+        return answer
     if cursor.rowcount == 0:
         # v2.5.2 additive asymmetry: the msg_id / content branches echo the
         # existing row's id from their SELECT probe. The OR IGNORE fallback fires
@@ -2366,6 +2431,14 @@ async def do_recall(
     embedded, so the caller need not embed the query again; and a cue the caller
     already read, which is not read a second time. Library arguments, not tool ones.
     """
+    # Half of a surrogate pair cannot be bound as text. Whether a recall survived
+    # one depended on which arm reached SQLite with it first, so it is refused
+    # here, in the recall's own failure shape, the same way every time.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, query=query, channel=channel, project_id=project_id, source_id=source_id
+    )
+    if surrogate:
+        return error_response(surrogate, messages=[])
     propagation_seat = _propagation_applies(propagation_seat, query)
     try:
         ledger = budget.Ledger.for_recall(
@@ -3539,6 +3612,10 @@ async def do_recall_with_context(
         session_key=session_key,
         excerpt_chars=excerpt_chars,
     )
+    if recall_result.get("ok") is False:
+        # A refused recall has no messages to merge, and answering with the
+        # context alone would read as a recall that matched nothing.
+        return recall_result
     messages = recall_result.get("messages", [])
 
     for entry in ctx:
@@ -3849,6 +3926,9 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
     """
     if not agent_id:
         return error_response("agent_id is required")
+    surrogate = lone_surrogate_issue(agent_id=agent_id)
+    if surrogate:
+        return error_response(surrogate)
     if not isinstance(refs, list) or not refs:
         return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' refs or range objects")
     if len(refs) > GET_CONTENTS_MAX_REFS:
@@ -4352,6 +4432,48 @@ async def do_archive_episode(
     too_long = _key_field_too_long(channel=channel, project_id=project_id)
     if too_long:
         return {"ok": False, "episode_id": None, "error": too_long}
+    # The two history stamps the row will hold, chosen as _prepare_episode_row
+    # chooses them, so what is judged below is what would be written.
+    start_time, end_time = _history_span(history)
+    # Half of a surrogate pair cannot be bound as text, and the INSERT raised
+    # after the embedding had been paid for, with no episode_id in the answer.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, summary=summary, keywords=keywords, channel=channel, project_id=project_id
+    )
+    for stamp in (start_time, end_time):
+        surrogate = surrogate or lone_surrogate_issue(timestamp=stamp)
+    if surrogate:
+        return {"ok": False, "episode_id": None, "error": surrogate}
+    # A history stamp ahead of the clock costs an episode what do_store's note on
+    # the same verdict says it costs a memory: the span is what the episode is
+    # scored, windowed and merged by, so it would read as this instant and never
+    # age. The same verdict, setting and answers as store; the end goes first
+    # because it is the later of the two whenever either one parses.
+    future_timestamp = next(
+        (issue for stamp in (end_time, start_time) if stamp and (issue := future_timestamp_issue(stamp))),
+        None,
+    )
+    future_mode = config.FUTURE_TIMESTAMP_MODE
+    if future_timestamp and future_mode != "off":
+        logger.warning(
+            "archive_episode: history timestamp %r is %.0fs ahead of this clock, past the %ss "
+            "CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS allowance. Raise the allowance if "
+            "this client is legitimate, or set CPERSONA_FUTURE_TIMESTAMP_MODE=reject to "
+            "refuse it.",
+            future_timestamp["timestamp"],
+            future_timestamp["ahead_by_seconds"],
+            future_timestamp["allowance_seconds"],
+        )
+        if future_mode == "reject":
+            return {
+                "ok": False,
+                "episode_id": None,
+                "error": (
+                    f"history timestamp {future_timestamp['timestamp']!r} is "
+                    f"{future_timestamp['ahead_by_seconds']:.0f}s ahead of this clock "
+                    f"(allowance {future_timestamp['allowance_seconds']}s)"
+                ),
+            }
 
     row = await _prepare_episode_row(
         agent_id, history, summary, keywords, resolved, project_id, channel
@@ -4369,6 +4491,8 @@ async def do_archive_episode(
         agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
     result = {"ok": True, "episode_id": episode_id}
+    if future_timestamp and future_mode == "warn":
+        result["timestamp_ahead_of_clock"] = future_timestamp
     # Overflow tree (§3). Measured on row[2] for the same reason as the index push:
     # the stored summary is the text the nodes will span.
     if await nodes.runs_past_window(row[2]):
@@ -4396,6 +4520,45 @@ async def do_archive_episode(
     if sanitize_content_with_flag(summary)[1] or keywords_truncated:
         result["truncated"] = True
     return result
+
+
+def _history_span(history: list) -> tuple[str | None, str | None]:
+    """The (start_time, end_time) an episode stores for ``history``: the caller's own
+    strings, chosen by instant. Shared by the prepare seam that writes them and by
+    do_archive_episode, which judges them before anything is paid for."""
+    # bug-299: the sibling of bug-291, on the write side rather than the read one.
+    # A history entry carries the same declared string fields an external_context
+    # entry does, and a non-string `timestamp` reached min()/max() unnormalised --
+    # so a list mixing an epoch int (or a dict) with an ISO string raised TypeError
+    # out of the whole call, BEFORE the embed and the INSERT. The episode was lost,
+    # not merely stamped poorly. `_ctx_string` reads such a value as absent, which
+    # is the ruling bug-291 already made for the read side: a stamp that is not a
+    # string names no instant, and coercing one invents a position in the
+    # chronology. Homogeneous epochs used to sort among themselves and be stored,
+    # but what they stored was an int in a column every other row fills with an ISO
+    # string -- a span that cannot be compared with its neighbours (the shape
+    # bug-286 is about). Absent is the honest answer for both.
+    timestamps = [stamp for msg in history if (stamp := _ctx_string(msg, "timestamp"))]
+    # bug-369: the two ends are chosen by parsed instant, and the ORIGINAL strings
+    # are what gets stored. min()/max() over the raw strings is byte order, and
+    # byte order equals chronological order only while every stamp carries the
+    # same offset -- a history whose first entry is an hour earlier in a different
+    # offset stored a start after its own end. Unlike the read-side ordering
+    # defects, this value is written into the row and never recomputed: it is what
+    # the confidence scoring and the content expansion read afterwards, so the
+    # episode is ranked and displayed at the wrong instant for the rest of its life.
+    # A stamp nobody can parse names no instant, so it takes no part in choosing
+    # the ends -- the same ruling _ctx_string already makes for a non-string one --
+    # and if none of them parse the span falls back to byte order rather than
+    # becoming absent, because two unparseable ends still bound the same history.
+    parseable = [(instant, stamp) for stamp in timestamps if (instant := _parse_timestamp_utc(stamp))]
+    if parseable:
+        start_time = min(parseable, key=lambda pair: pair[0])[1]
+        end_time = max(parseable, key=lambda pair: pair[0])[1]
+    else:
+        start_time = min(timestamps) if timestamps else None
+        end_time = max(timestamps) if timestamps else None
+    return start_time, end_time
 
 
 async def _prepare_episode_row(
@@ -4439,39 +4602,10 @@ async def _prepare_episode_row(
     keywords = _sanitize_content(keywords) if isinstance(keywords, str) else ""
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)
-
-    # bug-299: the sibling of bug-291, on the write side rather than the read one.
-    # A history entry carries the same declared string fields an external_context
-    # entry does, and a non-string `timestamp` reached min()/max() unnormalised --
-    # so a list mixing an epoch int (or a dict) with an ISO string raised TypeError
-    # out of the whole call, BEFORE the embed and the INSERT. The episode was lost,
-    # not merely stamped poorly. `_ctx_string` reads such a value as absent, which
-    # is the ruling bug-291 already made for the read side: a stamp that is not a
-    # string names no instant, and coercing one invents a position in the
-    # chronology. Homogeneous epochs used to sort among themselves and be stored,
-    # but what they stored was an int in a column every other row fills with an ISO
-    # string -- a span that cannot be compared with its neighbours (the shape
-    # bug-286 is about). Absent is the honest answer for both.
-    timestamps = [stamp for msg in history if (stamp := _ctx_string(msg, "timestamp"))]
-    # bug-369: the two ends are chosen by parsed instant, and the ORIGINAL strings
-    # are what gets stored. min()/max() over the raw strings is byte order, and
-    # byte order equals chronological order only while every stamp carries the
-    # same offset -- a history whose first entry is an hour earlier in a different
-    # offset stored a start after its own end. Unlike the read-side ordering
-    # defects, this value is written into the row and never recomputed: it is what
-    # the confidence scoring and the content expansion read afterwards, so the
-    # episode is ranked and displayed at the wrong instant for the rest of its life.
-    # A stamp nobody can parse names no instant, so it takes no part in choosing
-    # the ends -- the same ruling _ctx_string already makes for a non-string one --
-    # and if none of them parse the span falls back to byte order rather than
-    # becoming absent, because two unparseable ends still bound the same history.
-    parseable = [(instant, stamp) for stamp in timestamps if (instant := _parse_timestamp_utc(stamp))]
-    if parseable:
-        start_time = min(parseable, key=lambda pair: pair[0])[1]
-        end_time = max(parseable, key=lambda pair: pair[0])[1]
-    else:
-        start_time = min(timestamps) if timestamps else None
-        end_time = max(timestamps) if timestamps else None
+    # The other isolation axis, by the same rule as do_store: a None channel is
+    # the default channel, not a NOT NULL failure out of the INSERT.
+    channel = coerce_for_write(channel)
+    start_time, end_time = _history_span(history)
 
     embedding_blob = None
     embedding_label = ""

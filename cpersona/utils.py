@@ -553,6 +553,31 @@ def error_response(message: str, **extra) -> dict:
     return {"ok": False, "error": message, **extra}
 
 
+def lone_surrogate_issue(**fields: object) -> str | None:
+    """The refusal for the first text field holding a lone UTF-16 surrogate, else None.
+
+    A client that cuts a string by UTF-16 code units can send half of a surrogate
+    pair (JSON ``"\\udfff"``), and JSON decoding hands it over as a code point no
+    UTF-8 encoder accepts. SQLite binds text as UTF-8, so the value raised out of
+    the first statement that bound it -- the dedup probe, the search, the INSERT --
+    and the tool answered with a bare error instead of its own refusal shape. A
+    whole pair decodes to one ordinary character and passes. Fields that are not
+    strings are left to the caller's other checks.
+    """
+    for name, value in fields.items():
+        if not isinstance(value, str):
+            continue
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            return (
+                f"{name} holds a lone UTF-16 surrogate (U+{ord(value[exc.start]):04X} at "
+                f"position {exc.start}), half of a character that cannot be stored or "
+                "searched; send the whole character"
+            )
+    return None
+
+
 def _try_parse_json(s: str) -> dict:
     """Try to parse a string as JSON, return empty dict on failure."""
     try:

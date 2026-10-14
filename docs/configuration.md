@@ -200,6 +200,12 @@ is stored as it always has been, the write's answer carries
 `CPERSONA_FUTURE_TIMESTAMP_MODE=reject` to refuse such a write instead. Both
 paths are tested: enabling enforcement changes a setting, not a code path.
 
+`archive_episode` applies the same rule to the history timestamps it keeps as
+the episode's start and end, because those are what the episode is scored and
+ordered by. The allowance, the modes and the log line are the same; under
+`warn` its answer carries `timestamp_ahead_of_clock`, and `reject` refuses the
+archive.
+
 Two things are deliberately outside this setting.
 
 A restore (`import_memories`) reports such rows and imports them anyway, in

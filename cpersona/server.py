@@ -269,6 +269,13 @@ async def do_store_boundary(
             "agent_id is required: it can be omitted only on a connection whose ACL grants "
             "write access to exactly one agent"
         )
+    if message and message.get("timestamp") == "":
+        # One tool, one reading of a field: the top-level form treats an empty
+        # timestamp as omitted (_flat_message), so the message form does too. Kept,
+        # it stored a row with no time at all, outside every time cue and every
+        # timestamp check and repair, where the same call in the other form is
+        # dated now.
+        message = {key: value for key, value in message.items() if key != "timestamp"}
     if not message:
         message = _flat_message(agent_id, content, msg_id, source, timestamp, metadata)
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)

@@ -69,7 +69,7 @@ import numpy as np
 
 from . import associations, blocks, config, coverage, excerpts, far_seats, generation, nodes, tokens, vector
 from .database import connection
-from .utils import _parse_timestamp_utc, error_response
+from .utils import _parse_timestamp_utc, error_response, lone_surrogate_issue
 
 logger = logging.getLogger(__name__)
 
@@ -1552,6 +1552,13 @@ async def do_reconstruct(
             else f"mode must be one of {sorted(MODE_CAPS)}"
         )
         return error_response(message, items=[], returned_count=0)
+    # Half of a surrogate pair cannot be bound as text, so the first search that
+    # bound it raised and the call answered with no items field at all.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, query=query, channel=channel, project_id=project_id, source_id=source_id
+    )
+    if surrogate:
+        return error_response(surrogate, items=[], returned_count=0)
     if lite:
         mode = MODE_LITE
     # The providers this reconstruction runs with, read once (cpersona/providers.py).
