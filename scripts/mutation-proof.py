@@ -160,9 +160,9 @@ MUTATIONS: list[Mutation] = [
         # `if not dry_run:` appears six times; anchor on the memory-record body
         # that follows it so the match is unambiguous.
         find="""    if not tally.dry_run:
-        source = json.dumps(record.get("source", {}))""",
+        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
         replace="""    if True:
-        source = json.dumps(record.get("source", {}))""",
+        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
         # This entry has been classified three times, and the history is the
         # useful part — it is a record of an invariant gaining a layer.
         #
@@ -212,9 +212,9 @@ MUTATIONS: list[Mutation] = [
         also=(
             (
                 """    if not tally.dry_run:
-        source = json.dumps(record.get("source", {}))""",
+        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
                 """    if True:
-        source = json.dumps(record.get("source", {}))""",
+        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
             ),
         ),
         breaks="dry_run both runs on the WRITE seam AND executes its INSERTs — the preview commits real rows",
@@ -366,7 +366,7 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_future_timestamp.py",),
         target="the restore seam's report — faithful, but not silent (bug-293)",
         file="cpersona/admin_handlers.py",
-        find='    if future_timestamp_issue(record.get("timestamp", "")):\n        tally.future_timestamps += 1',
+        find='    if future_timestamp_issue(timestamp):\n        tally.future_timestamps += 1',
         replace='    if False:\n        tally.future_timestamps += 1',
         breaks="a restore carries rows stamped ahead of the clock back in and reports nothing, which is the one seam that deliberately does not refuse them",
         expect="test_future_timestamp.py::test_a_restore_reports_a_future_stamp_and_imports_it_anyway",
@@ -3333,8 +3333,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_evidence_sequence.py',),
         target='evidence sequence — the budget takes the longest prefix, it does not skip',
         file='cpersona/reconstruct.py',
-        find='        if position and used + cost > budget:\n            break\n        used += cost\n        shown[i]',
-        replace='        if position and used + cost > budget:\n            continue\n        used += cost\n        shown[i]',
+        find='        if position and used + cost > budget:\n            break\n        used += cost\n        taken.setdefault(i, []).append(j)',
+        replace='        if position and used + cost > budget:\n            continue\n        used += cost\n        taken.setdefault(i, []).append(j)',
         breaks='a short passage taken at a small budget is removed at a larger one, so raising the budget removes text',
         expect='test_reconstruct_evidence_sequence.py::test_raising_the_budget_never_removes_a_passage',
     ),
@@ -3343,8 +3343,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_evidence_sequence.py',),
         target="evidence sequence — a passage costs what it adds to its record's quote",
         file='cpersona/reconstruct.py',
-        find='        cost = _quoted_length(before + [(start, end)]) - _quoted_length(before)\n',
-        replace='        cost = end - start\n',
+        find='        yield (end - start) + separator * (max(0, len(by_start) - 1) - max(0, before - 1))\n',
+        replace='        yield end - start\n',
         breaks='the separators are not paid for, so the quotes carry more than the budget and used_budget lies',
         expect='test_reconstruct_evidence_sequence.py::test_used_counts_exactly_what_the_quotes_carry',
     ),
@@ -3413,8 +3413,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_evidence_sequence.py',),
         target='evidence passages — a range governing two blocks is offered once',
         file='cpersona/reconstruct.py',
-        find='        if any(start < e and s < end for s, e in governed):\n            continue\n        governed.append((start, end))\n',
-        replace='        governed.append((start, end))\n',
+        find='        if before and governed[before - 1][1] > start:\n            continue\n        bisect.insort(governed, (start, end))\n',
+        replace='        bisect.insort(governed, (start, end))\n',
         breaks='the same text is offered twice, so a quote repeats itself and the budget pays for it twice',
         expect='test_reconstruct_evidence_sequence.py::test_two_blocks_governed_by_one_range_give_one_passage',
     ),
