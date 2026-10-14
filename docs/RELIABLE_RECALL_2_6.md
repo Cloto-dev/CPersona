@@ -472,8 +472,11 @@ effective_budget = min(budget_base, max_budget)
   `used_tokens`. The vocabulary ships with the package, so the count needs no
   network. Under a mode the response is the longest prefix of the payload
   sequence whose serialized form fits the cap, so a larger cap never removes an
-  item or an excerpt; a cap the first passage alone exceeds answers
-  `error: "cap_below_minimum"`. A call that names no mode is unchanged.
+  item or an excerpt. When not even the first passage fits, its item keeps the
+  most claims that do, the cut stated in `claims_omitted`; a cap that the first
+  passage with its head claim and the response's own fields exceeds answers
+  `error: "cap_below_minimum"`, and its `detail` says whether the passage alone
+  is over. A call that names no mode is unchanged.
   - `mode: "lite"` is the preset 2.6.5a3 introduced as `lite=true`, which
     remains its other name (the two together are refused). The budget is 2,800
     characters unless the caller names one (an operator-forced budget still

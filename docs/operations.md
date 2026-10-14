@@ -39,7 +39,11 @@ Recommended, in order:
    declared associations (entities, aliases, mentions and relations) as well
    as the records, and a restore points them at the records it restores. A
    file written by an earlier version has no associations in it and still
-   imports as it always did.
+   imports as it always did. An import refuses a file larger than
+   `CPERSONA_MAX_IMPORT_BYTES` (100 MiB by default), and an export has no such
+   cap: compare the size of each backup file with it, and raise it
+   ([configuration](configuration.md#export-and-import)) before a restore needs
+   it.
 
 **The `.db` is not the whole instance.** State lives outside it that none of
 the backup forms above touch:
@@ -61,10 +65,19 @@ the backup forms above touch:
   — the operator instructions served to every client.
 - The ACL file, if `CPERSONA_ACL_FILE` is set. Restoring without it changes
   who may connect.
+- **The alias ledger**, if any ACL row sets `per_subject`:
+  `alias_ledger.json` beside the database, or the file
+  `CPERSONA_ALIAS_LEDGER_FILE` names. The server writes it when a subject
+  first signs in, and it is the only record of which `u-` agent belongs to
+  which person. Restore the database without it and the server refuses to
+  start, naming those agents. Restore the ledger to that path, then start the
+  server again. Do not rename the agents or remove `per_subject` instead:
+  either one leaves every signed-in subject with a fresh alias and none of the
+  memory it stored.
 - **The external vector index**, under `CPERSONA_VECTOR_SEARCH_MODE=remote`
   with `CPERSONA_STORE_BLOB=false`. In that configuration the embeddings exist
-  only in the remote index, so restoring the database and all three files
-  above still comes back with no vector arm. `check_health` reports it as
+  only in the remote index, so restoring the database and every file above
+  still comes back with no vector arm. `check_health` reports it as
   `no_local_vector_fallback`. Back the index up on the same schedule, or keep
   `STORE_BLOB=true` so the `.db` stays self-sufficient.
 - **Not** `<CPERSONA_DB_PATH>.memories.vecindex` or `.episodes.vecindex`, the
@@ -108,10 +121,15 @@ the calling agent should be instructed to watch the first.
    still *skips* rather than fails when the endpoint is unreachable, but the
    endpoint itself is now watched: `embedding_backend` reports `warn`, with
    the failing call's own evidence, when a configured backend does not answer.
-4. **Read `not_probed` for what it is.** `check_health(fix=false)` makes no
-   network call, so it cannot test liveness. It says so — `embedding_backend`
-   returns `not_probed` — rather than leaving you to infer health from
-   silence.
+   When the run's own probe reaches the backend and gets a vector back, that
+   answer outranks a fault latched earlier: a restarted backend reads as
+   connected, and its NULL rows are re-embedded on the same run.
+4. **Read `not_probed` for what it is.** `check_health(fix=false)` does not
+   judge liveness. It can still contact the backend — the dimension check
+   embeds a probe text, the model check asks the backend for its identity,
+   and the node scan asks for token counts — but it reads none of those
+   calls as liveness evidence. It says so — `embedding_backend` returns
+   `not_probed` — rather than leaving you to infer health from silence.
 
     A `fix=true` run returns it too when the probe was answered from the
     embedding client's five-minute embed cache: the dimension comes back
@@ -386,9 +404,10 @@ With `CPERSONA_CUE_COARSE_ENABLED` unset, its default, a time cue asks the file
 only: without a usable one the part of a period past the window is not
 searched, and the recall says so in `time_cue.remainder`. While the far seats
 are off, no recall then pays for a missing file, so the same four states are
-reported as observations (info), not warnings. A recall whose scope holds 1,000 or more records past the window
-with no file also carries a `suggestion`, once per session, for the agent to
-relay to the user. Building the file is never automatic. `check_health(checks=["coarse_index"], fix=true)` builds the file again;
+reported as observations (info), not warnings. A recall that searches vectors locally, whose scope holds 1,000 or more
+records with a stored vector past the window and no file, also carries a
+`suggestion`, once per session, for the agent to relay to the user. Building the file is never automatic. `check_health(checks=["coarse_index"], fix=true)` builds the file again, from
+the first record past the window;
 it holds every agent's records, so the repair asks for write access to every
 agent. The findings reach `get_session_findings` like every other check's, so a
 monitor can hear of the cost before anyone notices it as latency. Whether a

@@ -39,7 +39,9 @@ from cpersona import block_index
 from cpersona import blocks
 from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+# Re-exported: benchmarks/benchmark_latency.py imports the client from here; the
+# server itself builds one through vector.build_embedding_client().
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: F401
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
 
 from cpersona import session
@@ -71,13 +73,7 @@ from cpersona.admin_handlers import (
 from cpersona.config import (
     AUTO_CALIBRATE,
     CALIBRATE_ON_MODEL_CHANGE,
-    EMBEDDING_API_KEY,
-    EMBEDDING_API_URL,
-    EMBEDDING_CACHE_SIZE,
-    EMBEDDING_CACHE_TTL,
     EMBEDDING_MODE,
-    EMBEDDING_MODEL,
-    EMBEDDING_URL,
     STORE_BLOB,
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
@@ -635,8 +631,10 @@ async def do_reconstruct_boundary(
         budget=budget,
         lite=lite,
         mode=mode,
-        # What _oc_annotate adds below, so that a mode's token cap counts it too.
-        envelope=_oc_annotate({}, project_id, pid, warning),
+        # What _oc_annotate adds below, and what the ACL guard adds after this
+        # returns (the resolved_agent_id echo), so that a mode's token cap and
+        # used_tokens count them too.
+        envelope={**_oc_annotate({}, project_id, pid, warning), **acl.response_echo()},
         **({"time_cue": time_cue} if time_cue else {}),
     )
     # bug-485: no preview cut here. Heads are already cut where they are quoted --
@@ -1053,6 +1051,7 @@ registry.auto_tool(
             },
             "id": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": "Optional caller id: a later store with the same id in the same project is skipped as a duplicate.",
             },
             "source": {
@@ -1086,6 +1085,7 @@ registry.auto_tool(
             },
             "timestamp": {
                 "type": "string",
+                "maxLength": config.MAX_TIMESTAMP_LENGTH,
                 "description": "ISO-8601 with an offset, e.g. '2026-07-22T12:00:00+00:00'. Default: now.",
             },
             "metadata": {
@@ -1110,23 +1110,25 @@ registry.auto_tool(
                 "description": "The older form of content, id, source, timestamp and metadata.",
                 "properties": {
                     "content": {"type": "string"},
-                    "id": {"type": "string"},
+                    "id": {"type": "string", "maxLength": config.MAX_KEY_FIELD_LENGTH},
                     "source": {
                         # bug-398: the shapes the write seam folds. bug-140: null and
                         # {} converge at the write seam; recall echoes {} for both.
                         "type": ["object", "string", "null"],
                         "description": "Also a bare 'user' / 'assistant' word, or null, stored as the anonymous {}.",
                     },
-                    "timestamp": {"type": "string"},
+                    "timestamp": {"type": "string", "maxLength": config.MAX_TIMESTAMP_LENGTH},
                     "metadata": {"type": "object"},
                 },
             },
             "channel": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": "Memory channel for context separation (e.g. 'chat'). Default: '' (shared).",
             },
             "project_id": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": (
                     "Isolation bucket; omit or '' for the global pool (a recall in 'X' reads "
                     "'X' and the global pool). '@auto' resolves this agent's default from the "
@@ -1938,10 +1940,12 @@ registry.auto_tool(
             },
             "project_id": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": "v2.4.17 isolation axis. Omit or pass '' for the global pool. " + _AUTO_PROJECT_ID_CLAUSE,
             },
             "channel": {
                 "type": "string",
+                "maxLength": config.MAX_KEY_FIELD_LENGTH,
                 "description": (
                     "v2.4.22 conversation-channel tag (e.g. a Discord channel id). "
                     "Default '' (= unscoped). Channel-scoped recall returns episodes "
@@ -2403,10 +2407,10 @@ registry.auto_tool(
     # was reported that way to someone whose import had silently embedded nothing.
     "Read it as a verdict on what is IN the database, not on whether the "
     "pipeline that fills it is working: a corpus whose every embedding is NULL scores healthy while "
-    "semantic recall is dead. Nothing contacts the embedding backend unless fix=true, so "
-    "on a report-only run the liveness findings cannot appear and their absence is not "
-    "evidence the backend answered; the `null_embedding` finding says why its repair "
-    "cannot run. "
+    "semantic recall is dead. Only fix=true judges the backend's liveness: a report-only "
+    "run still contacts it (a probe embed, its identity, token counts) but reads none of "
+    "that as liveness, so a quiet report-only run is not evidence the backend answered; "
+    "the `null_embedding` finding says why its repair cannot run. "
     # bug-230: an unrecognised name used to select nothing and answer 'healthy'.
     "`checks` runs a subset: an unknown name is rejected (ok=false), and every response "
     "echoes `checks_run`. "
@@ -3400,7 +3404,7 @@ def _resolve_embedding_timeout() -> int:
     BOTH the stdio and streamable-http transports. config.parse_int warns and
     falls back to the default instead.
     """
-    return config.parse_int("CPERSONA_EMBEDDING_TIMEOUT_SECS", 30)
+    return config.embedding_timeout_secs()
 
 
 def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.AclConfig | None" = None):
@@ -3705,8 +3709,12 @@ async def _assert_no_reserved_agent_ids() -> None:
     (bug-267): they are the server's own prior issuance, and refusing them
     meant every restart after the first mint failed here — measured in
     production, 2026-08-31. A collision is a configuration error, not a
-    migration: the operator either renames the colliding agents
-    (merge_memories) or does not enable per_subject on this database.
+    migration. The common cause is a restore that brought the database back
+    without the ledger file beside it, so the refusal names that file and
+    offers restoring it first: renaming the agents (merge_memories) or
+    dropping per_subject would leave every signed-in subject with a fresh
+    alias and none of the memory it stored. Those two are the remedy only for
+    ids the server never issued.
     """
     from cpersona import database
     from cpersona.isolation import isolation_where
@@ -3723,12 +3731,18 @@ async def _assert_no_reserved_agent_ids() -> None:
     known_aliases = ledger.issued_aliases() if ledger is not None else frozenset()
     collisions = acl.reserved_agent_id_collisions(agent_ids, known_aliases)
     if collisions:
+        ledger_path = ledger.path if ledger is not None else config.alias_ledger_path()
         raise RuntimeError(
             "per_subject is configured but the database already uses reserved "
             f"agent ids: {', '.join(collisions)}. The @me sentinel and the "
             f"{acl.ALIAS_PREFIX!r} prefix belong to subject aliasing "
-            "(docs/OAUTH_DESIGN.md §12), and the alias ledger records none of "
-            "these ids as issued; rename those agents (merge_memories) "
+            f"(docs/OAUTH_DESIGN.md §12), and the alias ledger at {ledger_path} "
+            "records none of these ids as issued. If this database was restored "
+            "from a backup, restore the alias ledger saved with it to that path "
+            "(alias_ledger.json beside the database, or CPERSONA_ALIAS_LEDGER_FILE) "
+            "and start again: the two remedies that follow would leave every signed-in "
+            "subject with a fresh alias and none of the memory it stored. Only "
+            "for ids the server never issued: rename those agents (merge_memories) "
             "or remove per_subject from the ACL file"
         )
 
@@ -3790,21 +3804,10 @@ async def main():
     # contacted.
     config.assert_embedding_mode_supported()
 
-    if EMBEDDING_MODE != "none":
-        # _vendored_mcp_common.EmbeddingClient takes env-derived config via constructor
-        # args (it does no env reading of its own), so cache size / TTL /
-        # timeout are passed explicitly here to preserve CPERSONA_EMBEDDING_*
-        # override behavior.
-        vector._embedding_client = EmbeddingClient(
-            mode=EMBEDDING_MODE,
-            http_url=EMBEDDING_URL,
-            api_key=EMBEDDING_API_KEY,
-            api_url=EMBEDDING_API_URL,
-            model=EMBEDDING_MODEL,
-            cache_size=EMBEDDING_CACHE_SIZE,
-            cache_ttl=EMBEDDING_CACHE_TTL,
-            timeout=_resolve_embedding_timeout(),
-        )
+    vector._embedding_client = vector.build_embedding_client()
+    if vector._embedding_client is not None:
+        # Built by the same constructor the checkup CLI uses, so the two run the
+        # check registry against the same backend configuration.
         await vector._embedding_client.initialize()
         logger.info("Embedding client ready (mode=%s)", EMBEDDING_MODE)
         # Learn what is behind /embed before anything derives a vector from it, so

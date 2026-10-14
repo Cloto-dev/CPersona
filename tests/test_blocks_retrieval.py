@@ -99,8 +99,17 @@ def lexical_off(monkeypatch):
     measured before building one. Leaving it on would make these tests pass
     with the arm under test removed — so it is off, and what is left is the
     semantic path the tail was unreachable on.
+
+    FTS off alone no longer does that: the memory keyword search then answers
+    through its LIKE fallback, which reaches the record by the same words. So
+    the keyword search is switched off as well.
     """
     monkeypatch.setattr(memory_handlers, "FTS_ENABLED", False)
+
+    async def no_keyword_search(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(memory_handlers, "_search_memories_keyword", no_keyword_search)
 
 
 async def _store(tmp, texts, agent=AGENT):

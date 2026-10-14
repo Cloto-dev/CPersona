@@ -124,7 +124,10 @@ the watermark and the named rows are read live, so no stored record is ever
 invisible to this path for want of a rebuild. The change log of that section
 applies here too: a record the file holds whose vector, axes, `created_at` or
 `timestamp` changed since the build, or which was deleted, is read live, so it
-takes the bits, the scan position and the period it has now.
+takes the bits, the scan position and the period it has now. Nothing rebuilds
+the file on its own, so those rows grow until the next build; they are read in
+the same bounded chunks as the live store, and each one is placed and ranked or
+dropped as it arrives, so a late rebuild costs time, not memory.
 
 **Why a file of its own, and not more arrays in the contiguous index.** Two
 reasons hold whatever the loader does:
@@ -305,13 +308,21 @@ recall that searched the remainder, or whose period fits the cap, carries
 nothing more, and a traced recall names the supplier on the stage only then.
 
 **Nothing builds the index; the agent is told instead.** In the default mode a
-recall whose scope holds at least `INDEX_MATTERS_ROWS` (1,000) records past the
-window, with no coarse index that loads, carries a `suggestion` once per session
-(once per process without a session key). It is the contract of the `update`
-notice: absent unless there is something to say, and decided from the pool
-count the quality gate already took and a cached check of the file, so it adds
-no query to the recall. It holds a `message` for the agent to relay and the `fix` call,
-`check_health(checks=["coarse_index"], fix=true)`. The build writes every
+recall that searches vectors locally, whose scope holds at least
+`INDEX_MATTERS_ROWS` (1,000) records with a stored vector past the window, with
+no coarse index that loads, carries a `suggestion` once per session (once per
+process without a session key). The scope is the one the cue arm searches,
+source filter included, and the rows are the ones the build would hold: without
+an embedding client, or under remote vector search, there is no remainder for
+the index to extend, and nothing is said. It is the contract of the `update`
+notice: absent unless there is something to say. The pool count the quality
+gate already took, the session and a cached check of the file decide most
+recalls; one count of the scope's embedded rows is added only when all of them
+leave something to say. It holds a `message` for the agent to relay and the `fix` call,
+`check_health(checks=["coarse_index"], fix=true)`. That call, and the one the
+`time_cue.remainder` hint names, builds an absent file from the first record
+past the window, although the check reports the absence unasked only from the
+line above. The build writes every
 agent's records into one file, so it needs write access to every agent, and
 the user decides. An operator who set the mode explicitly is not told.
 

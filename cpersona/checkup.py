@@ -16,9 +16,13 @@ is intentionally not meant for timers — detect unattended, repair deliberately
 What ``status: healthy`` and exit 0 mean, and what they do not (bug-428): the
 verdict scores what is IN the database, not whether the pipeline that fills it
 works. A corpus where every embedding is NULL is internally consistent, so it
-reports healthy while semantic recall is dead. Without ``--fix`` nothing here
-contacts the embedding backend, so the liveness findings cannot appear on a
-report-only run and their absence says nothing about the backend. When rows are
+reports healthy while semantic recall is dead. The run installs the embedding
+client the server would build from the same environment, so the client-dependent
+checks (dimension drift, the NULL-embedding backlog, ``--fix`` re-embedding) judge
+the same backend ``check_health`` does; the dimension check embeds one probe text
+on every run, as it does there. Liveness is only probed under ``--fix``, so the
+liveness findings cannot appear on a report-only run and their absence says
+nothing about the backend. When rows are
 missing embeddings the ``null_embedding`` finding carries the reason its repair
 cannot run — that line, not the exit code, is what says whether an install is
 actually working.
@@ -127,10 +131,19 @@ def _build_parser() -> argparse.ArgumentParser:
 async def _run(args) -> int:
     # Imported here, after --db has been exported, because cpersona.config
     # resolves CPERSONA_DB_PATH at import time.
-    from cpersona import database
+    from cpersona import config, database, vector
     from cpersona.checks import exit_code
     from cpersona.database import close_db
     from cpersona.maintenance_handlers import do_check_health, do_deep_check
+
+    # The server refuses to start on a mode the embedding client cannot act on
+    # (bug-275), so a gate that passed the same configuration would be passing a
+    # deployment that does not run.
+    try:
+        config.assert_embedding_mode_supported()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     if not args.fix:
         # bug-105: a report-only run must not write — without this, get_db()'s
@@ -138,7 +151,17 @@ async def _run(args) -> int:
         # and crashed outright on a read-only file/filesystem.
         database.SKIP_BOOT_MIGRATIONS = True
 
+    # The client the server would build. Without it every client-dependent check
+    # ran as if the mode were none: dimension drift went unchecked, a NULL-embedding
+    # backlog was demoted to info, and --fix had nothing to re-embed through, so
+    # this gate passed what check_health calls unhealthy. The previous singleton is
+    # put back afterwards for an in-process caller.
+    previous_client = vector._embedding_client
+    client = vector.build_embedding_client()
+    vector._embedding_client = client
     try:
+        if client is not None:
+            await client.initialize()
         report = await do_check_health(agent_id=args.agent, fix=args.fix)
 
         if args.deep:
@@ -159,6 +182,9 @@ async def _run(args) -> int:
         # Always release the read/write connections; each owns a non-daemon
         # worker thread that would otherwise block interpreter shutdown.
         await close_db()
+        if client is not None:
+            await client.close()
+        vector._embedding_client = previous_client
 
     code = exit_code(report["severity_summary"], strict=args.strict)
 

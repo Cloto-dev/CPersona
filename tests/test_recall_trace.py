@@ -131,7 +131,10 @@ async def test_a_disabled_arm_is_confirmed_as_candidate_miss(fake_embedding_clie
         return []
 
     monkeypatch.setattr(memory_handlers, "_search_vector", no_vector)
+    # Every arm disabled: FTS off, and the keyword search too, since with FTS off
+    # it still answers through its LIKE fallback.
     monkeypatch.setattr(memory_handlers, "FTS_ENABLED", False)
+    monkeypatch.setattr(memory_handlers, "_search_memories_keyword", no_vector)
     out = await memory_handlers.do_recall(AGENT, QUERY, limit=10, trace=True)
     assert confirm(out["trace"], {refs[0]}) == "CANDIDATE_MISS"
 

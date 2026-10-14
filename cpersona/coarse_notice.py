@@ -8,16 +8,24 @@ build to the user: the server detects, the user decides, the agent relays — th
 line the findings surface already draws (`checks.check_coarse_index`).
 
 It rides on recall for the reason the `update` notice does: recall is the one call
-every connected agent makes. It costs the recall nothing it did not already pay: the
-count is the pool count the quality gate reads, and the index state is a cached
-file stat. It is absent unless there is something to say, and said once per declared
-session (once per process without one), the contract of `update_check.notice`.
+every connected agent makes. It is absent unless there is something to say, and said
+once per declared session (once per process without one), the contract of
+`update_check.notice`.
+
+What it suggests is the call it names, so it is said only where that call builds a
+file a time cue then reads: the count is the check's own (rows with a stored
+vector), taken in the scope the cue arm searches, source filter included, and
+nothing is said where a recall has no local vector search for the remainder to
+extend. The count is one statement, read only once the cheap gates have passed:
+the mode, the search, the pool count the quality gate already read (an upper bound
+on it), the session, and the index state, a cached file stat.
 """
 
 from __future__ import annotations
 
 from cpersona import coarse_index
 from cpersona import config
+from cpersona import vector
 
 # Same bound, and the same reason, as update_check.NOTICE_SESSION_CAP: the key space
 # is client-supplied, and eviction only forgets that a session was already told, so
@@ -41,11 +49,65 @@ def _index_usable() -> bool:
         return False
 
 
+def local_vector_search() -> bool:
+    """Whether a recall embeds its query and ranks the local store with it.
+
+    The time cue's vector half, and so its remainder, exists only then: without an
+    embedding client there is no query vector, and with remote vector search the
+    service ranks under its own window. The predicate the recall path gates the
+    remote branch on, read from the same module.
+    """
+    client = vector._embedding_client
+    if not client:
+        return False
+    return not (vector.VECTOR_SEARCH_MODE == "remote" and client._http_url)
+
+
+def _told(session_key: str, declared: bool) -> bool:
+    return session_key in _told_sessions if declared else _notice_emitted
+
+
+async def scope_notice(
+    *,
+    agent_id: str,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+    pool_records: int,
+    window: int,
+    session_key: str = "",
+    declared: bool = False,
+) -> dict | None:
+    """`notice` for a recall's scope, counted as the check and the cue arm count.
+
+    ``pool_records`` is every memory in the scope without the source filter, the
+    count the recall already holds; the rows with a stored vector are never more,
+    so below the line it decides without a statement.
+    """
+    if config.CUE_COARSE_MODE != "auto" or not local_vector_search():
+        return None
+    from cpersona import checks
+    from cpersona.database import connection
+    from cpersona.isolation import isolation_where, source_id_where
+
+    if pool_records - window < checks.INDEX_MATTERS_ROWS or _told(session_key, declared) or _index_usable():
+        return None
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
+    src = source_id_where(source_id)
+    async with connection() as db:
+        rows = await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM memories WHERE {iso.clause} AND embedding IS NOT NULL{src.and_clause}",
+            (*iso.params, *src.params),
+        )
+    return notice(int(rows[0][0]), window, session_key, declared)
+
+
 def notice(records: int, window: int, session_key: str = "", declared: bool = False) -> dict | None:
     """The ``suggestion`` payload for a recall response, or None.
 
-    ``records`` is the number of memories in the recall's scope, ``window`` the
-    number a time cue's vector search reads. Something to say means: the cue mode
+    ``records`` is the number of memories with a stored vector in the recall's
+    scope (`scope_notice` counts them), ``window`` the number a time cue's vector
+    search reads. Something to say means: the cue mode
     is the default (auto), the scope holds at least ``checks.INDEX_MATTERS_ROWS``
     records past the window — the line from which the health check reports the
     index — and no coarse index loads. An operator who set the mode explicitly
@@ -74,7 +136,7 @@ def notice(records: int, window: int, session_key: str = "", declared: bool = Fa
         "records": records,
         "past_window": past,
         "message": (
-            f"This scope holds {records} memories, and a time cue's vector search reads the "
+            f"This scope holds {records} memories with a stored vector, and a time cue's vector search reads the "
             f"{window} most recently stored, so {past} are past it. Building the coarse index "
             "lets a time cue search the rest of its period. Building it needs write access "
             "to every agent on this server. Tell the user, and build it only if they agree."

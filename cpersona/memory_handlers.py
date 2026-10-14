@@ -54,8 +54,10 @@ from cpersona.config import (
     EPISODE_DECAY_RATE,
     EPISODE_PENALTY_ENABLED,
     FTS_ENABLED,
+    MAX_KEY_FIELD_LENGTH,
     MAX_MEMORIES,
     MAX_METADATA_LENGTH,
+    MAX_TIMESTAMP_LENGTH,
     PRIOR_AGE_ANCHOR,
     PRIOR_AGE_FLOOR,
     PRIOR_AGE_RATE,
@@ -156,6 +158,18 @@ def _store_rejected(reason: str) -> dict:
     return {"ok": False, "result": "rejected", "reason": reason}
 
 
+def _key_field_too_long(**fields: object) -> str | None:
+    """The refusal for the first key field longer than MAX_KEY_FIELD_LENGTH, else None.
+
+    Shared by store and archive_episode so both name the field and the bound the
+    same way. A value that is not a string is left to the caller's other checks.
+    """
+    for name, value in fields.items():
+        if isinstance(value, str) and len(value) > MAX_KEY_FIELD_LENGTH:
+            return f"{name} too long ({len(value)} chars, max {MAX_KEY_FIELD_LENGTH})"
+    return None
+
+
 def _store_skipped(reason: str, mem_id: int | None = None) -> dict:
     """Nothing was written, and that is the correct outcome for this request."""
     body = {"ok": True, "result": "skipped", "reason": reason}
@@ -226,6 +240,17 @@ async def do_store(
 
     if not raw_content:
         return _store_rejected("empty content")
+
+    # The key fields are bounded like the JSON sidecars below, and refused rather
+    # than cut: a shortened id, channel or project_id names a different row or
+    # bucket. See MAX_KEY_FIELD_LENGTH for why they need a bound at all.
+    too_long = _key_field_too_long(id=msg_id, channel=channel, project_id=project_id)
+    if too_long:
+        return _store_rejected(too_long)
+    # Only the length is refused here. A stamp nothing parses is still stored and
+    # left to the invalid_timestamp check, which owns those rows.
+    if isinstance(timestamp, str) and len(timestamp) > MAX_TIMESTAMP_LENGTH:
+        return _store_rejected(f"timestamp too long ({len(timestamp)} chars, max {MAX_TIMESTAMP_LENGTH})")
 
     # audit C12: content has been capped since 2.1, its JSON sidecars never were.
     # A field that cannot be truncated (valid JSON has no valid prefix) and is not
@@ -560,7 +585,9 @@ async def _recall_cascade(
         )
         for row in fts_results:
             rid = ("ep", row["id"])
-            if rid not in seen_ids:
+            # The exclusion the vector stage applied to this episode applies here too,
+            # or which retriever reached it would decide whether it is excluded.
+            if rid not in seen_ids and not _content_excluded(row["content"], _excl):
                 results.append(row)
                 seen_ids.add(rid)
 
@@ -667,13 +694,15 @@ async def _lexical_arms(
     arms in line produced. Episodes lack per-user source tagging, so a per-user
     source_id filter normally suppresses them; a channel filter (v2.4.22) scopes
     episodes to one channel and is allowed even with source_id set (grounding
-    path)."""
+    path).
+
+    With FTS disabled the memories arm still runs: ``_search_memories_keyword``
+    then answers through its LIKE fallback, as it does for cascade, so the
+    keyword channel stays in the fusion. Episodes have no such fallback."""
     episodes: list[dict] = []
     memories: list[dict] = []
-    if not FTS_ENABLED:
-        return episodes, memories
     async with beside(db) as db:
-        if not source_id or channel:
+        if FTS_ENABLED and (not source_id or channel):
             episodes = await _search_episodes_fts(
                 db, agent_id, query, depth, channel=channel, project_id=project_id, extra_terms=lexical_terms
             )
@@ -821,6 +850,10 @@ async def _recall_rrf(
     fts_ep_results, fts_mem_results = await lexical.outcome()
     if fts_ep_results:
         for rank, row in enumerate(fts_ep_results):
+            # Excluded as the vector arm excludes it, so an excluded episode the
+            # vector arm skipped cannot come back on this arm's vote alone.
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
             rid = ("ep", row["id"])
             if rid not in doc_map:
                 doc_map[rid] = row
@@ -966,6 +999,9 @@ async def _recall_rsf(
     ep_rows, mem_rows = await lexical.outcome()
     if ep_rows:
         for row in ep_rows:
+            # Excluded as the vector channel excludes it (see _recall_rrf).
+            if _content_excluded(row.get("content", ""), _excl):
+                continue
             rid = ("ep", row["id"])
             doc_map.setdefault(rid, row)
             bm = row.get("_bm25")
@@ -2039,7 +2075,9 @@ async def _block_reserved_rows(
                 }
             else:
                 episode = ep_rows.get(hit.parent_id)
-                if episode is None:
+                # The exclusion the memory branch applies, on the content recall shows
+                # for an episode ("[Episode] <summary>"), as every other arm reads it.
+                if episode is None or _content_excluded(episode["content"], exclude_set):
                     continue
                 built = dict(episode)
             # Why this row is here, carried on the row and rendered in the response.
@@ -2195,9 +2233,15 @@ async def _search_cue_arm(
                     note.update(mode=mode, supplier=supplier)
                     if left_out:
                         note["left_out"] = True
+            # The capped part and the remainder are two statements, and scan position
+            # is counted over the live table, so a write committed between them shifts
+            # every position and the capped part's last row comes back as the
+            # remainder's first -- one record, two votes in the fusion below. The capped
+            # part's entry is kept, as the far window defers to the near one (bug-334).
+            capped_ids = {mem_id for _, mem_id, _ in ranked}
             merged = sorted(
                 [(0, ordinal, mem_id, score) for ordinal, mem_id, score in ranked]
-                + [(1, hit.position, hit.id, hit.cosine) for hit in remainder],
+                + [(1, hit.position, hit.id, hit.cosine) for hit in remainder if hit.id not in capped_ids],
                 key=lambda s: (-s[3], s[0], s[1]),
             )
             ranked = [(position, mem_id, score) for _, position, mem_id, score in merged[:depth]]
@@ -2218,12 +2262,13 @@ async def _search_cue_arm(
 
     # An empty query has no ranking to offer, so the keyword half returns the period's
     # newest records by their own time, as the episodes below are ordered by theirs.
-    if FTS_ENABLED or not query.strip():
-        keyword = await _search_memories_keyword(
-            db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
-            extra_terms=lexical_terms, window=(start, end),
-        )
-        lists.append([{**row, "_rid": ("mem", row["id"])} for row in keyword])
+    # With FTS disabled it runs as well, through the LIKE fallback, as the fusions'
+    # keyword arm does.
+    keyword = await _search_memories_keyword(
+        db, agent_id, query, depth, channel=channel, project_id=project_id, source_id=source_id,
+        extra_terms=lexical_terms, window=(start, end),
+    )
+    lists.append([{**row, "_rid": ("mem", row["id"])} for row in keyword])
 
     if not source_id or channel:
         ep_iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
@@ -3290,8 +3335,13 @@ async def _do_recall(
         result["update"] = update
     # The coarse index suggestion (docs/BINARY_COARSE_SEARCH_DESIGN.md §7): the same
     # contract, for a scope that has grown past the window with no index to search
-    # the rest of a time cue's period. The count is the pool count read above.
-    suggestion = coarse_notice.notice(pool_memories, MAX_MEMORIES, session_key_resolved, session_key_declared)
+    # the rest of a time cue's period. Counted as the check that builds it counts, in
+    # the scope the cue arm searches; the pool count read above bounds it from above.
+    suggestion = await coarse_notice.scope_notice(
+        agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
+        pool_records=pool_memories, window=MAX_MEMORIES,
+        session_key=session_key_resolved, declared=session_key_declared,
+    )
     if suggestion is not None:
         result["suggestion"] = suggestion
     return result
@@ -4182,7 +4232,11 @@ async def _search_memories_keyword(
         # A period is measured on the records' own time, so its newest records are
         # newest by that time (bug-502). created_at is when a row was stored, which an
         # import leaves unrelated to the period, and at one-second resolution ties.
-        newest_first = "datetime(timestamp) DESC, id ASC" if window is not None else "created_at DESC"
+        # Without a period this is the "recent memories" listing, ordered by when rows
+        # were stored. A batch stored within one second ties on created_at, and the
+        # rowid breaks the tie the same way: the row stored last comes first, so the
+        # limit keeps the newest rows of that second rather than its earliest.
+        newest_first = "datetime(timestamp) DESC, id ASC" if window is not None else "created_at DESC, id DESC"
         rows = await db.execute_fetchall(
             f"""SELECT id, msg_id, content, source, timestamp
                FROM memories
@@ -4247,7 +4301,7 @@ async def _search_memories_keyword(
            FROM memories
            WHERE {iso.clause}{src_clause_bare}
            AND {like_clause}
-           ORDER BY created_at DESC
+           ORDER BY created_at DESC, id DESC
            LIMIT ?""",
         (*iso.params, *src_params_bare, *patterns, scan_limit),
     )
@@ -4294,6 +4348,10 @@ async def do_archive_episode(
             "episode_id": None,
             "error": "summary is required to archive an episode",
         }
+    # The same bound store applies to these keys, for the same reason.
+    too_long = _key_field_too_long(channel=channel, project_id=project_id)
+    if too_long:
+        return {"ok": False, "episode_id": None, "error": too_long}
 
     row = await _prepare_episode_row(
         agent_id, history, summary, keywords, resolved, project_id, channel

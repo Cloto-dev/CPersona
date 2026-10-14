@@ -79,9 +79,12 @@ something that used to work and stopped.
   repairable later (§6).
 - **`check_health(agent_id, fix=true)`** — probes the backend and reports
   `embedding_backend_unreachable` (`warn`) with the failing call's own evidence
-  when a configured backend does not answer. No finding means it answered.
-- **`check_health(agent_id, fix=false)`** — makes no network call, so it cannot
-  test liveness, and says so: `embedding_backend_not_probed` (`info`). A fault
+  when a configured backend does not answer. No finding means it answered; an
+  answer to this run's own probe outranks a fault latched earlier.
+- **`check_health(agent_id, fix=false)`** — does not judge liveness. It may
+  still contact the backend (the dimension check's probe embed, the backend's
+  identity, token counts for the node scan) but reads none of those calls as
+  liveness, and says so: `embedding_backend_not_probed` (`info`). A fault
   a recall already latched is still reported. Do not read a quiet `fix=false`
   run as evidence that the backend is up. A `fix=true` run reports the same
   finding when the probe hit the embed cache instead of the endpoint; its

@@ -289,14 +289,16 @@ async def _from_index(db, query_bits, dim, k, path, *, agent_id, project_id, cha
             )
             return None
 
-        tail = await vector._index_tail_rows(
+        # The range runs to the end of the store, so nothing bounds the rows written
+        # since the build but the next rebuild: they are read through a cursor, never
+        # whole (`_rank`).
+        tail = await vector._index_tail_statement(
             db, index, agent_id=agent_id, project_id=project_id, channel=channel,
             source_id=source_id, scan_limit=-1, table="memories", window=period, changed=changed,
         )
-        if tail is None:
+        found = await _rank(db, index, selected, tail, query_bits, dim, k, start, end)
+        if found is None:
             return None
-
-        found = _rank(index, selected, tail, query_bits, dim, k, start, end)
         if not await _all_exist(db, list(found.ids)):
             logger.warning(
                 "Coarse index offered a record deleted since the build; "
@@ -309,40 +311,69 @@ async def _from_index(db, query_bits, dim, k, path, *, agent_id, project_id, cha
         return None
 
 
-def _rank(index, selected, tail, query_bits, dim, k, start, end) -> Candidates:
+async def _rank(db, index, selected, tail, query_bits, dim, k, start, end) -> Candidates | None:
     """Merge the index rows and the live tail into scan order, cut the range, keep the best `k`.
+
+    `tail` is the statement that reads the rows the index cannot answer for
+    (`vector._index_tail_statement`), or None when there are none. They are read
+    through a cursor, `VECTOR_SCAN_CHUNK_ROWS` at a time, as the live supplier
+    reads the store: nothing rebuilds the file on its own, so the rows written
+    since the build grow without bound, and read whole they cost more than the
+    live store the index exists to beat.
 
     The tail is interleaved, not prepended: an imported record keeps its own
     `created_at` under a fresh id, so a row written after the build can sort
     anywhere (`vector._merge_index_and_tail`). Each tail row's place is found by
     a binary search over the index rows on the key the SQL orders by, so the
     merge costs a search per tail row rather than a comparison per index row.
+    That place is final when the row is read, because the tail arrives in scan
+    order: the rows before it are the index rows the search counts and the tail
+    rows already read. So a chunk's rows are ranked or dropped as it arrives,
+    and only their places among the index rows (one integer a row) are kept, for
+    the index rows' own places.
+
+    None when a tail row carries another width, for the reason
+    `vector._index_tail_rows` gives.
     """
-    n, t = len(selected), len(tail)
+    n, t = len(selected), 0
+    best = _Best(k, dim)
+    width = dim * 4
+    inserted_parts: list[np.ndarray] = []
+    if tail is not None:
+        async with db.execute(*tail) as cursor:
+            while True:
+                rows = await cursor.fetchmany(max(1, VECTOR_SCAN_CHUNK_ROWS))
+                if not rows:
+                    break
+                if any(row[3] != width for row in rows):
+                    return None
+                inserted = np.array([_insertion(index, selected, row) for row in rows], dtype=np.int64)
+                place = inserted + np.arange(t, t + len(rows), dtype=np.int64)
+                inserted_parts.append(inserted)
+                t += len(rows)
+                in_range = place >= start
+                if end is not None:
+                    in_range &= place < end
+                keep = np.flatnonzero(in_range)
+                if len(keep):
+                    matrix = np.frombuffer(b"".join(rows[j][2] for j in keep), dtype="<f4").reshape(len(keep), dim)
+                    best.add(
+                        [rows[j][0] for j in keep],
+                        blocks.hamming_matrix(coarse_index.sign_bits(matrix), query_bits),
+                        place[keep],
+                    )
     if t:
-        inserted = np.array([_insertion(index, selected, row) for row in tail], dtype=np.int64)
+        inserted = np.concatenate(inserted_parts)
         index_place = np.arange(n, dtype=np.int64) + np.searchsorted(inserted, np.arange(n), side="right")
-        tail_place = inserted + np.arange(t, dtype=np.int64)
     else:
         index_place = np.arange(n, dtype=np.int64)
-        tail_place = np.empty(0, dtype=np.int64)
     stop = n + t if end is None else end
 
-    best = _Best(k, dim)
     take = np.flatnonzero((index_place >= start) & (index_place < stop))
     for lo in range(0, len(take), _GATHER_ROWS):
         part = take[lo : lo + _GATHER_ROWS]
         positions = selected[part]
         best.add(index.ids[positions], blocks.hamming_matrix(index.bits[positions], query_bits), index_place[part])
-
-    in_range = [j for j in range(t) if start <= tail_place[j] < stop]
-    if in_range:
-        matrix = np.frombuffer(b"".join(tail[j][2] for j in in_range), dtype="<f4").reshape(len(in_range), dim)
-        best.add(
-            [tail[j][0] for j in in_range],
-            blocks.hamming_matrix(coarse_index.sign_bits(matrix), query_bits),
-            tail_place[in_range],
-        )
     return best.answer("index")
 
 

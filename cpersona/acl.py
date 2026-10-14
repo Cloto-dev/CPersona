@@ -259,6 +259,22 @@ def current_principal() -> Principal | None:
     return _current_principal.get()
 
 
+# The fields the guard adds to a handler's response after the handler returns
+# (the resolved_agent_id echo, and alias_issued on first issuance), published
+# for the duration of the call. A handler that counts its own response —
+# reconstruct's mode cap and used_tokens — reads them here and counts them too:
+# added only afterwards, they would make the JSON sent larger than the count it
+# reports and, when the cap binds, larger than the cap.
+_response_echo: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "cpersona_acl_response_echo", default=None
+)
+
+
+def response_echo() -> dict:
+    """The fields the guard will add to the response of the call in progress."""
+    return dict(_response_echo.get() or {})
+
+
 def caller_holds_every_agent(required: int = PERM_WRITE) -> bool:
     """Whether the current caller may change state every agent shares.
 
@@ -1033,18 +1049,27 @@ def _wrap(name: str, handler):
                     "agent_id"
                 ),
             )
-        result = await handler(arguments)
-        if resolved_alias and isinstance(result, dict):
+        echo: dict = {}
+        if resolved_alias:
             # The @auto idiom (resolved_project_id): a resolution the server
             # performed is echoed so the caller can see — and later address —
             # what it actually reached. The alias, never the raw subject.
-            result["resolved_agent_id"] = resolved_alias
+            echo["resolved_agent_id"] = resolved_alias
             if alias_issued:
-                result["alias_issued"] = True
-        elif defaulted_agent and isinstance(result, dict):
+                echo["alias_issued"] = True
+        elif defaulted_agent:
             # The same echo for an agent the connection named: the caller sent
             # none, so the response is the only place it can learn which it got.
-            result["resolved_agent_id"] = defaulted_agent
+            echo["resolved_agent_id"] = defaulted_agent
+        # Published before the handler runs, so a response that counts its own
+        # tokens counts these fields as well (response_echo).
+        echo_token = _response_echo.set(echo)
+        try:
+            result = await handler(arguments)
+        finally:
+            _response_echo.reset(echo_token)
+        if isinstance(result, dict):
+            result.update(echo)
         return result
 
     guarded._acl_guarded = True  # type: ignore[attr-defined]

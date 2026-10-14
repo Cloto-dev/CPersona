@@ -299,7 +299,7 @@ async def test_import_rejects_unconfined_and_oversized_paths(clean_db, monkeypat
     result = await admin_handlers.do_import_memories(str(inside))
     assert result == {
         "ok": False,
-        "error": f"input file exceeds MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {inside}",
+        "error": f"input file exceeds CPERSONA_MAX_IMPORT_BYTES ({config.MAX_IMPORT_BYTES}): {inside}",
     }
 
     rows = await clean_db.execute_fetchall("SELECT content FROM memories WHERE agent_id = 'unsafe'")

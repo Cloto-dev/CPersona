@@ -41,6 +41,20 @@ def _parse_choice(env_key: str, default: str, allowed: tuple[str, ...]) -> str:
     return default
 
 
+# An optional override (unset means "no override") has no number to fall back to:
+# substituting one turns a typo into an active override for every call. So a value
+# that does not parse is ignored, as if unset, and the warning says so.
+def _parse_optional_int(env_key: str) -> int | None:
+    raw = os.environ.get(env_key)
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        logger.warning("bug-133: invalid int for %s=%r; the override is ignored (unset)", env_key, raw)
+        return None
+
+
 def _parse_float(env_key: str, default: float) -> float:
     raw = os.environ.get(env_key)
     if raw is None or raw == "":
@@ -241,19 +255,14 @@ CUE_COARSE_MODE = _cue_coarse_mode(os.environ.get("CPERSONA_CUE_COARSE_ENABLED")
 # which asked for 10. Left unset it follows the maximum down, so an operator who
 # lowers only the maximum is not refused at startup for a default nobody set; a
 # default set explicitly is taken as written and that refusal stands.
+# A default that does not parse is treated as unset, so it follows the maximum down
+# too -- falling back to a bare 10 refused startup over a value nobody wrote.
 RECONSTRUCT_MAX_COUNT = max(1, _parse_int("CPERSONA_RECONSTRUCT_MAX_COUNT", 10))
-_default_count_raw = os.environ.get("CPERSONA_RECONSTRUCT_DEFAULT_COUNT")
-RECONSTRUCT_DEFAULT_COUNT = (
-    max(1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", 10))
-    if _default_count_raw not in (None, "")
-    else min(10, RECONSTRUCT_MAX_COUNT)
+RECONSTRUCT_DEFAULT_COUNT = max(
+    1, _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_COUNT", min(10, RECONSTRUCT_MAX_COUNT))
 )
-_forced_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_COUNT")
-RECONSTRUCT_FORCED_COUNT = (
-    max(1, _parse_int("CPERSONA_RECONSTRUCT_FORCED_COUNT", 1))
-    if _forced_raw not in (None, "")
-    else None
-)
+_forced_count = _parse_optional_int("CPERSONA_RECONSTRUCT_FORCED_COUNT")
+RECONSTRUCT_FORCED_COUNT = max(1, _forced_count) if _forced_count is not None else None
 # Breadth. Invariant 7 of section 7: none of these may be derived from `count`.
 # They are the bounds the caller declares (or the server defaults), and the test
 # that holds the line is "change count alone and the candidate id set does not
@@ -305,12 +314,7 @@ RECONSTRUCT_SEQUENCES = ("items", "evidence", "whole")
 RECONSTRUCT_SEQUENCE = _parse_choice("CPERSONA_RECONSTRUCT_SEQUENCE", "items", RECONSTRUCT_SEQUENCES)
 RECONSTRUCT_DEFAULT_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", 4000)
 RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", 20000)
-_forced_budget_raw = os.environ.get("CPERSONA_RECONSTRUCT_FORCED_BUDGET")
-RECONSTRUCT_FORCED_BUDGET = (
-    _parse_int("CPERSONA_RECONSTRUCT_FORCED_BUDGET", RECONSTRUCT_DEFAULT_BUDGET)
-    if _forced_budget_raw not in (None, "")
-    else None
-)
+RECONSTRUCT_FORCED_BUDGET = _parse_optional_int("CPERSONA_RECONSTRUCT_FORCED_BUDGET")
 
 
 def validate_reconstruct_counts() -> None:
@@ -423,8 +427,11 @@ VECTOR_INDEX_MAX_EXCLUDED_IDS = max(0, _parse_int("CPERSONA_VECTOR_INDEX_MAX_EXC
 # round-trips made while holding the lock.
 REEMBED_ROW_CAP = max(1, _parse_int("CPERSONA_REEMBED_ROW_CAP", 5000))
 # Embedded rows `deep_near_duplicate` compares, bounding an O(n^2) dense cosine
-# matrix (`unit @ unit.T` plus `np.triu`) — the memory, not the time, is what
-# decides this one. Measured on 1024-d float32: n=1,000 is 17 ms / 17 MB peak,
+# matrix (`unit @ unit.T`) — the memory, not the time, is what decides this one.
+# The pairs above the threshold are counted per row and only the samples are
+# built, so the peak is the matrix whatever the pair count. Measured on 1024-d
+# float32 when an `np.triu` copy of the matrix was also made (an upper bound
+# now): n=1,000 is 17 ms / 17 MB peak,
 # n=2,000 is 18 ms / 52 MB, n=5,000 is 103 ms / 266 MB, n=10,000 is 392 ms /
 # 982 MB. 5,000 covers 3.3% of a 150,000-row corpus for a transient 266 MB;
 # 10,000 would ask an 8 GB machine for a gigabyte of scratch space inside a
@@ -532,6 +539,17 @@ def validate_content_caps() -> None:
 # oversized_content check reports those after the fact, which is the right division
 # — bound what arrives from outside, detect what is being moved within.
 MAX_METADATA_LENGTH = _parse_int("CPERSONA_MAX_METADATA_LENGTH", 8000)
+
+# The fields store takes beside the payload. The caller's id, channel and
+# project_id are keys: each is written into the row and into the dedup indexes, so
+# an unbounded one cost several times its own size per call while the content
+# beside it was capped. A timestamp is one ISO-8601 instant, at most about 32
+# characters spelled out. Like the JSON sidecars, neither is cut to fit -- a
+# shortened key names a different bucket or row -- so a longer value is refused.
+# Fixed rather than configurable: both are published as the schema's maxLength,
+# the same 256 the session key carries.
+MAX_KEY_FIELD_LENGTH = 256
+MAX_TIMESTAMP_LENGTH = 64
 
 # The caps above are the last line, not the first: every one of them is applied
 # by a tool handler, and a handler runs only after the ASGI body has been
@@ -704,6 +722,12 @@ VECTOR_MIN_SIMILARITY = _parse_float("CPERSONA_VECTOR_MIN_SIMILARITY", 0.3)
 
 EMBEDDING_CACHE_SIZE = _parse_int("CPERSONA_EMBEDDING_CACHE_SIZE", 256)
 EMBEDDING_CACHE_TTL = _parse_int("CPERSONA_EMBEDDING_CACHE_TTL", 300)
+
+
+def embedding_timeout_secs() -> int:
+    """CPERSONA_EMBEDDING_TIMEOUT_SECS, read when a client is built (C10: the
+    bug-133 warn-and-fall-back parse, so a '30s' value cannot abort startup)."""
+    return parse_int("CPERSONA_EMBEDDING_TIMEOUT_SECS", 30)
 
 # Degraded-advisory runtime guard (v2.4.33): when embeddings are unavailable at runtime
 # (mode=none, or a configured http endpoint is unreachable) do_recall attaches an
@@ -892,8 +916,21 @@ CALIBRATE_FLOOR = _parse_float("CPERSONA_CALIBRATE_FLOOR", 0.05)
 # the handler rejects (or the reverse) cannot drift into existence — the same
 # single-definition treatment CANONICAL_SOURCE_TYPES got for the store schema.
 CALIBRATE_METHODS = ("separation", "percentile", "zscore")
-CALIBRATE_METHOD = os.environ.get("CPERSONA_CALIBRATE_METHOD", "separation")
+# Every calibration that omits `method` (the startup guard, set_recall_precision) uses
+# this default, and the handler refuses anything outside the enum: read raw, a
+# mis-cased or padded value made each of them fail. Parsed like the other word settings.
+CALIBRATE_METHOD = _parse_choice("CPERSONA_CALIBRATE_METHOD", "separation", CALIBRATE_METHODS)
 CALIBRATE_PERCENTILE = _parse_float("CPERSONA_CALIBRATE_PERCENTILE", 0.95)
+# The same default-for-every-call shape: the handler takes a fraction in (0, 1] or a
+# percent up to 100 and refuses anything else (NaN included), so a value outside that
+# range made every calibration fail. It falls back and says so instead.
+if not 0.0 < CALIBRATE_PERCENTILE <= 100.0:
+    logger.warning(
+        "invalid value for CPERSONA_CALIBRATE_PERCENTILE=%r; expected a fraction in (0, 1] "
+        "or a percent up to 100, using default 0.95",
+        CALIBRATE_PERCENTILE,
+    )
+    CALIBRATE_PERCENTILE = 0.95
 # v2.4.24 — method="separation" positive proxy: memories stored within this window
 # (minutes) are treated as same-session ≈ related, a representative (non-extreme)
 # proxy for the two-population operating-point search. Falls back to nearest-neighbour
@@ -990,7 +1027,10 @@ PRIOR_AGE_ANCHOR = _parse_choice("CPERSONA_PRIOR_AGE_ANCHOR", "newest", ("newest
 # releases, kept so a deployment can go back by setting rather than by code.
 CONFIDENCE_ORDERING = _parse_choice("CPERSONA_CONFIDENCE_ORDERING", "fusion", ("fusion", "legacy"))
 
-RECALL_MODE = os.environ.get("CPERSONA_RECALL_MODE", "rrf")
+# Consumers compare this exactly with "rrf" / "rsf" and send anything else down the
+# cascade, so a mis-cased or padded value silently changed the whole recall pipeline.
+RECALL_MODES = ("rrf", "rsf", "cascade")
+RECALL_MODE = _parse_choice("CPERSONA_RECALL_MODE", "rrf", RECALL_MODES)
 # 2.5.0: MCP-boundary preview tier for recall responses. Message
 # content longer than this many characters is returned as a pure prefix (plus
 # content_truncated/content_len markers) unless the caller opts out with

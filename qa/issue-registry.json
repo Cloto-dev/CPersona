@@ -9,11 +9,11 @@
       "discovered": "2026-06-14T00:00:00Z",
       "version": "2.4.22",
       "commit": "77c9d34",
-      "file": "config.py",
-      "pattern": "CPERSONA_EMBEDDING_MODE\", \"none\"",
-      "expected": "absent",
+      "file": "cpersona/config.py",
+      "pattern": "os\\.environ\\.get\\(\"CPERSONA_EMBEDDING_MODE\"\\) or os\\.environ\\.get\\(\"EMBEDDING_MODE\"\\)",
+      "expected": "present",
       "status": "fixed",
-      "fix_note": "config.py now reads the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys with a CPERSONA_* override (specific > generic, matching the CScheduler convention and the marketplace catalog), so a catalog-installed cpersona enables embeddings instead of silently running FTS-only. Pending version bump."
+      "fix_note": "config.py now reads the generic EMBEDDING_MODE / EMBEDDING_HTTP_URL keys with a CPERSONA_* override (specific > generic, matching the CScheduler convention and the marketplace catalog), so a catalog-installed cpersona enables embeddings instead of silently running FTS-only. Pending version bump. Re-anchored with bug-592 on the package module: the old anchor named the root config.py removed in 2.4.34, which the verifier counted as fixed whatever the code did. The pattern pins the fallback to the generic name; tests/test_bug592_moved_anchors.py::test_the_generic_embedding_names_configure_embeddings turns red without it."
     },
     {
       "id": "bug-002",
@@ -22,11 +22,11 @@
       "discovered": "2026-06-14T00:00:00Z",
       "version": "2.4.22",
       "commit": "77c9d34",
-      "file": "memory_handlers.py",
-      "pattern": "fts_query = \" \"\\.join",
-      "expected": "absent",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "terms\\.extend\\(tok\\[i : i \\+ 3\\] for i in range\\(len\\(tok\\) - 2\\)\\)",
+      "expected": "present",
       "status": "fixed",
-      "fix_note": "Replaced query.split() with _build_fts_query() (CJK trigram-OR decomposition) so the trigram FTS index is exercised for space-less scripts. Paired with the RSF merge (RECALL_MODE=rsf) which keeps the keyword channel's bm25 magnitude. Pending version bump."
+      "fix_note": "Replaced query.split() with _build_fts_query() (CJK trigram-OR decomposition) so the trigram FTS index is exercised for space-less scripts. Paired with the RSF merge (RECALL_MODE=rsf) which keeps the keyword channel's bm25 magnitude. Pending version bump. Re-anchored with bug-592 on the package module (the old anchor named the root memory_handlers.py). The pattern pins the trigram decomposition of a space-less run; tests/test_bug592_moved_anchors.py::test_a_japanese_query_becomes_trigrams_not_one_phrase turns red without it."
     },
     {
       "id": "bug-003",
@@ -5055,12 +5055,12 @@
       "version": "2.5.12b1",
       "fixed_in": "2.5.12b2",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "FROM memories WHERE agent_id = \\? AND id > \\? ORDER BY id LIMIT \\?",
+      "pattern": "FROM memories WHERE \\+agent_id = \\? AND id > \\? ORDER BY id LIMIT \\?",
       "expected": "present",
       "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Page the copy passes the way the export path already does, so the resident set is bounded by the chunk rather than by the corpus, and the lock is held only for the writes.",
-      "fix_note": "Both copy passes read the source in keyset pages of 500 -- the bound the export path in the same file uses -- so the resident set of one read is bounded by the page rather than by the corpus. Keyset rather than one open cursor because the copy inserts into the table it is reading on the same connection."
+      "fix_note": "Both copy passes read the source in keyset pages of 500 -- the bound the export path in the same file uses -- so the resident set of one read is bounded by the page rather than by the corpus. Keyset rather than one open cursor because the copy inserts into the table it is reading on the same connection. Re-anchored with bug-541: the paged read now spells the agent term `+agent_id`, so the planner walks the primary key from the last id instead of sorting the agent's rows for every page."
     },
     {
       "id": "bug-346",
@@ -6994,14 +6994,14 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/blocks.py",
-      "pattern": "unmatched\\.update\\(pos for _, pos in pending\\[depth \\+ 1 :\\]\\)",
+      "pattern": "for closer, pos in pending\\[depth \\+ 1 :\\]:",
       "expected": "present",
       "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Track each bracket kind separately, or reset inner depth when the enclosing quotation closes.",
       "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Reproduced by running it.",
       "fixed_in": "2.6.0",
-      "fix_note": "The first pass of _bracket_depth now lets a closing bracket close the nearest opening it matches, marking every opening left above it on the stack as unmatched; before, only the top of the stack could close, so one unclosed ( inside 「…」 held the 」 back and both were read as unclosed. The second pass is unchanged: with the true strays removed it pairs the rest exactly as the first pass did. A closer that matches nothing on the stack still closes nothing. Regression: tests/test_blocks_segment.py::test_an_unclosed_bracket_inside_a_quotation_does_not_open_the_quotation, with the finding's own control (the same text without the ( divides identically) and a case where the closer passes over an unclosed opening and no further."
+      "fix_note": "The first pass of _bracket_depth now lets a closing bracket close the nearest opening it matches, marking every opening left above it on the stack as unmatched; before, only the top of the stack could close, so one unclosed ( inside 「…」 held the 」 back and both were read as unclosed. The second pass is unchanged: with the true strays removed it pairs the rest exactly as the first pass did. A closer that matches nothing on the stack still closes nothing. Regression: tests/test_blocks_segment.py::test_an_unclosed_bracket_inside_a_quotation_does_not_open_the_quotation, with the finding's own control (the same text without the ( divides identically) and a case where the closer passes over an unclosed opening and no further. Re-anchored with bug-536: the matching pass now keeps a stack per closing bracket, so it is linear; the line that marks every opening above the match as unclosed is the one pinned."
     },
     {
       "id": "bug-474",
@@ -7447,13 +7447,13 @@
       "version": "2.6.0b2",
       "fixed_in": "2.6.2",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "id ASC\" if window is not None else \"created_at DESC\"",
+      "pattern": "id ASC\" if window is not None else \"created_at DESC, id DESC\"",
       "expected": "present",
       "status": "fixed",
       "category": "nondeterministic-order",
       "fix_sketch": "Either order the cue arm's empty-query list by the rows' own time (datetime(timestamp) DESC, id ASC), the axis the period is measured on -- a change to which rows a cue's seats take -- or keep created_at, give it a deterministic tie-break, and seed the test with distinct created_at values so it states the order it relies on.",
       "note": "Found while running mutation baselines for the 2.6.0 LOW batch. Choosing between the two is a decision about which time a cue ranks by, not a test repair.",
-      "fix_note": "With a period, the empty-query keyword search orders by datetime(timestamp) DESC, id ASC -- the records' own time, the axis the period is measured on, with the row id settling equal times -- and without one it keeps created_at DESC, so only the cue arm changes. The alternative, keeping created_at with a tie-break and seeding the test with distinct created_at values, would have made the order deterministic but left it wrong: an import stores rows in an order unrelated to their own time, and created_at would then decide which of a period's rows the cue's seats hold. The episodes of the same arm were already ordered by their own time. Regression: tests/test_recall_cue.py::test_an_empty_query_orders_the_period_by_the_records_time_not_by_when_they_were_stored and ::test_records_of_one_time_in_the_period_come_back_in_the_order_they_were_stored (created_at written one second apart, running against the period's order), ::test_the_keyword_search_without_a_period_still_lists_the_most_recently_stored_first; mutations M216 and M217."
+      "fix_note": "With a period, the empty-query keyword search orders by datetime(timestamp) DESC, id ASC -- the records' own time, the axis the period is measured on, with the row id settling equal times -- and without one it keeps created_at DESC, so only the cue arm changes. The alternative, keeping created_at with a tie-break and seeding the test with distinct created_at values, would have made the order deterministic but left it wrong: an import stores rows in an order unrelated to their own time, and created_at would then decide which of a period's rows the cue's seats hold. The episodes of the same arm were already ordered by their own time. Regression: tests/test_recall_cue.py::test_an_empty_query_orders_the_period_by_the_records_time_not_by_when_they_were_stored and ::test_records_of_one_time_in_the_period_come_back_in_the_order_they_were_stored (created_at written one second apart, running against the period's order), ::test_the_keyword_search_without_a_period_still_lists_the_most_recently_stored_first; mutations M216 and M217. Re-anchored with bug-575: the listing without a period now breaks a created_at tie by id."
     },
     {
       "id": "bug-503",
@@ -7571,12 +7571,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": ".github/workflows/publish.yml",
-      "pattern": "run: uv build$",
+      "pattern": "^    needs: \\[resolve, test\\]$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "release-gate",
       "fix_sketch": "Before building, make publish.yml require a successful CI run for the tagged commit (query its check runs or combined status, or run the test job inside the workflow). Also add the maintenance branches to ci.yml's push trigger, or cover them with a pull-request ruleset that cannot be bypassed.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed against the workflows and the repository's tag and check-run history. The variant where ci.yml's cancel-in-progress leaves a tagged master commit without finished CI was not tested; see bug-594."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed against the workflows and the repository's tag and check-run history. The variant where ci.yml's cancel-in-progress leaves a tagged master commit without finished CI was not tested; see bug-594.",
+      "fix_note": "The PyPI upload job now needs a test job that runs ruff, the issue registry and the full suite on the same resolved tag ref, and ci.yml runs on pushes to N.N.x maintenance branches. Reverting publish.yml turns tests/test_2611a2_w15.py::test_publish_uploads_only_after_the_suite_passes_on_the_same_commit red; reverting ci.yml turns ::test_a_push_to_a_maintenance_line_runs_ci red."
     },
     {
       "id": "bug-511",
@@ -7614,13 +7615,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/acl.py",
-      "pattern": "result\\[\"resolved_agent_id\"\\] = resolved_alias",
+      "file": "cpersona/server.py",
+      "pattern": "envelope=\\{\\*\\*_oc_annotate\\(\\{\\}, project_id, pid, warning\\), \\*\\*acl\\.response_echo\\(\\)\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Make the ACL echo part of the counted envelope, for example by having the guard publish the fields it will add (through a contextvar or argument) so `do_reconstruct_boundary` merges them before settling, or by re-fitting and re-settling a mode response after adding them. Extend the boundary test to the per-subject path.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced through the request handler with a per_subject client."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced through the request handler with a per_subject client.",
+      "fix_note": "do_reconstruct_boundary merges acl.response_echo(), the resolved_agent_id/alias_issued fields the ACL guard publishes for the call in progress and applies after the handler returns, into the envelope reconstruct counts. used_tokens and the mode cap therefore include them. Reverting it (dropping **acl.response_echo(), or the guard's publication in acl._wrap) turns tests/test_2611a2_w13.py::test_used_tokens_counts_the_alias_echo and ::test_the_cap_holds_with_the_alias_echo_included red. The pattern matches exactly one line with grep -E and grep -P. The current open entry pins acl.py `result\\[\"resolved_agent_id\"\\] = resolved_alias`, a line the fix removed, so verify-issues.sh now reports bug-513 STALE until the entry is updated."
     },
     {
       "id": "bug-514",
@@ -7676,12 +7678,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/config.py",
-      "pattern": "RECALL_MODE = os\\.environ\\.get\\(\"CPERSONA_RECALL_MODE\", \"rrf\"\\)",
+      "pattern": "RECALL_MODE = _parse_choice\\(\"CPERSONA_RECALL_MODE\", \"rrf\", RECALL_MODES\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "configuration",
       "fix_sketch": "Read both settings through `_parse_choice`: ('rrf', 'rsf', 'cascade') with default 'rrf', and CALIBRATE_METHODS with default 'separation'. A mis-cased value is then normalised, and an unknown one falls back to the default with a WARNING.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced for both settings. Same class as bug-321 and bug-371 (sibling settings moved to _parse_choice), and the contract stated in bug-133; related to bug-231 (the handler-side method check)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced for both settings. Same class as bug-321 and bug-371 (sibling settings moved to _parse_choice), and the contract stated in bug-133; related to bug-231 (the handler-side method check).",
+      "fix_note": "CPERSONA_RECALL_MODE and CPERSONA_CALIBRATE_METHOD are read through _parse_choice (trimmed, case-folded, an unknown value falls back to rrf / separation with a WARNING), and an out-of-range CPERSONA_CALIBRATE_PERCENTILE falls back to 0.95 with a WARNING. Reverting turns tests/test_2611a2_w02.py::test_recall_mode_is_trimmed_and_case_folded and ::test_mis_cased_calibrate_method_still_calibrates red."
     },
     {
       "id": "bug-518",
@@ -7720,12 +7723,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "embedding_dim = int\\(vecs\\.shape\\[1\\]\\)",
+      "pattern": "embedding_dim = await _corpus_embedding_dim_on\\(db\\) or sample_dim",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Persist the corpus-wide modal width (what `_corpus_embedding_dim()` returns, as the startup probe reads it) instead of the width of the calling agent's sample. Alternatively, store widths per agent and key both the restore check and the carry check on them, so a per-agent calibration cannot change the global staleness verdict.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related: bug-344 (the probe-side fix this write side undoes); its regression tests seed a single agent and cannot see this variant."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related: bug-344 (the probe-side fix this write side undoes); its regression tests seed a single agent and cannot see this variant.",
+      "fix_note": "do_calibrate_threshold fingerprints the sidecar (and the carry / refresh checks) with the corpus-wide modal width from _corpus_embedding_dim_on, the same query the startup guard runs, instead of its own sample's width; the response still reports the sample width. Reverting turns tests/test_2611a2_w02.py::test_mixed_width_corpus_settles_after_one_boot and ::test_calibrating_an_off_mode_agent_keeps_the_corpus_width_and_the_others red."
     },
     {
       "id": "bug-521",
@@ -7784,10 +7788,11 @@
       "file": "cpersona/admin_handlers.py",
       "pattern": "if real == root or real\\.startswith\\(root \\+ os\\.sep\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
       "fix_sketch": "Add a test that sets EXPORT_DIR=<tmp>/exports and asserts that export to <tmp>/exports-old/x.jsonl and import from <tmp>/exports2/any.jsonl are both rejected and that no file is created, with an inside-root control that succeeds.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a mutation: the bare-prefix variant wrote into the sibling directory and the suite stayed green. Pins the bug-054 and bug-130 confinement."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a mutation: the bare-prefix variant wrote into the sibling directory and the suite stayed green. Pins the bug-054 and bug-130 confinement.",
+      "fix_note": "Test-only: pins the separator-aware containment check in _confine_io_path. tests/test_2611a2_w01.py::test_sibling_directory_sharing_the_root_prefix_is_outside_the_export_dir turns red if the check falls back to a bare prefix match (export into <root>-old succeeds)."
     },
     {
       "id": "bug-525",
@@ -7812,12 +7817,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "exceeds MAX_IMPORT_BYTES \\(\\{config\\.MAX_IMPORT_BYTES\\}\\): \\{confined\\}",
+      "pattern": "f\"input file exceeds CPERSONA_MAX_IMPORT_BYTES \\(\\{config\\.MAX_IMPORT_BYTES\\}\\): \\{confined\\}\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "fix_sketch": "Name CPERSONA_MAX_IMPORT_BYTES in both refusal messages and document it in docs/configuration.md. Have export warn when its output exceeds the import cap, or document the limit next to the backup and restore guidance in docs/operations.md.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced: a 110 MB export returned ok:true and the same file was refused on import. Related to bug-130."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced: a 110 MB export returned ok:true and the same file was refused on import. Related to bug-130.",
+      "fix_note": "The import size refusals name CPERSONA_MAX_IMPORT_BYTES, the variable config.py reads, and docs/configuration.md and operations.md (with their .ja.md pages) document the cap and that exports are not capped. tests/test_2611a2_w01.py::test_size_refusal_before_reading_names_the_env_setting (and ..._of_the_bounded_read_...) turns red if the message goes back to MAX_IMPORT_BYTES. test_import_cap_is_documented turns red if a page drops the variable."
     },
     {
       "id": "bug-527",
@@ -7858,12 +7864,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "tally\\.errors\\.append\\(f\"Line \\{line_num\\}: invalid JSON: \\{e\\}\"\\)",
+      "pattern": "if len\\(self\\) < _IMPORT_ERRORS_SHOWN:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Cap `tally.errors` at the first N messages and add an `errors_truncated` count. Consider aborting early when none of the first K lines parses as an export record. Return the same bounded shape on the abort and success paths.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a 3 MB dry-run preview. bug-130 and bug-241 bound only the input bytes, not the error list."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a 3 MB dry-run preview. bug-130 and bug-241 bound only the input bytes, not the error list.",
+      "fix_note": "_ImportErrors keeps the first 100 import error messages and counts the rest, and the response ends with '<N> more errors were not listed' on both the success and abort paths. tests/test_2611a2_w01.py::test_import_error_list_is_bounded_on_success turns red (5000 messages for 5000 bad lines) if tally.errors goes back to an unbounded list."
     },
     {
       "id": "bug-530",
@@ -7874,10 +7881,11 @@
       "file": "cpersona/admin_handlers.py",
       "pattern": "\\(\"deleted_profiles\", \"DELETE FROM profiles WHERE agent_id = \\? AND id IN \\(\\{ph\\}\\)\"\\),",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
       "fix_sketch": "Extend the bug-218 test, and add an episode equivalent, so one move both copies and skips rows; assert that only the copied ids are deleted (deleted count 1, left_at_source 1) and that the skipped source row survives.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced by a mutation probe (test-only, the shipped code is correct). Guards the fix for bug-218."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced by a mutation probe (test-only, the shipped code is correct). Guards the fix for bug-218.",
+      "fix_note": "Test-only: pins the id-keyed profile delete of a move. tests/test_2611a2_w01.py::test_move_keeps_the_skipped_profile_when_another_is_copied (and the episode twin test_move_keeps_the_skipped_episode_when_another_is_copied for the episodes line) turns red if the delete stops being restricted to copied ids (deleted_profiles == 2)."
     },
     {
       "id": "bug-531",
@@ -7918,12 +7926,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/associations.py",
-      "pattern": "for index, relation_id in enumerate\\(relations or \\[\\]\\):",
+      "pattern": "relations, relations_excess = _retract_list\\(relations, \"relations\", report\\[\"dropped\"\\]\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Apply `MAX_ITEMS` to `retract.relations` and `retract.mentions`, both in the handler (reporting the excess in `dropped`) and as `maxItems` in the schema. Have `_is_id` reject values outside the signed 64-bit range so they are reported in `dropped` rather than raised.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Related: bug-447 (`_is_id`), bug-532 (the same oversized-id OverflowError through refs and the store rider). The out-of-range id variant is fixed in 2.6.11a1: _is_id rejects an id outside SQLite's integer range, so it is reported in dropped instead of raising (bug-532). The unbounded retract lists are not."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Related: bug-447 (`_is_id`), bug-532 (the same oversized-id OverflowError through refs and the store rider). The out-of-range id variant is fixed in 2.6.11a1: _is_id rejects an id outside SQLite's integer range, so it is reported in dropped instead of raising (bug-532). The unbounded retract lists are not.",
+      "fix_note": "retract() cuts relations and mentions at MAX_ITEMS through _retract_list before the write transaction: items past the bound are reported in dropped ('beyond the 64-item bound') and never deleted, and a non-list retract list is reported as 'must be a list'. Reverting turns the four retract tests in tests/test_2611a2_w03.py red (66 retracted instead of 64; 10000 DELETEs instead of 128)."
     },
     {
       "id": "bug-534",
@@ -7932,12 +7941,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/associations.py",
-      "pattern": "for entity_id in sorted\\(e for e, d in distance\\.items\\(\\) if d >= 1\\):",
+      "pattern": "for entity_id in sorted\\(reached\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "reconstructive-recall",
       "fix_sketch": "In `walk_graph`, fetch records for every entity within `max_hops`, including the union starts that another item can reach at hop >= 1, or run the neighbourhood per cluster. Keep excluding each item's own hop-0 entities in the per-item walk, which it already does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Related: bug-635 (the same record-loading loop reads more than it returns)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Related: bug-635 (the same record-loading loop reads more than it returns).",
+      "fix_note": "walk_graph reads mentioning records for every entity some start ref reaches through at least one relation within max_hops (each start's own reach followed over the loaded adjacency), not only entities at distance >= 1 from the union of all starts, so an entity another chosen item mentions still yields evidence. Reverting turns the four bug-534 tests in tests/test_2611a2_w03.py red (graph.records == {}, item a loses its walked record at count=2)."
     },
     {
       "id": "bug-535",
@@ -7962,12 +7972,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/blocks.py",
-      "pattern": "for depth in range\\(len\\(pending\\) - 1, -1, -1\\):",
+      "pattern": "by_closer: dict\\[str, list\\[int\\]\\] = \\{closer: \\[\\] for closer in _BRACKETS\\.values\\(\\)\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Make the unmatched-opener pass linear by keeping, per closer type, a stack of indices of pending openers so a non-matching character costs O(1), and use bisect over the sorted fence ranges in `_structural_cuts`. Optionally move `segment()` off the event loop with `asyncio.to_thread`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a timing probe. The stack scan came in with the fix for bug-473."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a timing probe. The stack scan came in with the fix for bug-473.",
+      "fix_note": "_bracket_depth finds the nearest matching opening through a stack per closing bracket (linear, each opening leaves the stacks once), and _structural_cuts finds the one fence range that can hold a boundary by bisection over the sorted, disjoint ranges instead of testing every fence. Reverting either makes tests/test_2611a2_w04.py::test_division_of_a_pathological_record_costs_what_prose_costs go red (unclosed-openers/stray-closers for the bracket pass, fences for the fence test); test_the_linear_divider_draws_the_same_cuts_as_the_rule pins that the cuts are unchanged."
     },
     {
       "id": "bug-537",
@@ -7992,12 +8003,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/blocks.py",
-      "pattern": "if failed and not \\(built or needed_none or refused\\):",
+      "pattern": "if failed and not \\(built or refused\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Base the outage test only on outcomes that needed the backend, for example `failed and not (built or refused)`, or count the offline single-block case separately from the 'none' that `_build_one` returns. Add a test that seeds a single-block record next to multi-block ones.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a down-backend probe. The offline single-block path that defeats the guard is the fix for bug-498."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a down-backend probe. The offline single-block path that defeats the guard is the fix for bug-498.",
+      "fix_note": "The backfill's outage guard counts only outcomes that reached the embedding backend (built, refused); records that need no blocks are decided offline and no longer mask an outage. Reverting to include needed_none makes tests/test_2611a2_w04.py::test_an_outage_raises_even_when_the_corpus_holds_a_single_block_record fail with DID NOT RAISE."
     },
     {
       "id": "bug-539",
@@ -8038,12 +8050,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "WHERE embedding IS NOT NULL AND id > \\?\\{iso\\.and_clause\\} ",
+      "pattern": "SELECT id, embedding FROM .table. NOT INDEXED",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Make the planner walk the rowid range, for example with `+agent_id = ?` as vector.py:851 already does, or add an index on (agent_id, id) that serves ORDER BY id. Apply the same change to the merge page queries and add a regression test asserting the scoped page's plan has no temp B-tree.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with timings and EXPLAIN QUERY PLAN. The paging came in with the fix for bug-358."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with timings and EXPLAIN QUERY PLAN. The paging came in with the fix for bug-358.",
+      "fix_note": "The non-finite embedding scan reads its keyset pages NOT INDEXED, and the merge copy passes spell their agent term +agent_id, so each page walks the primary key instead of sorting the whole agent per page. Reverting turns tests/test_2611a2_w05.py::test_scoped_nonfinite_scan_pages_without_sorting_the_agent (checks.py) or ::test_merge_pages_walk_the_primary_key (admin_handlers.py) red."
     },
     {
       "id": "bug-542",
@@ -8052,12 +8065,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/vector.py",
-      "pattern": "return await _drop_rejected_labels\\(db, remote_results\\)",
+      "pattern": "^        health\\.observe_ok\\(\\)  # the remote /search answer reached the service$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check",
       "fix_sketch": "Count a successful remote /search, which uses the same embedding service, as an attempted success and call `observe_ok`. Alternatively let a maintenance probe that actually reached the backend clear the fault, revisiting the bug-129 choice that recovery stays with recall for the case where recall never embeds.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a remote-mode probe. Related to bug-274 and bug-129; see also bug-543, which reports the same latch from the health check's side."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a remote-mode probe. Related to bug-274 and bug-129; see also bug-543, which reports the same latch from the health check's side.",
+      "fix_note": "vector._search_vector calls health.observe_ok() when the remote /search returns an authoritative answer, so a fault latched by maintenance probes clears in remote mode once the service answers again. Reverting it turns tests/test_2611a2_w07.py::test_remote_search_answer_clears_a_fault_latched_by_maintenance red."
     },
     {
       "id": "bug-543",
@@ -8066,12 +8080,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "unreachable = health\\.is_faulted\\(\\)",
+      "pattern": "elif embedding_cache is not None and reached_backend:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check",
       "fix_sketch": "When `dim_probe_reached_backend` is True and a dimension came back, report connected (or a recovered-but-latched state) instead of reading `is_faulted()`. Alternatively let a probe that reached the backend re-arm the breaker so the prefetch can backfill in the same run.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a backend-switching probe. Related to bug-274 and bug-248; in remote vector mode this combines with bug-542 so the latch can never clear."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a backend-switching probe. Related to bug-274 and bug-248; in remote vector mode this combines with bug-542 so the latch can never clear.",
+      "fix_note": "check_embedding_backend lets a probe on this run that reached the backend and returned a vector outrank a latched fault (connected), and do_check_health runs the probe before the prefetch and passes backend_answered so prefetch_null_embeddings backfills under the latch. Reverting the branch turns tests/test_2611a2_w06.py::test_a_probe_that_reached_the_backend_is_not_overruled_by_a_latched_fault red; reverting the prefetch bypass turns test_a_restarted_backend_is_confirmed_and_backfilled_by_one_fix_run red."
     },
     {
       "id": "bug-544",
@@ -8096,12 +8111,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "_PROJECT_ID_NORMALIZE = re\\.compile\\(r\"\\[\\^a-z0-9\\]\"\\)",
+      "pattern": "folded = unicodedata\\.normalize\\(\"NFKC\", project_id\\)\\.casefold\\(\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Normalize with a Unicode-aware fold that keeps letters and digits from every script (for example NFKC plus casefold, then drop separators such as -_. and whitespace), and never cluster ids whose key is empty.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced on a fresh database. Related: bug-243 (scoping of the same check)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced on a fresh database. Related: bug-243 (scoping of the same check).",
+      "fix_note": "The project_id drift key is NFKC + casefold, keeping letters, digits and combining marks of every script, and an empty key never clusters. Before, it kept only [a-z0-9], so ids in other scripts collapsed together. Reverting turns tests/test_2611a2_w05.py::test_axis_hygiene_does_not_fold_other_scripts_together and ::test_axis_hygiene_still_reports_drift_in_any_script red."
     },
     {
       "id": "bug-546",
@@ -8173,12 +8189,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "built = await coarse_index\\.build_coarse_index\\(db, \"memories\"\\)",
+      "pattern": "built = await coarse_index\\.build_coarse_index\\(snap, \"memories\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Keep only detection in the locked run and build the coarse index after the commit on a read snapshot (`database.read_snapshot()`), so `plan_rows` and the vector stream still see one consistent snapshot without holding the write lock.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same class as bug-254 and bug-324 (read-only whole-database work under the write lock); the same call site also publishes uncommitted state, bug-643."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same class as bug-254 and bug-324 (read-only whole-database work under the write lock); the same call site also publishes uncommitted state, bug-643.",
+      "fix_note": "The coarse index's repair no longer builds inside check_health's locked fix run. run_health_checks only detects the checks in POST_COMMIT_REPAIRS under fix. do_check_health runs them again after the commit with after_commit=True, and _rebuild_coarse_index turns the change log on in a commit of its own, builds the file on database.read_snapshot(), and prunes the log afterwards (or stops it when no file reads it). No writer waits on the build, and a run that rolls back publishes nothing. Reverting the fix turns tests/test_2611a2_w08.py::test_bug550_the_coarse_repair_builds_while_other_writers_proceed, ::test_bug550_a_fix_run_inside_a_transaction_never_builds and ::test_bug643_a_fix_run_that_rolls_back_leaves_no_coarse_file_that_hides_a_row red. Dropping the log start turns the first one and tests/test_bug514_index_change_log.py::test_the_coarse_repair_builds_a_file_the_log_vouches_for red."
     },
     {
       "id": "bug-551",
@@ -8186,13 +8203,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/checks.py",
-      "pattern": "await db\\.execute\\(\"SAVEPOINT health_run\"\\)",
+      "file": "cpersona/database.py",
+      "pattern": "if DB_PATH != \":memory:\" and not db\\.in_transaction:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Take the write lock before the run's first read: issue `BEGIN IMMEDIATE` (which honours busy_timeout) before `SAVEPOINT health_run`, or have `transaction()` begin IMMEDIATE when it wraps a fix run; optionally retry a check that hits SQLITE_BUSY after a fresh immediate begin.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The outer savepoint was introduced by the bug-361 fix."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The outer savepoint was introduced by the bug-361 fix.",
+      "fix_note": "Already fixed in 2.6.11a1: transaction() now begins IMMEDIATE (cpersona/database.py), so a fix run holds SQLite's write lock from its first read and another process waits or is refused before the run starts its repairs, instead of making every remaining repair fail with 'database is locked'. tests/test_2611a2_w08.py pins the health-run case (another connection tries to commit between the run's first read and its first repair); it turns red if the BEGIN IMMEDIATE is removed. Fixed in 2.6.11a1 by 75cf6fa ('Take SQLite's write lock when a write transaction starts'): transaction() issues BEGIN IMMEDIATE before the body runs, so check_health's fix run holds SQLite's write lock from its first read, and a repair never has to upgrade a stale snapshot. The busy_timeout applies, and another process waits instead of breaking the repair. Removing that BEGIN IMMEDIATE turns tests/test_2611a2_w08.py::test_bug551_repairs_converge_when_another_process_writes_after_the_runs_first_read red with check_crashed 'database is locked'."
     },
     {
       "id": "bug-552",
@@ -8217,12 +8235,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "AND datetime\\(m\\.timestamp\\) >= datetime\\(e\\.start_time\\)",
+      "pattern": "first = bisect\\.bisect_left\\(times, start_norm\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Run report-only deep checks on the background connection, and make the window test sargable, for example by normalising timestamps at write time or adding a normalised column the span index can range-scan.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The non-sargable predicate was introduced by the bug-116 fix."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The non-sargable predicate was introduced by the bug-116 fix.",
+      "fix_note": "deep_orphaned_episodes reads the agent's datetime()-normalised memory times once, sorted, and binary-searches each episode window (same inclusive bounds and NULL semantics), instead of a correlated NOT EXISTS costing episodes x memories; do_deep_check runs report-only deep checks on background_connection(). Reverting the query turns tests/test_2611a2_w05.py::test_orphaned_episodes_cost_is_not_episodes_times_memories red; reverting the connection turns ::test_report_only_deep_checks_run_on_the_background_connection red."
     },
     {
       "id": "bug-554",
@@ -8247,12 +8266,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "idx_a, idx_b = np\\.where\\(np\\.triu\\(sims, k=1\\) > NEAR_DUPLICATE_COSINE\\)",
+      "pattern": "count, samples = await asyncio\\.to_thread\\(_near_duplicate_pairs, rows",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Count qualifying pairs with a vectorised mask and build dicts only for the top 20 (for example argpartition over the upper-triangle values above the threshold), without materialising every pair. Run the computation off the event loop with `asyncio.to_thread`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. The trigger needs thousands of mutually near-identical rows among one agent's newest records, such as templated or periodic memories."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. The trigger needs thousands of mutually near-identical rows among one agent's newest records, such as templated or periodic memories.",
+      "fix_note": "deep_near_duplicate counts each row's pairs above the threshold with a vectorised mask (exact-content duplicates excluded by a label comparison) and keeps only a running top 20 under the old sample order. It builds no dict per pair, and it runs in asyncio.to_thread off the event loop. Reverting to the dict-per-pair loop turns tests/test_2611a2_w05.py::test_near_duplicate_memory_does_not_grow_with_pairs red; removing to_thread turns ::test_near_duplicate_compares_off_the_event_loop red."
     },
     {
       "id": "bug-556",
@@ -8261,12 +8281,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checkup.py",
-      "pattern": "report = await do_check_health\\(agent_id=args\\.agent, fix=args\\.fix\\)",
+      "pattern": "^    client = vector\\.build_embedding_client\\(\\)$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "When `EMBEDDING_MODE` is not none, have checkup build the same embedding client that server startup builds. Otherwise, have the client-dependent critical checks emit a 'not verified, no embedding client in this process' finding that fails under --strict instead of returning nothing. Make the null_embedding hint name the CLI context.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-428 and bug-354 (the same class: an axis that cannot be verified is reported as clean)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-428 and bug-354 (the same class: an axis that cannot be verified is reported as clean).",
+      "fix_note": "checkup._run installs the embedding client the server would build (shared vector.build_embedding_client) before running do_check_health/do_deep_check, and restores the previous singleton afterwards; an unsupported mode exits 2. Reverting it turns test_checkup_reports_dimension_drift_and_null_backlog_like_check_health and test_checkup_fix_reembeds_through_the_configured_backend in tests/test_2611a2_w07.py red."
     },
     {
       "id": "bug-557",
@@ -8306,13 +8327,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/coarse_notice.py",
-      "pattern": "past = records - window",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "suggestion = await coarse_notice\\.scope_notice\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Give `notice()` and the remainder hint the check's own predicate: count embedded rows only, scoped like the cue arm including `source_id`, and stay silent when there is no local vector search (no client, or remote search). Let `check_coarse_index` under fix=True build whenever the index is absent and `far_rows` is greater than 0.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced for the no-embeddings case and for the remainder hint; the `source_id` and remote-search variants were confirmed by reading only."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced for the no-embeddings case and for the remainder hint; the `source_id` and remote-search variants were confirmed by reading only.",
+      "fix_note": "recall now builds the coarse suggestion through coarse_notice.scope_notice. It is silent without a local vector search, and it counts embedded rows in the cue arm's own scope (source_id included), the same predicate the check that builds the index uses. Reverting it to notice(pool_memories, ...) turns test_no_suggestion_without_an_embedding_client, test_no_suggestion_under_remote_vector_search, test_the_suggestion_counts_embedded_rows_only and test_the_suggestion_counts_the_recalls_own_source red. The companion change is cpersona/checks.py `if far_rows < INDEX_MATTERS_ROWS and not fix:` (builds under fix below the line). Reverting that turns test_the_remainder_hint_names_a_call_that_builds red."
     },
     {
       "id": "bug-560",
@@ -8321,12 +8343,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/coarse_search.py",
-      "pattern": "source_id=source_id, scan_limit=-1, table=\"memories\", window=period",
+      "pattern": "found = await _rank\\(db, index, selected, tail, query_bits, dim, k, start, end\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Read the tail through a cursor in `VECTOR_SCAN_CHUNK_ROWS` chunks, as `_from_live` does: fetch ids and `created_at` first to place the rows, then read blobs only for rows inside `[start, end)`. Alternatively, treat a tail past a bound (for example a ratio of the indexed count) as unable to answer, and raise `coarse_index_tail_grown` to a warning.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-329, which bounded the gather temporaries on the other scan paths."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-329, which bounded the gather temporaries on the other scan paths.",
+      "fix_note": "The coarse supplier's index path now builds the tail statement (vector._index_tail_statement) and _rank reads it through a cursor in VECTOR_SCAN_CHUNK_ROWS chunks. Each row is placed, then ranked or dropped as it arrives, and only one int64 per row is kept for the index rows' places. Peak memory no longer grows with the rows written since the build. Reverting to vector._index_tail_rows(..., scan_limit=-1) plus the synchronous _rank turns all 8 cases of test_the_index_reads_the_rows_since_its_build_in_chunks red (one read handed back 40 stored vectors, against a chunk of 4)."
     },
     {
       "id": "bug-561",
@@ -8351,12 +8374,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/config.py",
-      "pattern": "max\\(1, _parse_int\\(\"CPERSONA_RECONSTRUCT_FORCED_COUNT\", 1\\)\\)",
+      "pattern": "_forced_count = _parse_optional_int\\(\"CPERSONA_RECONSTRUCT_FORCED_COUNT\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "configuration",
       "fix_sketch": "Parse the forced settings so that an unparseable value falls back to None (unset), with a warning that the override is ignored. Make a malformed default count fall back to `min(10, MAX_COUNT)`, as when it is unset.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-133 (fallback rule for malformed values) and bug-321."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-133 (fallback rule for malformed values) and bug-321.",
+      "fix_note": "Forced reconstruct count and budget are read with _parse_optional_int: a value that does not parse is ignored (stays None, no operator override) with a warning, and a malformed DEFAULT_COUNT falls back to min(10, MAX_COUNT) like an unset one. Reverting turns tests/test_2611a2_w02.py::test_malformed_forced_count_stays_unset, ::test_malformed_forced_budget_stays_unset and ::test_malformed_default_count_follows_a_lowered_maximum red."
     },
     {
       "id": "bug-563",
@@ -8397,12 +8421,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/generation.py",
-      "pattern": "_learned = \\(now, learned\\)",
+      "pattern": "_learned = \\(now, kept\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "On a failed or incomplete ask after a fingerprint was learned, keep the previous fingerprint (or accept it as an extra current key while identity is unknown) instead of caching None, and retry sooner than the full interval. Restamp with a different key only when the backend positively reports a different fingerprint.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-461, which introduced fingerprint-keyed currency for nodes and blocks."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-461, which introduced fingerprint-keyed currency for nodes and blocks.",
+      "fix_note": "An ask that cannot name the backend after a fingerprint was learned keeps that fingerprint (and schedules a retry after RETRY_UNKNOWN_SECONDS) instead of caching None for the whole interval; only a reported fingerprint moves the key. Reverting makes tests/test_2611a2_w04.py::test_a_failed_ask_after_a_fingerprint_keeps_its_block_sets_current, ::test_an_incomplete_identity_after_a_fingerprint_keeps_the_keys and ::test_after_a_failed_ask_the_backend_is_asked_again_sooner fail."
     },
     {
       "id": "bug-566",
@@ -8411,12 +8436,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "if fix and vector\\._embedding_client:",
+      "pattern": "reembed_tables = \\[table for check, table in _NULL_EMBEDDING_TABLES if check in checks_run\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "isolation",
       "fix_sketch": "Run the prefetch and the second pass only when null_embedding or null_episode_embedding is in checks_run, restrict the second pass to the rows the locked run NULLed or to what remains of the cap, and report its applied count in the null_embedding finding.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The second pass was added by bug-083."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The second pass was added by bug-083.",
+      "fix_note": "do_check_health embeds and writes NULL embeddings only for tables whose null-embedding check is in checks_run, limits the second pass to what the locked run left of REEMBED_ROW_CAP, and adds its writes to the finding's re_embedded. Reverting the gating turns tests/test_2611a2_w06.py::test_a_subset_fix_run_does_not_re_embed_unselected_null_rows red."
     },
     {
       "id": "bug-567",
@@ -8425,12 +8451,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "_residual_issues, severity_summary = await checks_registry\\.run_health_checks\\(",
+      "pattern": "fix=False, checks=checks, embedding_cache=residual_cache",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check",
       "fix_sketch": "Pass the round-1 probe result (expected_dim and dim_probe_reached_backend) into the residual run, or carry the liveness findings from the locked run into severity_summary, so the verdict counts every warn the issues list carries.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The residual split comes from bug-059 and bug-225, and this reopens the silence bug-274 removed; bug-500 concerns the same residual re-run."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The residual split comes from bug-059 and bug-225, and this reopens the silence bug-274 removed; bug-500 concerns the same residual re-run.",
+      "fix_note": "The residual fix=False re-run that sets severity_summary/status is handed this run's probe result (expected_dim, dim_probe_reached_backend), so a single failed probe is counted as the warn the issues list carries. Reverting it turns tests/test_2611a2_w06.py::test_a_backend_that_failed_this_runs_probe_degrades_the_fix_verdict red."
     },
     {
       "id": "bug-568",
@@ -8471,12 +8498,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "msg_id = message\\.get\\(\"id\", \"\"\\)",
+      "pattern": "too_long = _key_field_too_long\\(id=msg_id, channel=channel, project_id=project_id\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Add `maxLength` to the id, channel, project_id and timestamp schema properties and enforce the same caps in `do_store` with a `rejected` result, as is done for metadata. Also refuse a timestamp that does not parse as ISO-8601 instead of storing it verbatim.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Same family as bug-386 (session_key bounded at the schema) and bug-331 (read budgets charge every field); the empty-timestamp case is bug-666."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Same family as bug-386 (session_key bounded at the schema) and bug-331 (read budgets charge every field); the empty-timestamp case is bug-666.",
+      "fix_note": "do_store refuses an id, channel or project_id longer than MAX_KEY_FIELD_LENGTH (256) and a timestamp longer than MAX_TIMESTAMP_LENGTH (64) with result 'rejected'. The store and archive_episode schemas publish the same bounds as maxLength. Reverting the handler checks turns tests/test_2611a2_w10.py::test_do_store_refuses_a_key_field_past_the_bound red. Reverting the schema turns ::test_an_oversized_field_is_refused_at_the_tool_boundary red."
     },
     {
       "id": "bug-571",
@@ -8501,12 +8529,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "if not FTS_ENABLED:",
+      "pattern": "if FTS_ENABLED and \\(not source_id or channel\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "When FTS is disabled, have `_lexical_arms` (and the keyword half of the cue arm) still call `_search_memories_keyword` so its LIKE fallback supplies the memory keyword list. Add a test that runs rrf and rsf with FTS off and expects the exact-substring row.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced.",
+      "fix_note": "_lexical_arms no longer returns early when FTS is disabled. Only the episode FTS search is gated on FTS_ENABLED, and the memory keyword search always runs, through its LIKE fallback when FTS is off. The cue arm's keyword half runs the same way. Reverting either site turns tests/test_2611a2_w11.py::test_fts_off_the_fusions_still_find_an_exact_substring (rrf, rsf), ::test_fts_off_the_lexical_arms_hand_the_like_rows_to_the_fusion or ::test_fts_off_the_cue_arms_keyword_half_still_runs red."
     },
     {
       "id": "bug-573",
@@ -8515,12 +8544,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "votes\\.setdefault\\(f\"ep:\\{row\\[.id.\\]\\}\", \\{\\}\\)\\[\"episode_fts\"\\]",
+      "pattern": "if episode is None or _content_excluded\\(episode\\[\"content\"\\], exclude_set\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Apply `_content_excluded` to episode rows in all three episode FTS loops and in the episode branch of `_block_reserved_rows` before they take a vote or a seat. A single final exclusion pass over the fused results in `do_recall` would also cover future arms.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Related: bug-454 (the block reservation's restriction ordering)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Related: bug-454 (the block reservation's restriction ordering).",
+      "fix_note": "The episode FTS arms of rrf, rsf and cascade and the episode branch of the block reservation now apply _content_excluded, as the vector and cue arms already did. An excluded episode stays out whichever arm reaches it. The anchor is the block branch line. Reverting it turns tests/test_2611a2_w11.py::test_the_block_reservation_excludes_an_excluded_episode red. Reverting the rrf, rsf or cascade site turns ::test_an_excluded_episode_stays_out_of_the_fusions, ::test_recall_with_context_does_not_return_an_episode_the_conversation_holds or ::test_cascade_gives_an_excluded_episodes_place_to_the_next_stage red."
     },
     {
       "id": "bug-574",
@@ -8529,12 +8559,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "\\+ \\[\\(1, hit\\.position, hit\\.id, hit\\.cosine\\) for hit in remainder\\]",
+      "pattern": "for hit in remainder if hit\\.id not in capped_ids\\],",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "De-duplicate by memory id when merging the exact part and the coarse remainder in `_search_cue_arm`, keeping the exact part's entry, or drop remainder hits whose id is already ranked, as the far seats do with their near-window ids.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same duplicate-vote class as bug-334, at a merge that has no overlap guard."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same duplicate-vote class as bug-334, at a merge that has no overlap guard.",
+      "fix_note": "_search_cue_arm drops remainder hits whose id the capped exact part already ranked, keeping the exact part's entry, so a record both parts return is counted once. Reverting it turns tests/test_2611a2_w11.py::test_a_store_between_the_cue_arms_two_reads_does_not_count_a_row_twice red."
     },
     {
       "id": "bug-575",
@@ -8543,12 +8574,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "newest_first = \"datetime\\(timestamp\\) DESC, id ASC\" if window is not None else \"created_at DESC\"",
+      "pattern": "else \"created_at DESC, id DESC\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Add a total-order tie-break on the non-window branch and on the LIKE fallback, such as `created_at DESC, id DESC`, so the most recently stored rows come first, and add a test that ties `created_at`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. bug-502 fixed the ordering only on the cue-window branch."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. bug-502 fixed the ordering only on the cue-window branch.",
+      "fix_note": "The empty-query recent listing (no cue window) and the LIKE fallback now break created_at ties with id DESC, so a batch stored within one second returns its most recently stored rows first. Reverting it turns tests/test_2611a2_w10.py::test_empty_query_listing_returns_the_newest_stored_rows_of_a_tied_second red (and the LIKE and do_recall tests in that module)."
     },
     {
       "id": "bug-576",
@@ -8589,12 +8621,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "quote\\[\"expand\"\\] = \\{\"ref\": claim\\.ref, \"span\": \\[start, end\\]\\}",
+      "pattern": "return \\{\"ref\": ref, \"span\": \\[start, end\\], \"revision\": blocks\\.text_revision\\(text\\)\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Attach `\"revision\": blocks.text_revision(text)` to every raw-span expand in reconstruct (the `_filled_quote` start and severed paths and `sequence_quote`), and add a test that rewrites the record and asserts get_contents refuses the stale span.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a store, reconstruct, update_memory, get_contents sequence. Related: bug-466."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a store, reconstruct, update_memory, get_contents sequence. Related: bug-466.",
+      "fix_note": "_span_expand builds every raw-span expand reconstruct returns (filled head quote start/severed, sequence_quote) with the revision of the text its offsets were measured in, so get_contents refuses a rewritten record as stale_revision. Without it, tests/test_2611a2_w12.py::test_every_raw_span_quote_helper_attaches_the_revision and the *_expand_is_refused_after_rewrite tests turn red."
     },
     {
       "id": "bug-579",
@@ -8649,12 +8682,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "detail=f\"the first passage alone does not fit mode",
+      "pattern": "attempt, attempt_quoted = assemble\\(ends\\[0\\], \\{i: middle for i in first\\}\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Make the claims list (and any droppable per-session notices) part of what the mode cap may trim, for example by reducing retained claims and marking `claims_omitted` before refusing. Refuse only when the head passage alone exceeds the cap, and state the actual cause in the detail.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The same exit also drops forwarded notices, filed as bug-709."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The same exit also drops forwarded notices, filed as bug-709.",
+      "fix_note": "When no prefix fits a mode's cap, the items of the first step are rebuilt with the largest evidence bound whose response fits (cut stated in claims_omitted) instead of refusing; cap_below_minimum remains only when the first passage with its head claim and fields is over, with a detail naming the real cause. Without it, tests/test_2611a2_w12.py::test_a_mode_trims_the_claims_rather_than_refusing, ::test_a_mode_keeps_as_many_claims_as_fit and ::test_a_refusal_names_what_did_not_fit turn red."
     },
     {
       "id": "bug-583",
@@ -8663,12 +8697,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "Nothing contacts the embedding backend unless fix=true, so",
+      "pattern": "Only fix=true judges the backend's liveness: a report-only",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "fix_sketch": "Either correct the tool description, operations.md and the SKILL text to say a report-only run contacts the backend (capabilities, a dimension probe, a token report), or make fix=False truly offline by skipping the refresh, the dimension embed and the missing_nodes live scan. If the probe stays, use its outcome for the liveness finding instead of reporting not_probed.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced with a recording backend. Related: bug-428, whose fix note restates the premise that a report-only run does not reach the network."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced with a recording backend. Related: bug-428, whose fix note restates the premise that a report-only run does not reach the network.",
+      "fix_note": "The check_health description (and operations.md/.ja.md, the skill and its repair reference) now say a report-only run can contact the backend but does not read it as liveness. Restoring the old 'Nothing contacts the embedding backend unless fix=true' sentence turns tests/test_2611a2_w06.py::test_a_report_only_run_contacts_the_backend_and_the_docs_say_so red."
     },
     {
       "id": "bug-584",
@@ -8693,12 +8728,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/update_check.py",
-      "pattern": "_UV_MARKERS = \\(os\\.path\\.join\\(\"uv\", \"archive-v0\"\\)",
+      "pattern": "return len\\(parts\\) >= 2 and parts\\[-2\\] == _UV_ARCHIVE_DIR",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "compatibility",
       "fix_sketch": "Detect uvx by an `archive-v0` parent directory of `sys.prefix`, and optionally check it against the resolved uv cache dir. Add tests for the Windows default layout and for a custom `UV_CACHE_DIR`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced against measured uvx prefix layouts, with the install step stubbed."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced against measured uvx prefix layouts, with the install step stubbed.",
+      "fix_note": "detect_install now asks _launched_by_uvx(sys.prefix), which splits the prefix on both / and \\ and requires the parent directory to be archive-v0, so the Windows default %LOCALAPPDATA%\\uv\\cache and any UV_CACHE_DIR are detected as uvx and apply refuses. Reverting turns tests/test_2611a2_w15.py::test_uvx_is_detected_under_any_cache_root and ::test_apply_runs_nothing_under_a_uvx_launch red."
     },
     {
       "id": "bug-586",
@@ -8723,12 +8759,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/utils.py",
-      "pattern": "if parsed is None:",
+      "pattern": "return _sqlite_future_timestamp_issue\\(ts_raw, reference\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Give the write gate and the SQL checks one parse definition: refuse at store any stamp `_parse_timestamp_utc` cannot read, or make `invalid_timestamp` flag rows Python cannot parse and not only rows SQLite cannot, and have the span read skip ends that are not ISO.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-237."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-237.",
+      "fix_note": "future_timestamp_issue now judges a stamp that _parse_timestamp_utc declines but SQLite's date functions read ('2500000', 'now', 30 February, a lower-case 'z') with SQLite's own reading and the exact strftime predicate check_future_timestamp evaluates against future_timestamp_boundary. reject refuses such a stamp when it is ahead, warn reports it, and a restore counts it. check_invalid_timestamp also claims SQL-only stamps that are not ahead and repairs them to created_at; scope_stats.get_span skips ends its caller cannot parse. Reverting the anchored line turns tests/test_2611a2_w14.py::test_reject_refuses_a_stamp_only_sqlite_reads_as_ahead, ::test_the_verdict_reads_a_stamp_only_sqlite_reads_the_way_sqlite_does, ::test_the_seam_and_the_health_check_name_the_same_rows, ::test_warn_reports_a_stamp_only_sqlite_reads_as_ahead and ::test_a_restore_counts_a_stamp_only_sqlite_reads_as_ahead red. The invalid_timestamp and span halves are pinned by ::test_invalid_timestamp_finds_and_repairs_a_stamp_only_sqlite_reads and ::test_the_span_skips_an_end_the_caller_cannot_parse."
     },
     {
       "id": "bug-588",
@@ -8783,12 +8820,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "docs/operations.md",
-      "pattern": "the backup forms above touch:",
+      "pattern": "\\*\\*The alias ledger\\*\\*, if any ACL row sets",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "fix_sketch": "Add the alias ledger to the 'not the whole instance' list in operations.md and operations.ja.md and to the README backup note. Make the boot error name restoring the ledger file as the first remedy, before merge_memories or removing per_subject.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-267."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-267.",
+      "fix_note": "The backup runbook (operations.md and operations.ja.md) lists alias_ledger.json / CPERSONA_ALIAS_LEDGER_FILE as state outside the database and says to restore it rather than rename agents or drop per_subject; the boot refusal names the ledger path and offers restoring it before merge_memories / removing per_subject. Reverting the docs turns tests/test_2611a2_w15.py::test_backup_runbook_lists_the_alias_ledger red; reverting server.py turns ::test_boot_refusal_after_a_restore_names_restoring_the_ledger_first red."
     },
     {
       "id": "bug-592",
@@ -8798,11 +8836,12 @@
       "version": "2.6.10",
       "file": "qa/issue-registry.json",
       "pattern": "\"file\": \"config\\.py\",",
-      "expected": "present",
-      "status": "open",
+      "expected": "absent",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Re-anchor bug-001 and bug-002 to cpersona/config.py and cpersona/memory_handlers.py, and add a test that reloads config with only EMBEDDING_MODE / EMBEDDING_HTTP_URL set. Optionally make verify-issues.sh treat a missing file on an absent entry as an error unless the entry is explicitly marked as anchored to a deleted file.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-001, bug-002, and the same fail-open class as bug-309, bug-400, bug-431 and bug-432."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Related: bug-001, bug-002, and the same fail-open class as bug-309, bug-400, bug-431 and bug-432.",
+      "fix_note": "bug-001 and bug-002 are re-anchored on cpersona/config.py and cpersona/memory_handlers.py with present patterns that pin their fixes, and tests/test_bug592_moved_anchors.py checks both behaviours (the generic embedding names configure embeddings in a fresh process; a Japanese query becomes trigrams). The pattern here, a registry line naming the root config.py, is now absent. The verifier still counts an absent pattern in a missing file as fixed; that rule is left as it is."
     },
     {
       "id": "bug-593",
@@ -9514,13 +9553,14 @@
       "severity": "LOW",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/coarse_index.py",
-      "pattern": "os\\.replace\\(tmp, out\\)",
+      "file": "cpersona/maintenance_handlers.py",
+      "pattern": "db, agent_id=agent_id, fix=True, checks=post_commit_names, after_commit=True",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Do not publish a derived file from inside an uncommitted transaction: build after the commit on a read snapshot (the bug-550 fix), or stage the built file and rename it into place only after `transaction()` commits.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Shares its root and its fix with bug-550."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Shares its root and its fix with bug-550.",
+      "fix_note": "Fixed with bug-550: check_health(fix=true) no longer builds the coarse index inside its transaction. The coarse repair runs after the run commits, on a snapshot of committed rows, with the vector change log turned on in a commit of its own first, so a run that rolls back never publishes a file. tests/test_2611a2_w08.py::test_bug643_a_fix_run_that_rolls_back_leaves_no_coarse_file_that_hides_a_row turns red if the build moves back into the run."
     },
     {
       "id": "bug-644",

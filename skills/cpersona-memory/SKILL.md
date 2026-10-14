@@ -516,7 +516,9 @@ Two conditions produce it, and they are different conversations:
 Signals for when you are looking rather than being told: `store` responses
 carry `embedded`, and `check_health(agent_id, fix=true)` reports
 `embedding_backend_unreachable` with that same evidence. `check_health(fix=false)`
-makes no network call and says so (`embedding_backend_not_probed`) — a quiet
+does not judge liveness — it may still contact the backend (a probe embed, its
+identity, token counts) but reads none of it as liveness — and says so
+(`embedding_backend_not_probed`) — a quiet
 `fix=false` run is not evidence that the backend is up. A `fix=true` run reports
 the same finding when its probe was answered from the client's five-minute embed
 cache, because that call never reached the endpoint either; `reason` tells the two
@@ -547,7 +549,7 @@ and the backfill for rows written while the backend was down.
 
 ## Key facts
 
-- Schema v20 (auto-migrating) · ~39,903 LOC Python across focused modules · MIT.
+- Schema v20 (auto-migrating) · ~41,471 LOC Python across focused modules · MIT.
 - Zero LLM dependency at the storage layer → deterministic, no API cost.
 - Single SQLite file → the user owns their memory; back it up with
   `sqlite3 /absolute/path/cpersona.db ".backup 'backup.db'"`, substituting the

@@ -235,10 +235,15 @@ def test_a_whole_record_is_quoted_as_it_is():
 
 
 def test_a_cut_passage_says_it_is_incomplete_and_where_to_read_on():
+    # A raw span carries the revision of the text its offsets were measured in, so
+    # get_contents refuses it once the record is rewritten.
+    revision = blocks.text_revision("y" * 100)
     q = reconstruct.sequence_quote(_Claim(_ref(7)), "y" * 100, "blocks", [_p(10, 20, None, 60)], [0])
-    assert q["context_incomplete"] is True and q["expand"] == {"ref": _ref(7), "span": [10, 60]}
+    assert q["context_incomplete"] is True
+    assert q["expand"] == {"ref": _ref(7), "span": [10, 60], "revision": revision}
     start = reconstruct.sequence_quote(_Claim(_ref(7)), "y" * 100, "start", [_p(0, 30, None, 100)], [0])
-    assert "context_incomplete" not in start and start["expand"] == {"ref": _ref(7), "span": [0, 100]}
+    assert "context_incomplete" not in start
+    assert start["expand"] == {"ref": _ref(7), "span": [0, 100], "revision": revision}
 
 
 # --- through do_reconstruct ---------------------------------------------------------------

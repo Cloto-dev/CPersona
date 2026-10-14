@@ -185,7 +185,7 @@ def measured_axis_acceptance() -> dict[str, list[str]]:
 def measured_calibrate_default() -> str:
     """The calibration method a bare `calibrate_threshold` call resolves to."""
     text = (ROOT / "cpersona" / "config.py").read_text()
-    m = re.search(r'CALIBRATE_METHOD = os\.environ\.get\("CPERSONA_CALIBRATE_METHOD", "(\w+)"\)', text)
+    m = re.search(r'CALIBRATE_METHOD = (?:os\.environ\.get|_parse_choice)\(\s*"CPERSONA_CALIBRATE_METHOD", "(\w+)"', text)
     if not m:
         fail("config.py: CALIBRATE_METHOD default not found — update this script")
         return ""

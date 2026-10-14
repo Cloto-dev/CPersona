@@ -731,7 +731,10 @@ async def test_one_merge_read_does_not_hold_the_whole_corpus_resident_345(
     copy_reads = [
         r
         for r in record_fetchall_345
-        if "FROM memories WHERE agent_id" in r["sql"] and r["rows"] > 1
+        # The copy pass spells its agent term `+agent_id` so the page walks the
+        # primary key; either spelling is a read of the source agent.
+        if ("FROM memories WHERE agent_id" in r["sql"] or "FROM memories WHERE +agent_id" in r["sql"])
+        and r["rows"] > 1
     ]
     assert copy_reads, (
         "no multi-row read of the source was recorded; the test measures nothing: "

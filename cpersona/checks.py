@@ -75,9 +75,12 @@ the counting stays in the runner and only the verdict moves:
   the meta-test over the registry, not this fallback.
 """
 
+import asyncio
+import bisect
 import contextlib
 import contextvars
 import datetime
+import heapq
 import json
 import logging
 import os
@@ -486,11 +489,19 @@ async def check_nonfinite_embedding(db, agent_id: str, fix: bool) -> list[dict]:
         # linearly (1.04x at both 1,000 and 4,000 rows of 768-wide vectors) on the
         # default health path, with no adversary involved. The repair side beside
         # it was already chunked; this is the same discipline on the read.
+        #
+        # NOT INDEXED keeps the page on the primary key. Scoped to an agent, the
+        # planner otherwise serves the agent term from an agent index whose order
+        # is not id order, and sorts every embedded row of the agent to return
+        # each page of 100: a scan of n rows did n/100 sorts of n rows (1.6 s at
+        # 20,000 rows, against 0.06 s for the unscoped walk). The rowid range
+        # stays usable under NOT INDEXED, so each page resumes where the last
+        # one stopped and the scan is one pass over the table.
         bad: list[int] = []
         last_id = 0
         while True:
             rows = await db.execute_fetchall(
-                f"SELECT id, embedding FROM {table} "
+                f"SELECT id, embedding FROM {table} NOT INDEXED "
                 f"WHERE embedding IS NOT NULL AND id > ?{iso.and_clause} "
                 "ORDER BY id LIMIT ?",
                 (last_id, *iso.params, _NONFINITE_SCAN_CHUNK),
@@ -744,15 +755,18 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
     - **unreachable** — ``warn``. Configured and not answering. Reads stay correct, so it
       is not ``critical``; it was invisible, which is why it is here.
     - **not probed** — ``info``. Liveness was not tested on this run, for either of two
-      reasons the finding names in ``reason``. Under ``fix=False`` nothing calls the
-      backend at all. Under ``fix=True`` the probe can be served from the embedding
+      reasons the finding names in ``reason``. Under ``fix=False`` this check is handed
+      no probe result: the run may still contact the backend (the dimension check embeds
+      a probe text, the model check asks for the backend's identity), but none of those
+      outcomes is read as liveness here. Under ``fix=True`` the probe can be served from the embedding
       client's cache: it embeds a constant, so it is the most cache-warm key in the
       process, and a cached vector carries the right dimension without a request leaving
       it (bug-248). Reading that number as an answer let a dead backend report as
       connected — this check being answered by the very silence it was built to remove.
       Saying nothing in either case would re-create that silence.
     - **connected** — no finding, the same way every other check reports "nothing wrong".
-      Claimed only for a probe that reached the backend.
+      Claimed only for a probe that reached the backend, and then it outranks a fault
+      latched earlier: the probe is this run's answer, the latch an older one.
 
     **No backend configured is not reported here**, and that is a decision rather than an
     omission. It is the one state that was never confusable with "the server is up" —
@@ -776,6 +790,12 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
 
     if probed is None and embedding_cache is not None:
         unreachable = True
+    elif embedding_cache is not None and reached_backend:
+        # This run's own probe went out and a vector came back: the backend answers now.
+        # A fault latched earlier is older evidence than that, and reading it here
+        # reported a restarted backend as down on every re-run, so the runbook's
+        # "re-run this check to confirm recovery" could never be satisfied.
+        unreachable = False
     else:
         # Nothing probed on this run. A fault latched by a recall is still evidence.
         unreachable = health.is_faulted()
@@ -808,7 +828,7 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
 
     if embedding_cache is None or not reached_backend:
         # bug-248: two ways for liveness to go untested, and the third state already
-        # existed for exactly this. Under fix=False nothing calls the backend. Under
+        # existed for exactly this. Under fix=False no probe result is handed in. Under
         # fix=True the call can be served from the client's embed cache, which returns
         # the right dimension without reaching the endpoint — that used to fall through
         # to "connected", so the check built to remove this silence was answered by it.
@@ -827,7 +847,8 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
                     )
                     if from_cache
                     else (
-                        "liveness was not tested on this run — it is probed under fix=true. "
+                        "liveness is not judged on a report-only run — only a fix=true "
+                        "run reads its probe as liveness evidence. "
                         "A finding-free result here is not evidence the backend is up"
                     )
                 ),
@@ -837,7 +858,9 @@ async def check_embedding_backend(db, agent_id: str, fix: bool, embedding_cache=
     return []
 
 
-async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
+async def prefetch_null_embeddings(
+    db, agent_id: str = "", *, caps: dict[str, int] | None = None, backend_answered: bool = False
+) -> dict:
     """Pre-compute embeddings for NULL-embedding memory/episode rows OUTSIDE any write
     lock (bug-072). do_check_health calls this before taking the shared write lock so the
     batched embedding HTTP calls do not stall every other writer — do_store, the queue
@@ -846,18 +869,33 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
     text the blob was computed from rides along so the write path can refuse to attach it
     to changed content (bug-077), and ``label`` is the ``embedding_model`` the blobs are
     written with. Empty tables and no label when there is no embedding client (the fix
-    loop then no-ops just as before)."""
+    loop then no-ops just as before).
+
+    ``caps`` maps a table to the most rows to embed from it; a table it leaves out is
+    not read at all. None is both tables at REEMBED_ROW_CAP. do_check_health uses it to
+    embed only the tables whose null-embedding check the caller selected, and to keep
+    its second pass inside what is left of the per-run cap.
+
+    ``backend_answered`` says a probe on this same run reached the backend and got a
+    vector back. A latched fault is then older evidence than that probe, and skipping
+    on it would leave a restarted backend's NULL rows unrepaired by the very run that
+    just watched it answer."""
     out: dict = {"memories": {}, "episodes": {}}
     if not vector._embedding_client:
         return out
     # bug-129: do not re-probe a backend already latched as faulted by recall.
-    if health.is_faulted():
+    if health.is_faulted() and not backend_answered:
+        return out
+    if caps is None:
+        caps = {"memories": REEMBED_ROW_CAP, "episodes": REEMBED_ROW_CAP}
+    if not any(n > 0 for n in caps.values()):
+        # Nothing to embed, so not even the label lookup goes out.
         return out
     # The label the blobs below are written with, learned before they are computed
     # and applied with them under the lock (no network there).
     out["label"] = await generation.record_label()
     iso = isolation_where(agent_id=agent_id or None)
-    tables = [("memories", "content"), ("episodes", "summary")]
+    tables = [(t, col) for t, col in (("memories", "content"), ("episodes", "summary")) if caps.get(t, 0) > 0]
     if not _blobs_are_stored():
         # bug-182: a memory BLOB is not written in this configuration, so nothing
         # downstream may apply one — computing them is one embed round-trip per
@@ -866,7 +904,7 @@ async def prefetch_null_embeddings(db, agent_id: str = "") -> dict:
         tables = [t for t in tables if t[0] != "memories"]
     for table, text_col in tables:
         rows = await db.execute_fetchall(
-            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, REEMBED_ROW_CAP)
+            f"SELECT id, {text_col} FROM {table} WHERE embedding IS NULL{iso.and_clause} LIMIT ?", (*iso.params, caps[table])
         )
         for start in range(0, len(rows), EMBED_BATCH_SIZE):
             chunk = rows[start : start + EMBED_BATCH_SIZE]
@@ -1926,7 +1964,17 @@ async def check_sqlite_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     ]
 
 
-_PROJECT_ID_NORMALIZE = re.compile(r"[^a-z0-9]")
+def _project_id_drift_key(project_id: str) -> str:
+    """The spelling-insensitive key two drifted project_ids share.
+
+    NFKC and casefold, then only letters, digits and combining marks of any
+    script are kept, so separators, punctuation and whitespace drop out. Keeping
+    only [a-z0-9] reduced every id written in another script to its ASCII
+    residue: '研究' and '開発' both became '', and '仕事2025' / '趣味2025' both
+    '2025', reported as one bucket spelled two ways.
+    """
+    folded = unicodedata.normalize("NFKC", project_id).casefold()
+    return "".join(ch for ch in folded if unicodedata.category(ch)[0] in "LNM")
 
 
 async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
@@ -1952,7 +2000,11 @@ async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
     )
     clusters: dict[str, list] = {}
     for pid, count in rows:
-        key = _PROJECT_ID_NORMALIZE.sub("", pid.lower())
+        key = _project_id_drift_key(pid)
+        if not key:
+            # Nothing but separators: no spelling left to compare, so no
+            # evidence that two such ids name the same bucket.
+            continue
         clusters.setdefault(key, []).append({"project_id": pid, "count": count})
     drifted = [members for members in clusters.values() if len(members) > 1]
     if not drifted:
@@ -2083,6 +2135,10 @@ def _sqlite_readable_stamp(ts: str) -> str | None:
         return None
 
 
+# The width of this module's other id-list `IN (...)` repairs.
+_SQL_ONLY_STAMP_CHUNK = 500
+
+
 async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     iso = isolation_where(agent_id=agent_id or None)
     bad_ts = (
@@ -2091,7 +2147,37 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
             iso.params,
         )
     )[0][0]
-    if bad_ts == 0:
+    # The other direction: a stamp SQLite reads and the package's parser does not
+    # ('now', a Julian-day number, 30 February, a lower-case 'z'). Every scoring
+    # path reads it as undated and the confidence span cannot take it as an end,
+    # yet datetime() alone called it valid, so no check claimed it and a literal
+    # 'now' survived every repair. Which stamps the parser reads cannot be asked in
+    # SQL, so the parser is asked here, over the narrowest scan that can answer it
+    # (folding the strftime() calls below into this scan made it five times slower
+    # at 100,000 rows, so they run on the declined rows alone). A stamp SQLite reads
+    # as ahead of the clock stays future_timestamp's -- the same predicate against
+    # the same boundary -- so the two checks still never claim one row.
+    declined = [
+        row_id
+        for row_id, ts in await db.execute_fetchall(
+            f"SELECT id, timestamp FROM memories WHERE timestamp != '' AND datetime(timestamp) IS NOT NULL{iso.and_clause}",
+            iso.params,
+        )
+        if not isinstance(ts, str) or _parse_timestamp_utc(ts) is None
+    ]
+    sql_only: list = []
+    if declined:
+        ahead_of = future_timestamp_boundary()
+        for start in range(0, len(declined), _SQL_ONLY_STAMP_CHUNK):
+            chunk = declined[start : start + _SQL_ONLY_STAMP_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            sql_only += await db.execute_fetchall(
+                f"""SELECT id, locked, strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at) FROM memories
+                    WHERE id IN ({placeholders})
+                    AND NOT (strftime('%Y-%m-%d %H:%M:%f', timestamp) > strftime('%Y-%m-%d %H:%M:%f', ?))""",
+                (*chunk, ahead_of),
+            )
+    if bad_ts == 0 and not sql_only:
         return []
     # A stamp SQLite cannot read but the Python readers can still names the
     # caller's event time, and the created_at copy below would replace that with the
@@ -2124,7 +2210,19 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
             iso.params,
         )
     }
-    repairable = len(respell_ids | fallback_ids)
+    # Nothing to respell to: the parser reads no instant in these, and SQLite's
+    # reading ('now' is the moment of the read, 30 February is 2 March) is a guess,
+    # not the caller's. created_at is the honest time the row carries, as for a
+    # stamp nothing parses -- in the same canonical form, computed here so a
+    # created_at the parser could not read either (an imported year 0, say) is not
+    # counted as a repair that would leave the row exactly as unreadable.
+    sql_only_repairs = {
+        row_id: replacement
+        for row_id, locked, replacement in sql_only
+        if not locked and isinstance(replacement, str) and _parse_timestamp_utc(replacement) is not None
+    }
+    sql_only_ids = set(sql_only_repairs)
+    repairable = len(respell_ids | fallback_ids | sql_only_ids)
     if fix:
         # bug-098: locked = 0 on the write as on the scan.
         for row_id, canon in respell:
@@ -2147,14 +2245,18 @@ async def check_invalid_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
                 AND locked = 0{iso.and_clause}""",
             iso.params,
         )
+        for row_id, replacement in sorted(sql_only_repairs.items()):
+            await db.execute(
+                "UPDATE memories SET timestamp = ? WHERE id = ? AND locked = 0", (replacement, row_id)
+            )
         # The coarse index holds each row's build-time datetime(timestamp) and
         # filters periods by it; a row given a readable stamp here, respelled or
-        # copied from created_at, would stay in no period there. Both sets were
-        # named above, before the UPDATEs that change them.
+        # copied from created_at, would stay in its old period, or in none, there.
+        # Every set was named above, before the UPDATEs that change them.
         from cpersona import coarse_index
 
-        coarse_index.discard_if_holding(sorted(respell_ids | fallback_ids))
-    return [{"type": "invalid_timestamp", "count": bad_ts, "repairable": repairable}]
+        coarse_index.discard_if_holding(sorted(respell_ids | fallback_ids | sql_only_ids))
+    return [{"type": "invalid_timestamp", "count": bad_ts + len(sql_only), "repairable": repairable}]
 
 
 async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
@@ -3205,7 +3307,8 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     Silent unless one of those settings is on AND the scope holds records past
     the window: an index nothing reads is not worth a line. Then:
 
-    - **absent** (warn, from ``INDEX_MATTERS_ROWS`` records past the window).
+    - **absent** (warn, from ``INDEX_MATTERS_ROWS`` records past the window;
+      under ``fix``, from the first, so the call the remainder hint names builds).
       Unlike the contiguous index's absence this is stamped: the operator turned
       on a setting whose cost, without the file, is the size of the store.
     - **unusable**, **dimension drift**, **log refused** (warn): a file exists
@@ -3223,7 +3326,9 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
     never repaired. One file holds every agent's records, so the registry
     declares the repair cross-agent and the guard demands write on every agent
     for it. ``repairable`` is 1 (the one file) or 0 when the builder would
-    decline, which is a corpus carrying two embedding widths mid-swap.
+    decline, which is a corpus carrying two embedding widths mid-swap. The build
+    commits on seams of its own, so it runs with no transaction held: a fix run
+    reaches it only after its commit (``POST_COMMIT_REPAIRS``).
 
     Detection is all the findings surface does with this (the SuperAuditor
     boundary): whether a finding leads to ``check_health(fix=true)`` is the
@@ -3286,7 +3391,10 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
             "hint": hint,
         }
     if issue is None and index is None:
-        if far_rows < INDEX_MATTERS_ROWS:
+        # Below the line the absence goes unreported, but a repair run still builds:
+        # a time cue's remainder hint names this call from the first record past the
+        # window, and a call that declines there is advice that does nothing.
+        if far_rows < INDEX_MATTERS_ROWS and not fix:
             return []
         width = max(widths) if widths else 0
         issue = {
@@ -3350,26 +3458,48 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
             )
 
     if fix and repairable:
-        # The change log goes on, and is pruned, on the repair's own transaction:
-        # the build reads its rows on it too, so no write can fall between the
-        # log's head and the rows (bug-514).
-        await vector_index.start_logging_on(db)
-        try:
-            built = await coarse_index.build_coarse_index(db, "memories")
-        except vector_index.IndexUnusable as exc:
-            built = {"built": False, "reason": str(exc)}
-        if built.get("built"):
-            await vector_index.prune_log_on(db)
-        elif not any(os.path.exists(path) for path, _magic in vector_index._log_readers()):
-            # A declined build leaves no file to read the log it turned on.
-            await vector_index.stop_logging(db)
-        # Present on every fix run, so "not built" is an answer rather than an absence.
-        issue["rebuilt"] = bool(built.get("built"))
-        if issue["rebuilt"]:
-            issue["build"] = {k: built[k] for k in ("count", "dim", "watermark", "bytes")}
-        else:
-            issue["build_declined"] = built.get("reason", "")
+        await _rebuild_coarse_index(issue)
     return [issue]
+
+
+async def _rebuild_coarse_index(issue: dict) -> None:
+    """Build the coarse index from committed rows and stamp the outcome on ``issue``.
+
+    Runs with no transaction held, as the operator command builds it (bug-550).
+    The build reads every embedded record and writes no row; on the fix run's
+    connection it held the write lock for that whole read, so every store,
+    archive, queue drain and import, in this process and in every other one on
+    the file, waited for it. It also read rows that run had not committed and
+    published the file before the commit, so a run that then rolled back left a
+    file without rows the rollback put back.
+
+    The change log goes on in a commit of its own before the snapshot opens, so
+    every write the snapshot does not see is logged and read live, and the log is
+    pruned once the file is published (bug-514).
+    """
+    from cpersona import coarse_index, vector_index
+    from cpersona.database import read_snapshot, transaction
+
+    built: dict = {"built": False}
+    await vector_index.start_logging()
+    try:
+        async with read_snapshot() as snap:
+            built = await coarse_index.build_coarse_index(snap, "memories")
+    except vector_index.IndexUnusable as exc:
+        built = {"built": False, "reason": str(exc)}
+    finally:
+        if built.get("built"):
+            await vector_index.prune_log()
+        elif not any(os.path.exists(path) for path, _magic in vector_index._log_readers()):
+            # A build that declined or failed leaves no file to read the log it turned on.
+            async with transaction() as db:
+                await vector_index.stop_logging(db)
+    # Present on every fix run, so "not built" is an answer rather than an absence.
+    issue["rebuilt"] = bool(built.get("built"))
+    if issue["rebuilt"]:
+        issue["build"] = {k: built[k] for k in ("count", "dim", "watermark", "bytes")}
+    else:
+        issue["build_declined"] = built.get("reason", "")
 
 
 async def check_block_index(db, agent_id: str = "", fix: bool = False) -> list[dict]:
@@ -3804,11 +3934,12 @@ HEALTH_CHECKS: list[Check] = [
     Check("invalid_timestamp", "warn", True, check_invalid_timestamp),
     # Runs after invalid_timestamp because the two share a repair (copy the row's
     # own created_at) and their predicates are disjoint by construction: a stamp
-    # SQLite cannot read is the first one's, a stamp it reads as ahead of the
-    # clock is this one's. Ordered so a row that somehow satisfied both would be
-    # repaired into a readable past stamp rather than the other way round. It also
-    # lets this check see a future stamp invalid_timestamp has just respelled from
-    # a form only Python reads ('+0900') into one SQL compares.
+    # SQLite reads as ahead of the clock is this one's, and any other stamp that
+    # SQLite or the package's parser cannot read is the first one's. Ordered so a
+    # row that somehow satisfied both would be repaired into a readable past stamp
+    # rather than the other way round. It also lets this check see a future stamp
+    # invalid_timestamp has just respelled from a form only Python reads ('+0900')
+    # into one SQL compares.
     Check("future_timestamp", "warn", True, check_future_timestamp),
     # bug-208: info, not warn — since bug-213 the read paths score these rows by
     # created_at anyway; the fix materialises that fallback for direct readers.
@@ -3858,6 +3989,15 @@ _CHECKS_BY_NAME = {c.name: c for c in HEALTH_CHECKS}
 # clean pre-scan already voted "no repair needed". See the dispatch there.
 WHOLE_DB_SCAN_CHECKS = frozenset({"fts_integrity", "sqlite_integrity"})
 
+# bug-550: the fix-capable checks whose repair runs after the fix run commits.
+# Such a repair writes no row: it builds a derived file by reading the whole
+# store, which needs no write lock, and it commits the change log on seams of
+# its own. Inside the run's transaction it held the shared write lock for the
+# whole read, and it published a file built from rows the run had not committed.
+# Under fix, run_health_checks only detects these; do_check_health runs their
+# repair once the locked run has committed (``after_commit``).
+POST_COMMIT_REPAIRS = frozenset({"coarse_index"})
+
 
 def is_fix_capable(name: str) -> bool:
     """Whether the named check can write a repair (registry metadata lookup).
@@ -3905,7 +4045,12 @@ _EMBEDDING_CHECKS = {
 
 
 async def run_health_checks(
-    db, agent_id: str = "", fix: bool = False, checks: list | None = None, embedding_cache=None
+    db,
+    agent_id: str = "",
+    fix: bool = False,
+    checks: list | None = None,
+    embedding_cache=None,
+    after_commit: bool = False,
 ) -> tuple[list[dict], dict]:
     """Run (a subset of) the registry; returns (issues, severity_summary).
 
@@ -3914,11 +4059,18 @@ async def run_health_checks(
 
     ``embedding_cache`` (bug-072) carries embeddings pre-computed outside the write lock
     for the two null-embedding checks; None means those checks embed live (CLI path).
+
+    Under ``fix`` the run is the caller's transaction, and the checks in
+    ``POST_COMMIT_REPAIRS`` are only detected there. ``after_commit`` is the
+    caller's second call, once that transaction has committed: ``db`` is a read
+    connection, those checks repair on seams of their own, and every other check
+    is only detected.
     """
     selected = set(checks) if checks else None
     issues: list[dict] = []
     summary = {"critical": 0, "warn": 0, "info": 0}
-    if fix:
+    in_run = fix and not after_commit
+    if in_run:
         # bug-361: the loop below turns every exception from a check into an
         # ordinary finding, so nothing escapes to transaction()'s rollback and a
         # repair that raised between its two statements was committed half done
@@ -3937,16 +4089,20 @@ async def run_health_checks(
     for check in HEALTH_CHECKS:
         if selected is not None and check.name not in selected:
             continue
-        savepoint = f"health_check_{check.name}" if fix else None
+        savepoint = f"health_check_{check.name}" if in_run else None
         if savepoint:
             await db.execute(f'SAVEPOINT "{savepoint}"')
+        # A repair that reads the whole store to build a file runs only after the
+        # commit: inside the run it would hold the write lock for that whole read
+        # (bug-550). Every other repair runs only inside the run.
+        check_fix = fix and (check.name in POST_COMMIT_REPAIRS) == after_commit
         effects = remote_index_effects.get()
         effects_mark = len(effects) if effects is not None else 0
         try:
             if embedding_cache is not None and check.name in _EMBEDDING_CHECKS:
-                found = await check.runner(db, agent_id, fix, embedding_cache=embedding_cache)
+                found = await check.runner(db, agent_id, check_fix, embedding_cache=embedding_cache)
             else:
-                found = await check.runner(db, agent_id, fix)
+                found = await check.runner(db, agent_id, check_fix)
         except Exception as e:
             if savepoint:
                 # Undo this check's writes only. A statement-level abort keeps the
@@ -4190,18 +4346,38 @@ async def deep_orphaned_episodes(db, agent_id: str, fix: bool) -> dict:
     # garbage ('T' > ' '), yielding false-positive orphans. SQLite's datetime()
     # normalises both (offset-aware values are converted to UTC; naive values are
     # already UTC by the bug-114 invariant), making the range test format-independent.
-    rows = await db.execute_fetchall(
-        """SELECT e.id, e.summary, e.start_time, e.end_time FROM episodes e
-           WHERE e.agent_id = ?
-           AND e.start_time IS NOT NULL AND e.end_time IS NOT NULL
-           AND NOT EXISTS (
-               SELECT 1 FROM memories m
-               WHERE m.agent_id = e.agent_id
-               AND datetime(m.timestamp) >= datetime(e.start_time)
-               AND datetime(m.timestamp) <= datetime(e.end_time)
-           )""",
+    #
+    # The test is not run as a correlated NOT EXISTS any more. datetime() on the
+    # memory side means no index can serve the window, so that form compared every
+    # episode with every memory of the agent: 4x the work per doubling of the corpus,
+    # measured at 7.2 s for 2,000 episodes over 20,000 memories (0.05 s this way),
+    # with every request read queued behind it. Instead the agent's
+    # normalised memory times are read once, sorted, and each window is a binary
+    # search: an episode is covered when the first time at or after its start is
+    # no later than its end. NULL compares false in SQL, so a time datetime()
+    # cannot parse covers nothing (dropped here), and a window whose start or end
+    # it cannot parse is covered by nothing (an orphan below), as before.
+    times = [
+        r[0]
+        for r in await db.execute_fetchall(
+            """SELECT datetime(timestamp) AS t FROM memories
+               WHERE agent_id = ? AND t IS NOT NULL ORDER BY t""",
+            (agent_id,),
+        )
+    ]
+    episodes = await db.execute_fetchall(
+        """SELECT id, summary, start_time, end_time, datetime(start_time), datetime(end_time)
+           FROM episodes
+           WHERE agent_id = ? AND start_time IS NOT NULL AND end_time IS NOT NULL""",
         (agent_id,),
     )
+    rows = []
+    for ep_id, summary, start, end, start_norm, end_norm in episodes:
+        if start_norm is not None and end_norm is not None:
+            first = bisect.bisect_left(times, start_norm)
+            if first < len(times) and times[first] <= end_norm:
+                continue
+        rows.append((ep_id, summary, start, end))
     result = {"count": len(rows)}
     if rows:
         result["samples"] = [
@@ -4318,8 +4494,6 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
     to duplicate_content / the v12 UNIQUE index). Capped at the most recent
     NEAR_DUPLICATE_ROW_CAP embedded rows to bound the O(n^2) comparison.
     """
-    import numpy as np
-
     rows = await db.execute_fetchall(
         """SELECT id, content, embedding FROM memories
            WHERE agent_id = ? AND embedding IS NOT NULL
@@ -4335,7 +4509,10 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
     # each hold their own idea of "finite".
     non_finite = [r[0] for r in rows if not vector.stored_blob_is_finite(r[2])]
     if non_finite:
-        rows = [r for r in rows if r[0] not in set(non_finite)]
+        # One set, not one per row: rebuilt inside the comprehension it made the
+        # filter rows x non-finite rows.
+        excluded = set(non_finite)
+        rows = [r for r in rows if r[0] not in excluded]
     # Said in the field the sibling refusal already uses, and only there: the ids
     # belong to check_health's nonfinite_embedding probe, which is the registry
     # entry that owns those rows and already lists them.
@@ -4354,34 +4531,79 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
         return _with_skipped(
             {"pairs": 0, "rows_scanned": len(rows), "skipped": "mixed embedding dimensions"}
         )
-    matrix = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.float32).reshape(len(rows), -1)
+    # Off the event loop: the matrix product and the per-row selection are seconds
+    # of CPU at the row cap, and nothing else in the process could run meanwhile.
+    count, samples = await asyncio.to_thread(_near_duplicate_pairs, rows, _NEAR_DUPLICATE_SAMPLES)
+    result = _with_skipped(
+        {"pairs": count, "rows_scanned": len(rows), "threshold": NEAR_DUPLICATE_COSINE}
+    )
+    if samples:
+        result["samples"] = samples
+        result["hint"] = "review with merge_memories / delete_memory (agent judgment)"
+    return result
+
+
+# Pairs deep_near_duplicate returns as samples.
+_NEAR_DUPLICATE_SAMPLES = 20
+
+
+def _near_duplicate_pairs(rows, limit: int) -> tuple[int, list[dict]]:
+    """Count the pairs above the threshold and build the ``limit`` best as samples.
+
+    The count is every pair whose cosine exceeds NEAR_DUPLICATE_COSINE, exact
+    content duplicates excluded (duplicate_content's jurisdiction). The samples
+    are the first ``limit`` pairs in the order cosine (rounded to 4 places)
+    descending, then row-major position, which is the order a stable sort of
+    every pair produces.
+
+    No pair is materialised beyond the samples. Building a dict per pair made
+    memory track the pair count rather than the matrix: on templated rows (a
+    heartbeat that differs only by a counter) nearly every pair is above the
+    threshold, measured at 647 MB of growth for 2,000 rows to return twenty of
+    them (65 MB for 3,000 rows this way, the matrix included). Each
+    row instead counts its hits with a vectorised mask and offers only its own
+    ``limit`` best to a running selection, so the peak is the n x n matrix plus
+    one row's worth of arrays.
+    """
+    import numpy as np
+
+    n = len(rows)
+    matrix = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.float32).reshape(n, -1)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     unit = matrix / norms
     sims = unit @ unit.T
-    pairs = []
-    n = len(rows)
-    idx_a, idx_b = np.where(np.triu(sims, k=1) > NEAR_DUPLICATE_COSINE)
-    for a, b in zip(idx_a.tolist(), idx_b.tolist()):
-        if rows[a][1] == rows[b][1]:
-            continue  # exact duplicate — duplicate_content's jurisdiction
-        pairs.append(
-            {
-                "id_a": rows[a][0],
-                "id_b": rows[b][0],
-                "cosine": round(float(sims[a, b]), 4),
-                "preview_a": rows[a][1][:60],
-                "preview_b": rows[b][1][:60],
-            }
-        )
-    pairs.sort(key=lambda p: -p["cosine"])
-    result = _with_skipped(
-        {"pairs": len(pairs), "rows_scanned": n, "threshold": NEAR_DUPLICATE_COSINE}
-    )
-    if pairs:
-        result["samples"] = pairs[:20]
-        result["hint"] = "review with merge_memories / delete_memory (agent judgment)"
-    return result
+    # Equal content shares a label, so the exact-duplicate exclusion is one
+    # vectorised comparison per row rather than a string compare per pair.
+    labels_of: dict[str, int] = {}
+    labels = np.array([labels_of.setdefault(r[1], len(labels_of)) for r in rows])
+    count = 0
+    best: list[tuple[int, int, int]] = []
+    for a in range(n - 1):
+        row = sims[a, a + 1 :]
+        cols = np.flatnonzero((row > NEAR_DUPLICATE_COSINE) & (labels[a + 1 :] != labels[a]))
+        if not cols.size:
+            continue
+        count += int(cols.size)
+        # The sample's sort key in integers: a float32 cosine times 10^4 is exact
+        # in float64, so rint (half to even) gives the same value as Python's
+        # round(x, 4), which is what the sample reports and orders by.
+        keys = np.rint(row[cols].astype(np.float64) * 10_000).astype(np.int64)
+        order = np.lexsort((cols, -keys))[:limit]
+        best.extend((-int(keys[k]), a, a + 1 + int(cols[k])) for k in order)
+        if len(best) > 4 * limit:
+            best = heapq.nsmallest(limit, best)
+    samples = [
+        {
+            "id_a": rows[a][0],
+            "id_b": rows[b][0],
+            "cosine": round(float(sims[a, b]), 4),
+            "preview_a": rows[a][1][:60],
+            "preview_b": rows[b][1][:60],
+        }
+        for _, a, b in heapq.nsmallest(limit, best)
+    ]
+    return count, samples
 
 
 async def deep_unnormalized_content(db, agent_id: str, fix: bool) -> dict:

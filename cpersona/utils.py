@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from cpersona.config import (
@@ -201,10 +202,18 @@ def future_timestamp_issue(ts_raw: str, *, now: datetime | None = None) -> dict 
     exactly ``now + allowance`` is inside the range a correct client can produce
     across a network hop, and only what is past it is a claim about the future.
 
-    An unreadable stamp answers ``None`` — the same as a fine one, deliberately.
-    ``invalid_timestamp`` owns that row and repairs it; a stamp nobody can parse
-    is not a stamp anyone can call early, and having two findings claim it would
-    make the repairs race.
+    A stamp ``_parse_timestamp_utc`` declines is judged the way the SQL readers
+    read it. SQLite's date functions accept spellings that parser does not -- a
+    Julian-day number ('2500000' is 2132), 'now', 30 February, a lower-case 'z' --
+    and the ``future_timestamp`` check and the time filters read the column
+    through them. Answering "nothing to report" for such a stamp let ``reject``
+    store a moment every SQL reader places a century ahead, while it refused the
+    ISO spelling of a nearer one.
+
+    A stamp neither reader can parse answers ``None`` — the same as a fine one,
+    deliberately. ``invalid_timestamp`` owns that row and repairs it; a stamp
+    nobody can parse is not a stamp anyone can call early, and having two
+    findings claim it would make the repairs race.
 
     One function decides this for every seam that writes a timestamp. The seams
     then differ in what they DO with it — ``store`` may refuse, a restore never
@@ -212,10 +221,10 @@ def future_timestamp_issue(ts_raw: str, *, now: datetime | None = None) -> dict 
     would rot if each of them spelled it out (see the gate in
     ``tests/test_structural_gates.py``).
     """
+    reference = now if now is not None else datetime.now(timezone.utc)
     parsed = _parse_timestamp_utc(ts_raw)
     if parsed is None:
-        return None
-    reference = now if now is not None else datetime.now(timezone.utc)
+        return _sqlite_future_timestamp_issue(ts_raw, reference)
     ahead = (parsed - reference).total_seconds()
     if ahead <= FUTURE_TIMESTAMP_SKEW_SECONDS:
         return None
@@ -248,6 +257,36 @@ def future_timestamp_boundary(*, now: datetime | None = None) -> str:
     # instants, called the same row ahead. The two are supposed to agree about
     # where "ahead" begins; the precision is part of that agreement.
     return boundary.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+
+def _sqlite_future_timestamp_issue(ts_raw: str, reference: datetime) -> dict | None:
+    """``future_timestamp_issue`` for a stamp only SQLite's date functions read.
+
+    The verdict is SQLite's own comparison -- the predicate ``future_timestamp``
+    evaluates against ``future_timestamp_boundary`` -- so the write seam and the
+    health check cannot disagree about such a row. A private in-memory connection
+    evaluates it: how a stamp reads is a property of the SQLite library, not of any
+    database, and the seams that call this are not all holding a connection.
+    """
+    if not ts_raw:
+        return None
+    conn = sqlite3.connect(":memory:")
+    try:
+        ahead, seconds = conn.execute(
+            "SELECT strftime('%Y-%m-%d %H:%M:%f', ?1) > strftime('%Y-%m-%d %H:%M:%f', ?2),"
+            " (julianday(?1) - julianday(?3)) * 86400.0",
+            (ts_raw, future_timestamp_boundary(now=reference), reference.isoformat()),
+        ).fetchone()
+    finally:
+        conn.close()
+    # NULL when SQLite cannot read the stamp either: no reader places it anywhere.
+    if not ahead:
+        return None
+    return {
+        "timestamp": ts_raw,
+        "ahead_by_seconds": round(seconds, 3),
+        "allowance_seconds": FUTURE_TIMESTAMP_SKEW_SECONDS,
+    }
 
 
 def episode_timestamp(start_time: str | None, created_at: str | None) -> str:

@@ -756,9 +756,19 @@ METHOD_CHECKOUT = "checkout"
 METHOD_UNKNOWN = "unknown"
 
 # uv unpacks each cached environment under `<cache>/archive-v0/<hash>`, so a
-# process whose prefix is inside one was launched by uvx. Matched on the path
-# segment rather than on the cache root, which moves with UV_CACHE_DIR.
-_UV_MARKERS = (os.path.join("uv", "archive-v0"), "uv/archive-v0", "uv\\archive-v0")
+# process whose prefix is one of those directories was launched by uvx. Matched
+# on the `archive-v0` parent alone: the cache root above it is whatever
+# UV_CACHE_DIR names, and by default `%LOCALAPPDATA%\uv\cache` on Windows, so no
+# directory name above `archive-v0` can be relied on.
+_UV_ARCHIVE_DIR = "archive-v0"
+
+
+def _launched_by_uvx(prefix: str) -> bool:
+    # Split on both separators: a Windows prefix is spelled with backslashes,
+    # and the parent has to be read the same way wherever the check runs.
+    parts = [part for part in re.split(r"[\\/]", prefix) if part]
+    return len(parts) >= 2 and parts[-2] == _UV_ARCHIVE_DIR
+
 
 _SITE_MARKERS = ("site-packages", "dist-packages")
 
@@ -816,7 +826,7 @@ def detect_install(available: str | None = None) -> dict:
     spec = f"{PROJECT_NAME}=={available}" if version_ok else PROJECT_NAME
     uvx_spec = f"{PROJECT_NAME}@{available}" if version_ok else f"{PROJECT_NAME}@latest"
 
-    if any(marker in sys.prefix for marker in _UV_MARKERS):
+    if _launched_by_uvx(sys.prefix):
         return {
             "method": METHOD_UVX,
             "command": f"uvx {uvx_spec}",

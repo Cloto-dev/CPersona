@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d2e1215a70d0c733c1fe7926708ff9872204ffbf -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:8ff17cd8ea4eb638cc2e6b7e45c7ed19527fc332 -->
 
 # Reliable Recall — 2.6 系
 
@@ -397,7 +397,9 @@ effective_budget = min(budget_base, max_budget)
   上限を掛けます。MCP の層が送る形で数え、通知とツールの境界が足す欄も含めます。応答は `cap` と
   `used_tokens` を述べます。語彙はパッケージに同梱しているので、数えるのにネットワークは要りません。
   mode の下では、応答は直列化した形が上限に収まるペイロード列の最長の先頭部分なので、上限を上げて item や
-  抜粋が消えることはありません。最初の候補だけで上限を超える時は `error: "cap_below_minimum"` を返します。
+  抜粋が消えることはありません。最初の一節さえ収まらない時は、その item が収まるだけの claims を残し、
+  削った数を `claims_omitted` で述べます。最初の一節にその head の claim と応答自身の欄を足しても上限を
+  超える時は `error: "cap_below_minimum"` を返し、`detail` は一節だけで上限を超えたのかどうかを述べます。
   mode を指定しない呼び出しは変わりません。
   - `mode: "lite"` は、2.6.5a3 が `lite=true` として入れたプリセットで、`lite=true` はその別名として残ります
     (両方の指定は拒否します)。予算は、呼び出し側が指定しない限り 2,800 字です (運用者が強制した予算は

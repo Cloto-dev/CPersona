@@ -36,6 +36,34 @@ logger = logging.getLogger(__name__)
 _embedding_client: EmbeddingClient | None = None
 
 
+def build_embedding_client() -> EmbeddingClient | None:
+    """The embedding client this configuration calls for, not yet initialised.
+
+    None under ``CPERSONA_EMBEDDING_MODE=none``. One constructor for every process
+    that installs ``_embedding_client``: the server, and the checkup CLI, which runs
+    the same check registry. A CLI that never built one ran every client-dependent
+    check as if the mode were ``none`` -- dimension drift unchecked, a NULL backlog
+    demoted to info, a ``--fix`` with nothing to re-embed through -- and passed as
+    healthy a database the server's own check_health called unhealthy.
+
+    The client does no env reading of its own, so the CPERSONA_EMBEDDING_* cache
+    size / TTL / timeout overrides are passed explicitly. Callers validate the mode
+    first (``config.assert_embedding_mode_supported``).
+    """
+    if config.EMBEDDING_MODE == "none":
+        return None
+    return EmbeddingClient(
+        mode=config.EMBEDDING_MODE,
+        http_url=config.EMBEDDING_URL,
+        api_key=config.EMBEDDING_API_KEY,
+        api_url=config.EMBEDDING_API_URL,
+        model=config.EMBEDDING_MODEL,
+        cache_size=config.EMBEDDING_CACHE_SIZE,
+        cache_ttl=config.EMBEDDING_CACHE_TTL,
+        timeout=config.embedding_timeout_secs(),
+    )
+
+
 def pack_for_storage(embedding: object) -> bytes | None:
     """The one place a vector becomes a BLOB this process will store.
 
@@ -1058,7 +1086,47 @@ async def _index_tail_rows(
     window: tuple | None = None,
     changed=(),
 ):
-    """The rows the index cannot answer for, read exactly.
+    """The rows the index cannot answer for, read exactly: `_index_tail_statement`, run whole.
+
+    Returns None when a tail row carries a foreign embedding width. The live scan
+    applies its window BEFORE skipping such rows, so their presence changes which
+    rows fall inside the window — the index cannot reproduce that, and a
+    difference here is a different answer rather than a slower one. That state
+    means a model swap began after the build; the scan handles it correctly.
+
+    Read whole because `scan_limit` bounds it to the scan window. A caller whose
+    range runs to the end of the store (`scan_limit` -1) runs the statement
+    through a cursor instead, as the record coarse search does.
+    """
+    statement = await _index_tail_statement(
+        db, index, agent_id=agent_id, project_id=project_id, channel=channel,
+        source_id=source_id, scan_limit=scan_limit, table=table, window=window, changed=changed,
+    )
+    if statement is None:
+        return []
+    rows = await db.execute_fetchall(*statement)
+    if any(r[3] != index.dim * 4 for r in rows):
+        return None
+    return rows
+
+
+async def _index_tail_statement(
+    db: aiosqlite.Connection,
+    index,
+    *,
+    agent_id: str,
+    project_id: str | None,
+    channel: str,
+    source_id: str,
+    scan_limit: int,
+    table: str = "memories",
+    window: tuple | None = None,
+    changed=(),
+) -> tuple[str, tuple] | None:
+    """The statement that reads the rows the index cannot answer for, or None when it is empty.
+
+    Each row it reads is `(id, created_at, embedding, length(embedding))`, in scan
+    order.
 
     `window`, when given, keeps only the rows whose own time falls in the
     period `[start, end)` — the predicate the cue arm reads a period with
@@ -1079,12 +1147,6 @@ async def _index_tail_rows(
     held by the file that changed since it was built (bug-514). The caller left
     them out of its selection, so here they are read as they are now -- or not at
     all, when the row is gone or no longer carries an embedding.
-
-    Returns None when a tail row carries a foreign embedding width. The live scan
-    applies its window BEFORE skipping such rows, so their presence changes which
-    rows fall inside the window — the index cannot reproduce that, and a
-    difference here is a different answer rather than a slower one. That state
-    means a model swap began after the build; the scan handles it correctly.
     """
     # One IN clause for both named groups: they are disjoint by construction (a row
     # with no embedding is not in the meta query that produces the excluded list) and
@@ -1108,7 +1170,7 @@ async def _index_tail_rows(
     if not holes_ids and not await _rows_written_since(
         db, index.watermark, agent_id=agent_id, table=table
     ):
-        return []
+        return None
 
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel)
     # Only memories carry a source column; the episode caller passes source_id
@@ -1145,7 +1207,7 @@ async def _index_tail_rows(
     # Empty stays byte-identical to a statement that never had the clause, and
     # binds no extra parameter: a test pins the plan of the empty-tail shape.
     holes_params = (json.dumps([int(i) for i in holes_ids]),) if holes_ids else ()
-    rows = await db.execute_fetchall(
+    return (
         f"""SELECT id, created_at, embedding, length(embedding)
            FROM {table}
            WHERE (id > ?{holes}) AND embedding IS NOT NULL AND {iso.clause}{src_clause}
@@ -1153,9 +1215,6 @@ async def _index_tail_rows(
            LIMIT ?""",
         (index.watermark, *holes_params, *iso.params, *src_params, scan_limit),
     )
-    if any(r[3] != index.dim * 4 for r in rows):
-        return None
-    return rows
 
 
 # bug-329: rows per gather block. Large enough that the per-block overhead is
@@ -2155,6 +2214,15 @@ async def _search_vector(
         # The service answered, and its answer IS the result. The reach applies
         # to the local scan only — the remote service ranks under its own window
         # — so `far_out` is left as the caller handed it over: empty.
+        #
+        # An answer from /search is a request that reached the embedding service
+        # (the same host as /embed, which embedded this query to rank it), so it
+        # is the recall path's recovery observation in this mode. Without it the
+        # only observe_ok() was the local embed below, which a remote answer
+        # returns before: a fault the maintenance probes latched during a short
+        # outage then stayed latched for the life of the process, and every
+        # recall served by remote vector search carried the degraded advisory.
+        health.observe_ok()  # the remote /search answer reached the service
         return await _drop_rejected_labels(db, remote_results)
 
     import numpy as np
