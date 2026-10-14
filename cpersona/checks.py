@@ -75,9 +75,12 @@ the counting stays in the runner and only the verdict moves:
   the meta-test over the registry, not this fallback.
 """
 
+import asyncio
+import bisect
 import contextlib
 import contextvars
 import datetime
+import heapq
 import json
 import logging
 import os
@@ -486,11 +489,19 @@ async def check_nonfinite_embedding(db, agent_id: str, fix: bool) -> list[dict]:
         # linearly (1.04x at both 1,000 and 4,000 rows of 768-wide vectors) on the
         # default health path, with no adversary involved. The repair side beside
         # it was already chunked; this is the same discipline on the read.
+        #
+        # NOT INDEXED keeps the page on the primary key. Scoped to an agent, the
+        # planner otherwise serves the agent term from an agent index whose order
+        # is not id order, and sorts every embedded row of the agent to return
+        # each page of 100: a scan of n rows did n/100 sorts of n rows (1.6 s at
+        # 20,000 rows, against 0.06 s for the unscoped walk). The rowid range
+        # stays usable under NOT INDEXED, so each page resumes where the last
+        # one stopped and the scan is one pass over the table.
         bad: list[int] = []
         last_id = 0
         while True:
             rows = await db.execute_fetchall(
-                f"SELECT id, embedding FROM {table} "
+                f"SELECT id, embedding FROM {table} NOT INDEXED "
                 f"WHERE embedding IS NOT NULL AND id > ?{iso.and_clause} "
                 "ORDER BY id LIMIT ?",
                 (last_id, *iso.params, _NONFINITE_SCAN_CHUNK),
@@ -1926,7 +1937,17 @@ async def check_sqlite_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     ]
 
 
-_PROJECT_ID_NORMALIZE = re.compile(r"[^a-z0-9]")
+def _project_id_drift_key(project_id: str) -> str:
+    """The spelling-insensitive key two drifted project_ids share.
+
+    NFKC and casefold, then only letters, digits and combining marks of any
+    script are kept, so separators, punctuation and whitespace drop out. Keeping
+    only [a-z0-9] reduced every id written in another script to its ASCII
+    residue: '研究' and '開発' both became '', and '仕事2025' / '趣味2025' both
+    '2025', reported as one bucket spelled two ways.
+    """
+    folded = unicodedata.normalize("NFKC", project_id).casefold()
+    return "".join(ch for ch in folded if unicodedata.category(ch)[0] in "LNM")
 
 
 async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
@@ -1952,7 +1973,11 @@ async def check_axis_hygiene(db, agent_id: str, fix: bool) -> list[dict]:
     )
     clusters: dict[str, list] = {}
     for pid, count in rows:
-        key = _PROJECT_ID_NORMALIZE.sub("", pid.lower())
+        key = _project_id_drift_key(pid)
+        if not key:
+            # Nothing but separators: no spelling left to compare, so no
+            # evidence that two such ids name the same bucket.
+            continue
         clusters.setdefault(key, []).append({"project_id": pid, "count": count})
     drifted = [members for members in clusters.values() if len(members) > 1]
     if not drifted:
@@ -4190,18 +4215,38 @@ async def deep_orphaned_episodes(db, agent_id: str, fix: bool) -> dict:
     # garbage ('T' > ' '), yielding false-positive orphans. SQLite's datetime()
     # normalises both (offset-aware values are converted to UTC; naive values are
     # already UTC by the bug-114 invariant), making the range test format-independent.
-    rows = await db.execute_fetchall(
-        """SELECT e.id, e.summary, e.start_time, e.end_time FROM episodes e
-           WHERE e.agent_id = ?
-           AND e.start_time IS NOT NULL AND e.end_time IS NOT NULL
-           AND NOT EXISTS (
-               SELECT 1 FROM memories m
-               WHERE m.agent_id = e.agent_id
-               AND datetime(m.timestamp) >= datetime(e.start_time)
-               AND datetime(m.timestamp) <= datetime(e.end_time)
-           )""",
+    #
+    # The test is not run as a correlated NOT EXISTS any more. datetime() on the
+    # memory side means no index can serve the window, so that form compared every
+    # episode with every memory of the agent: 4x the work per doubling of the corpus,
+    # measured at 7.2 s for 2,000 episodes over 20,000 memories (0.05 s this way),
+    # with every request read queued behind it. Instead the agent's
+    # normalised memory times are read once, sorted, and each window is a binary
+    # search: an episode is covered when the first time at or after its start is
+    # no later than its end. NULL compares false in SQL, so a time datetime()
+    # cannot parse covers nothing (dropped here), and a window whose start or end
+    # it cannot parse is covered by nothing (an orphan below), as before.
+    times = [
+        r[0]
+        for r in await db.execute_fetchall(
+            """SELECT datetime(timestamp) AS t FROM memories
+               WHERE agent_id = ? AND t IS NOT NULL ORDER BY t""",
+            (agent_id,),
+        )
+    ]
+    episodes = await db.execute_fetchall(
+        """SELECT id, summary, start_time, end_time, datetime(start_time), datetime(end_time)
+           FROM episodes
+           WHERE agent_id = ? AND start_time IS NOT NULL AND end_time IS NOT NULL""",
         (agent_id,),
     )
+    rows = []
+    for ep_id, summary, start, end, start_norm, end_norm in episodes:
+        if start_norm is not None and end_norm is not None:
+            first = bisect.bisect_left(times, start_norm)
+            if first < len(times) and times[first] <= end_norm:
+                continue
+        rows.append((ep_id, summary, start, end))
     result = {"count": len(rows)}
     if rows:
         result["samples"] = [
@@ -4318,8 +4363,6 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
     to duplicate_content / the v12 UNIQUE index). Capped at the most recent
     NEAR_DUPLICATE_ROW_CAP embedded rows to bound the O(n^2) comparison.
     """
-    import numpy as np
-
     rows = await db.execute_fetchall(
         """SELECT id, content, embedding FROM memories
            WHERE agent_id = ? AND embedding IS NOT NULL
@@ -4335,7 +4378,10 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
     # each hold their own idea of "finite".
     non_finite = [r[0] for r in rows if not vector.stored_blob_is_finite(r[2])]
     if non_finite:
-        rows = [r for r in rows if r[0] not in set(non_finite)]
+        # One set, not one per row: rebuilt inside the comprehension it made the
+        # filter rows x non-finite rows.
+        excluded = set(non_finite)
+        rows = [r for r in rows if r[0] not in excluded]
     # Said in the field the sibling refusal already uses, and only there: the ids
     # belong to check_health's nonfinite_embedding probe, which is the registry
     # entry that owns those rows and already lists them.
@@ -4354,34 +4400,79 @@ async def deep_near_duplicate(db, agent_id: str, fix: bool) -> dict:
         return _with_skipped(
             {"pairs": 0, "rows_scanned": len(rows), "skipped": "mixed embedding dimensions"}
         )
-    matrix = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.float32).reshape(len(rows), -1)
+    # Off the event loop: the matrix product and the per-row selection are seconds
+    # of CPU at the row cap, and nothing else in the process could run meanwhile.
+    count, samples = await asyncio.to_thread(_near_duplicate_pairs, rows, _NEAR_DUPLICATE_SAMPLES)
+    result = _with_skipped(
+        {"pairs": count, "rows_scanned": len(rows), "threshold": NEAR_DUPLICATE_COSINE}
+    )
+    if samples:
+        result["samples"] = samples
+        result["hint"] = "review with merge_memories / delete_memory (agent judgment)"
+    return result
+
+
+# Pairs deep_near_duplicate returns as samples.
+_NEAR_DUPLICATE_SAMPLES = 20
+
+
+def _near_duplicate_pairs(rows, limit: int) -> tuple[int, list[dict]]:
+    """Count the pairs above the threshold and build the ``limit`` best as samples.
+
+    The count is every pair whose cosine exceeds NEAR_DUPLICATE_COSINE, exact
+    content duplicates excluded (duplicate_content's jurisdiction). The samples
+    are the first ``limit`` pairs in the order cosine (rounded to 4 places)
+    descending, then row-major position, which is the order a stable sort of
+    every pair produces.
+
+    No pair is materialised beyond the samples. Building a dict per pair made
+    memory track the pair count rather than the matrix: on templated rows (a
+    heartbeat that differs only by a counter) nearly every pair is above the
+    threshold, measured at 647 MB of growth for 2,000 rows to return twenty of
+    them (65 MB for 3,000 rows this way, the matrix included). Each
+    row instead counts its hits with a vectorised mask and offers only its own
+    ``limit`` best to a running selection, so the peak is the n x n matrix plus
+    one row's worth of arrays.
+    """
+    import numpy as np
+
+    n = len(rows)
+    matrix = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.float32).reshape(n, -1)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     unit = matrix / norms
     sims = unit @ unit.T
-    pairs = []
-    n = len(rows)
-    idx_a, idx_b = np.where(np.triu(sims, k=1) > NEAR_DUPLICATE_COSINE)
-    for a, b in zip(idx_a.tolist(), idx_b.tolist()):
-        if rows[a][1] == rows[b][1]:
-            continue  # exact duplicate — duplicate_content's jurisdiction
-        pairs.append(
-            {
-                "id_a": rows[a][0],
-                "id_b": rows[b][0],
-                "cosine": round(float(sims[a, b]), 4),
-                "preview_a": rows[a][1][:60],
-                "preview_b": rows[b][1][:60],
-            }
-        )
-    pairs.sort(key=lambda p: -p["cosine"])
-    result = _with_skipped(
-        {"pairs": len(pairs), "rows_scanned": n, "threshold": NEAR_DUPLICATE_COSINE}
-    )
-    if pairs:
-        result["samples"] = pairs[:20]
-        result["hint"] = "review with merge_memories / delete_memory (agent judgment)"
-    return result
+    # Equal content shares a label, so the exact-duplicate exclusion is one
+    # vectorised comparison per row rather than a string compare per pair.
+    labels_of: dict[str, int] = {}
+    labels = np.array([labels_of.setdefault(r[1], len(labels_of)) for r in rows])
+    count = 0
+    best: list[tuple[int, int, int]] = []
+    for a in range(n - 1):
+        row = sims[a, a + 1 :]
+        cols = np.flatnonzero((row > NEAR_DUPLICATE_COSINE) & (labels[a + 1 :] != labels[a]))
+        if not cols.size:
+            continue
+        count += int(cols.size)
+        # The sample's sort key in integers: a float32 cosine times 10^4 is exact
+        # in float64, so rint (half to even) gives the same value as Python's
+        # round(x, 4), which is what the sample reports and orders by.
+        keys = np.rint(row[cols].astype(np.float64) * 10_000).astype(np.int64)
+        order = np.lexsort((cols, -keys))[:limit]
+        best.extend((-int(keys[k]), a, a + 1 + int(cols[k])) for k in order)
+        if len(best) > 4 * limit:
+            best = heapq.nsmallest(limit, best)
+    samples = [
+        {
+            "id_a": rows[a][0],
+            "id_b": rows[b][0],
+            "cosine": round(float(sims[a, b]), 4),
+            "preview_a": rows[a][1][:60],
+            "preview_b": rows[b][1][:60],
+        }
+        for _, a, b in heapq.nsmallest(limit, best)
+    ]
+    return count, samples
 
 
 async def deep_unnormalized_content(db, agent_id: str, fix: bool) -> dict:

@@ -3902,12 +3902,17 @@ async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tal
     # 1024-dimension vectors: 5.23 MB in a single list, lock held. The peer bulk path in
     # this same file already pages, with a comment saying the corpus must not be
     # materialised.
+    #
+    # `+agent_id`: the unary plus keeps the planner from serving the agent term
+    # from an agent index, whose order is not id order -- it then sorted every row
+    # of the source agent to return each page, inside the transaction. Without the
+    # index the page walks the primary key from the last id it returned.
     last_src_id = 0
     while True:
         rows = await db.execute_fetchall(
             "SELECT id, project_id, msg_id, content, source, timestamp, metadata, channel, embedding, locked,"
             " created_at, recall_count, last_recalled_at, embedding_model"
-            " FROM memories WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?",
+            " FROM memories WHERE +agent_id = ? AND id > ? ORDER BY id LIMIT ?",
             (source_agent_id, last_src_id, _MERGE_READ_CHUNK),
         )
         if not rows:
@@ -4001,13 +4006,14 @@ async def _merge_episode_rows(db, source_agent_id: str, target_agent_id: str, ta
     # from MAX(created_at) — every memory the target already held then scores as
     # prior-session — and becomes the episode's own recall timestamp whenever
     # start_time is NULL (bug-213).
-    # bug-345: paged for the same reason as the memory pass, and with the same keyset.
+    # bug-345: paged for the same reason as the memory pass, and with the same keyset
+    # (and the same unary plus, for the same plan).
     last_src_id = 0
     while True:
         rows = await db.execute_fetchall(
             "SELECT id, summary, keywords, start_time, end_time, resolved, project_id, channel, embedding,"
             " created_at, embedding_model"
-            " FROM episodes WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?",
+            " FROM episodes WHERE +agent_id = ? AND id > ? ORDER BY id LIMIT ?",
             (source_agent_id, last_src_id, _MERGE_READ_CHUNK),
         )
         if not rows:

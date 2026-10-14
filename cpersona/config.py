@@ -427,8 +427,11 @@ VECTOR_INDEX_MAX_EXCLUDED_IDS = max(0, _parse_int("CPERSONA_VECTOR_INDEX_MAX_EXC
 # round-trips made while holding the lock.
 REEMBED_ROW_CAP = max(1, _parse_int("CPERSONA_REEMBED_ROW_CAP", 5000))
 # Embedded rows `deep_near_duplicate` compares, bounding an O(n^2) dense cosine
-# matrix (`unit @ unit.T` plus `np.triu`) — the memory, not the time, is what
-# decides this one. Measured on 1024-d float32: n=1,000 is 17 ms / 17 MB peak,
+# matrix (`unit @ unit.T`) — the memory, not the time, is what decides this one.
+# The pairs above the threshold are counted per row and only the samples are
+# built, so the peak is the matrix whatever the pair count. Measured on 1024-d
+# float32 when an `np.triu` copy of the matrix was also made (an upper bound
+# now): n=1,000 is 17 ms / 17 MB peak,
 # n=2,000 is 18 ms / 52 MB, n=5,000 is 103 ms / 266 MB, n=10,000 is 392 ms /
 # 982 MB. 5,000 covers 3.3% of a 150,000-row corpus for a transient 266 MB;
 # 10,000 would ask an 8 GB machine for a gigabyte of scratch space inside a

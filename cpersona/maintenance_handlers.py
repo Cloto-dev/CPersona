@@ -19,7 +19,7 @@ from cpersona import generation
 from cpersona import session
 from cpersona import update_check
 from cpersona import vector
-from cpersona.database import connection, transaction
+from cpersona.database import background_connection, connection, transaction
 from cpersona.isolation import isolation_where
 from cpersona.session import resolve_session_key
 from cpersona.utils import error_response
@@ -432,7 +432,11 @@ async def do_deep_check(
     reporting = [n for n in selected if n not in writing]
 
     if reporting:
-        async with connection() as db:
+        # On the background seam, not the request connection: a deep pass is whole
+        # corpus reads and a pairwise matrix per agent, and every recall, list and
+        # get_contents on the request connection would otherwise wait for each of
+        # its statements to finish before its own could start.
+        async with background_connection() as db:
             await _run(db, reporting)
     if writing:
         # bug-539: as in do_check_health, deleted rows leave the remote index after
