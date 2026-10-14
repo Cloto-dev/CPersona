@@ -3279,6 +3279,9 @@ MUTATIONS += [
         file='cpersona/coarse_notice.py',
         find='    if _index_usable():\n        return None\n',
         replace='',
+        # The recall path asks the same question before it counts the scope
+        # (scope_notice), so both layers go, or the mutant is equivalent.
+        also=(('or _told(session_key, declared) or _index_usable():', 'or _told(session_key, declared):'),),
         breaks='the suggestion stands after the index was built',
         expect='test_cue_coarse_auto.py::test_a_recall_below_the_line_or_with_an_index_carries_no_suggestion',
     ),
