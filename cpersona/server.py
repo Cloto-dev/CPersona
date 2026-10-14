@@ -39,7 +39,9 @@ from cpersona import block_index
 from cpersona import blocks
 from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient
+# Re-exported: benchmarks/benchmark_latency.py imports the client from here; the
+# server itself builds one through vector.build_embedding_client().
+from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: F401
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
 
 from cpersona import session
@@ -71,13 +73,7 @@ from cpersona.admin_handlers import (
 from cpersona.config import (
     AUTO_CALIBRATE,
     CALIBRATE_ON_MODEL_CHANGE,
-    EMBEDDING_API_KEY,
-    EMBEDDING_API_URL,
-    EMBEDDING_CACHE_SIZE,
-    EMBEDDING_CACHE_TTL,
     EMBEDDING_MODE,
-    EMBEDDING_MODEL,
-    EMBEDDING_URL,
     STORE_BLOB,
     TASK_QUEUE_ENABLED,
     VECTOR_SEARCH_MODE,
@@ -3400,7 +3396,7 @@ def _resolve_embedding_timeout() -> int:
     BOTH the stdio and streamable-http transports. config.parse_int warns and
     falls back to the default instead.
     """
-    return config.parse_int("CPERSONA_EMBEDDING_TIMEOUT_SECS", 30)
+    return config.embedding_timeout_secs()
 
 
 def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.AclConfig | None" = None):
@@ -3790,21 +3786,10 @@ async def main():
     # contacted.
     config.assert_embedding_mode_supported()
 
-    if EMBEDDING_MODE != "none":
-        # _vendored_mcp_common.EmbeddingClient takes env-derived config via constructor
-        # args (it does no env reading of its own), so cache size / TTL /
-        # timeout are passed explicitly here to preserve CPERSONA_EMBEDDING_*
-        # override behavior.
-        vector._embedding_client = EmbeddingClient(
-            mode=EMBEDDING_MODE,
-            http_url=EMBEDDING_URL,
-            api_key=EMBEDDING_API_KEY,
-            api_url=EMBEDDING_API_URL,
-            model=EMBEDDING_MODEL,
-            cache_size=EMBEDDING_CACHE_SIZE,
-            cache_ttl=EMBEDDING_CACHE_TTL,
-            timeout=_resolve_embedding_timeout(),
-        )
+    vector._embedding_client = vector.build_embedding_client()
+    if vector._embedding_client is not None:
+        # Built by the same constructor the checkup CLI uses, so the two run the
+        # check registry against the same backend configuration.
         await vector._embedding_client.initialize()
         logger.info("Embedding client ready (mode=%s)", EMBEDDING_MODE)
         # Learn what is behind /embed before anything derives a vector from it, so

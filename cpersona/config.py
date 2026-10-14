@@ -712,6 +712,12 @@ VECTOR_MIN_SIMILARITY = _parse_float("CPERSONA_VECTOR_MIN_SIMILARITY", 0.3)
 EMBEDDING_CACHE_SIZE = _parse_int("CPERSONA_EMBEDDING_CACHE_SIZE", 256)
 EMBEDDING_CACHE_TTL = _parse_int("CPERSONA_EMBEDDING_CACHE_TTL", 300)
 
+
+def embedding_timeout_secs() -> int:
+    """CPERSONA_EMBEDDING_TIMEOUT_SECS, read when a client is built (C10: the
+    bug-133 warn-and-fall-back parse, so a '30s' value cannot abort startup)."""
+    return parse_int("CPERSONA_EMBEDDING_TIMEOUT_SECS", 30)
+
 # Degraded-advisory runtime guard (v2.4.33): when embeddings are unavailable at runtime
 # (mode=none, or a configured http endpoint is unreachable) do_recall attaches an
 # `advisory` to its response so the calling agent can self-report the degradation

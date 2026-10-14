@@ -36,6 +36,34 @@ logger = logging.getLogger(__name__)
 _embedding_client: EmbeddingClient | None = None
 
 
+def build_embedding_client() -> EmbeddingClient | None:
+    """The embedding client this configuration calls for, not yet initialised.
+
+    None under ``CPERSONA_EMBEDDING_MODE=none``. One constructor for every process
+    that installs ``_embedding_client``: the server, and the checkup CLI, which runs
+    the same check registry. A CLI that never built one ran every client-dependent
+    check as if the mode were ``none`` -- dimension drift unchecked, a NULL backlog
+    demoted to info, a ``--fix`` with nothing to re-embed through -- and passed as
+    healthy a database the server's own check_health called unhealthy.
+
+    The client does no env reading of its own, so the CPERSONA_EMBEDDING_* cache
+    size / TTL / timeout overrides are passed explicitly. Callers validate the mode
+    first (``config.assert_embedding_mode_supported``).
+    """
+    if config.EMBEDDING_MODE == "none":
+        return None
+    return EmbeddingClient(
+        mode=config.EMBEDDING_MODE,
+        http_url=config.EMBEDDING_URL,
+        api_key=config.EMBEDDING_API_KEY,
+        api_url=config.EMBEDDING_API_URL,
+        model=config.EMBEDDING_MODEL,
+        cache_size=config.EMBEDDING_CACHE_SIZE,
+        cache_ttl=config.EMBEDDING_CACHE_TTL,
+        timeout=config.embedding_timeout_secs(),
+    )
+
+
 def pack_for_storage(embedding: object) -> bytes | None:
     """The one place a vector becomes a BLOB this process will store.
 
@@ -2155,6 +2183,15 @@ async def _search_vector(
         # The service answered, and its answer IS the result. The reach applies
         # to the local scan only — the remote service ranks under its own window
         # — so `far_out` is left as the caller handed it over: empty.
+        #
+        # An answer from /search is a request that reached the embedding service
+        # (the same host as /embed, which embedded this query to rank it), so it
+        # is the recall path's recovery observation in this mode. Without it the
+        # only observe_ok() was the local embed below, which a remote answer
+        # returns before: a fault the maintenance probes latched during a short
+        # outage then stayed latched for the life of the process, and every
+        # recall served by remote vector search carried the degraded advisory.
+        health.observe_ok()  # the remote /search answer reached the service
         return await _drop_rejected_labels(db, remote_results)
 
     import numpy as np
