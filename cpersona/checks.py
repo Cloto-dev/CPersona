@@ -84,6 +84,7 @@ import heapq
 import json
 import logging
 import os
+import pathlib
 import re
 import sqlite3
 import stat
@@ -142,7 +143,56 @@ REEMBED_ROW_CAP = config.REEMBED_ROW_CAP
 EMBED_BATCH_SIZE = 32
 CALIBRATION_STALE_DAYS = 90
 
-_USERNAME_PREFIX_PATTERN = re.compile(r"^\[(.+?)\]\s")
+_USERNAME_PREFIX_PATTERN = re.compile(r"^\[([^\[\]\n]{1,64})\]\s")
+# Leading brackets that are not a speaker's name. Writing one into source.name
+# attributes the row to a person who does not exist ('[x] renew the passport'
+# owned by a user called 'x'), and per-speaker reasoning then believes it.
+# Markdown checkboxes, log levels, and the labels CPersona itself puts in front
+# of an episode or profile it hands out (which a client can store back).
+_NOT_A_SPEAKER = frozenset(
+    {
+        "x",
+        "episode",
+        "profile",
+        "trace",
+        "debug",
+        "info",
+        "notice",
+        "warn",
+        "warning",
+        "error",
+        "err",
+        "critical",
+        "crit",
+        "fatal",
+        "alert",
+        "emerg",
+    }
+)
+# A date or time stamp, which can carry letters ('2026-10-01T09:00Z').
+_STAMP_PREFIX_PATTERN = re.compile(r"^\d{1,4}[-/.:]\d")
+
+
+def _speaker_from_prefix(content) -> str | None:
+    """The speaker name a ``[name] `` content prefix records, or None.
+
+    Only a bracket that can hold a name: it has a letter (a blank checkbox, a
+    footnote number or a date has none), is not a stamp, a checkbox, a log level
+    or one of CPersona's own labels, and does not open with the '!' / '^' of a
+    Markdown admonition or footnote.
+    """
+    if not isinstance(content, str) or _MEMORY_ANNOTATION_PATTERN.match(content):
+        return None
+    match = _USERNAME_PREFIX_PATTERN.match(content)
+    if match is None:
+        return None
+    name = match.group(1).strip()
+    if not any(ch.isalpha() for ch in name):
+        return None
+    if name.casefold() in _NOT_A_SPEAKER or name[0] in "!^" or _STAMP_PREFIX_PATTERN.match(name):
+        return None
+    return name
+
 _SHORT_CONTENT_THRESHOLD = 5
 # What one East Asian wide character (CJK ideograph, kana, hangul) counts for
 # against _SHORT_CONTENT_THRESHOLD. The threshold was set on Latin-script noise
@@ -1849,11 +1899,13 @@ async def check_dedup_msg_id_index(db, agent_id: str, fix: bool) -> list[dict]:
     index closes). Nothing else collapses msg_id collisions, so that critical
     finding is otherwise permanent — only hand-written SQL could clear it. This
     check supplies the same non-destructive remediation the v12 migration
-    applies: keep the newest (MAX id) colliding row's msg_id, blank the older
-    unlocked colliders ('' is excluded by the partial index), then retry the
-    CREATE. No row is deleted, no content is touched, and locked rows are left
-    alone (bug-098) — a locked collider still blocks the CREATE and is surfaced
-    via fix_error, the same "locked row wins" doctrine as check_schema_objects.
+    applies, with the survivor chosen so that a locked row keeps its msg_id:
+    each group keeps a locked row's msg_id when it has one, else the newest
+    row's, the unlocked others are blanked ('' is excluded by the partial
+    index), then the CREATE is retried. No row is deleted, no content is
+    touched, and locked rows are left alone (bug-098) — only two locked
+    colliders still block the CREATE, surfaced via fix_error, the same "locked
+    row wins" doctrine as check_schema_objects.
 
     The index is a global schema object, so (like check_schema_objects) this
     check ignores agent_id: a collision under any agent blocks the whole index.
@@ -1879,12 +1931,18 @@ async def check_dedup_msg_id_index(db, agent_id: str, fix: bool) -> list[dict]:
         "repairable": 1,
     }
     if fix:
-        # Same collision resolution as the v12 migration (database.py): keep the
-        # newest (MAX id) colliding row's msg_id, blank the older unlocked ones.
+        # Each colliding group keeps one row's msg_id and the unlocked others are
+        # blanked. The survivor is a locked row when the group has one, else the
+        # newest: a locked row may not be blanked (bug-098), so keeping the newest
+        # unlocked row beside a locked older one left both standing and the CREATE
+        # failing on every run, though blanking the unlocked one was all it took.
+        # Two locked rows still block the CREATE, surfaced via fix_error. One
+        # grouped pass, as before: the index this restores is missing, so a
+        # per-row correlated lookup would have nothing to seek on.
         # The index is global, so the resolution is a DELIBERATE cross-agent scan
         # spelled isolation_where(agent_id=None) (empty and_clause) — a collision
         # under any agent blocks the whole index, so scoping to one agent would
-        # leave it uncreatable. locked = 0 honours bug-098.
+        # leave it uncreatable.
         iso = isolation_where(agent_id=None)
         await db.execute(
             f"""UPDATE memories
@@ -1892,7 +1950,8 @@ async def check_dedup_msg_id_index(db, agent_id: str, fix: bool) -> list[dict]:
                WHERE locked = 0
                  AND msg_id != ''
                  AND id NOT IN (
-                     SELECT MAX(id) FROM memories
+                     SELECT COALESCE(MAX(CASE WHEN locked != 0 THEN id END), MAX(id))
+                     FROM memories
                      WHERE msg_id != ''
                      GROUP BY agent_id, project_id, msg_id
                  ){iso.and_clause}""",
@@ -1924,8 +1983,17 @@ async def _quick_check_on_a_fresh_connection() -> list[str] | None:
     from cpersona import database
 
     path = database.DB_PATH
+    if path == ":memory:":
+        # A second connection to ":memory:" is a different, empty database, whose
+        # "ok" would vouch for nothing.
+        return None
+    # Percent-encoded, not interpolated: SQLite decodes %XX in a URI and ends the
+    # path at '?' or '#', so a path holding any of them opened another file --
+    # one that did not exist, or that mode=ro (cut off with the rest) let SQLite
+    # create -- and its quick_check spoke for the wrong database.
+    uri = pathlib.Path(os.path.abspath(path)).as_uri() + "?mode=ro"
     try:
-        conn = await aiosqlite.connect(f"file:{path}?mode=ro", uri=True)
+        conn = await aiosqlite.connect(uri, uri=True)
     except Exception:
         return None
     try:
@@ -2764,22 +2832,22 @@ async def check_invalid_source_type(db, agent_id: str, fix: bool) -> list[dict]:
     # the check keeps working for the rest of the corpus. It MUST come first:
     # SQLite short-circuits AND left-to-right, so json_valid(source)=0 stops the
     # row before json_extract is ever evaluated (a guard placed last still
-    # throws). The outer except stays as a last-resort backstop.
+    # throws). No except around the count (the bug-380 rule): a count that
+    # failed for any other reason -- a locked or damaged read -- reaches the
+    # runner as a crashed check, where returning [] reported a clean corpus for
+    # an axis that was never evaluated.
     # 2.5.2b1 (b1-2): the enum comes from utils.CANONICAL_SOURCE_TYPES, the same
     # tuple the store JSON Schema publishes and normalize_source enforces at the
     # write seam. It used to be an inline literal here, which made checks.py the
     # de-facto (and unpublished) home of the contract.
     canonical_types = canonical_source_types_sql()
-    try:
-        bad = (
-            await db.execute_fetchall(
-                f"""SELECT COUNT(*) FROM memories
-                    WHERE {invalid_source_type_where(canonical_types)}{iso.and_clause}""",
-                iso.params,
-            )
-        )[0][0]
-    except Exception:
-        return []
+    bad = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE {invalid_source_type_where(canonical_types)}{iso.and_clause}""",
+            iso.params,
+        )
+    )[0][0]
     if bad == 0:
         return []
     issue: dict = {"type": "invalid_source_type", "count": bad}
@@ -2925,31 +2993,30 @@ async def check_anonymous_source(db, agent_id: str, fix: bool) -> list[dict]:
     # non-JSON source row makes json_extract raise and the outer except reports
     # the whole agent clean. json_valid(source) MUST lead so SQLite's
     # left-to-right AND short-circuit skips json_extract on malformed rows (they
-    # stay check_invalid_json's responsibility); the outer except is a backstop.
-    try:
-        anon = (
-            await db.execute_fetchall(
-                f"""SELECT COUNT(*) FROM memories
-                    WHERE json_valid(source)
-                    AND json_extract(source, '$.type') = 'User'
-                    AND json_extract(source, '$.id') = ''
-                    AND json_extract(source, '$.name') = ''{iso.and_clause}""",
-                iso.params,
-            )
-        )[0][0]
-        unattributed = (
-            await db.execute_fetchall(
-                f"""SELECT COUNT(*) FROM memories
-                    WHERE json_valid(source)
-                    AND (json_type(source) IS 'null'
-                         OR (json_type(source) = 'object'
-                             AND (SELECT COUNT(*) FROM json_each(memories.source)) = 0))
-                    {iso.and_clause}""",
-                iso.params,
-            )
-        )[0][0]
-    except Exception:
-        return []
+    # stay check_invalid_json's responsibility). No except around the counts,
+    # as in check_invalid_source_type (the bug-380 rule): a failed count is a
+    # crashed check for the runner to report, not an unattributed-free corpus.
+    anon = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE json_valid(source)
+                AND json_extract(source, '$.type') = 'User'
+                AND json_extract(source, '$.id') = ''
+                AND json_extract(source, '$.name') = ''{iso.and_clause}""",
+            iso.params,
+        )
+    )[0][0]
+    unattributed = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM memories
+                WHERE json_valid(source)
+                AND (json_type(source) IS 'null'
+                     OR (json_type(source) = 'object'
+                         AND (SELECT COUNT(*) FROM json_each(memories.source)) = 0))
+                {iso.and_clause}""",
+            iso.params,
+        )
+    )[0][0]
     if anon == 0 and unattributed == 0:
         return []
     issue: dict = {"type": "anonymous_source", "count": anon + unattributed}
@@ -3102,6 +3169,24 @@ INDEX_TAIL_RATIO = 0.2
 INDEX_TABLES = ("memories", "episodes")
 
 
+def _indexed_rows_in_scope(index, agent_id: str) -> int:
+    """How many of the rows a derived index file holds belong to the checked agent.
+
+    One file holds every agent's rows, so ``index.count`` is a size of the whole
+    store. An agent-scoped call needs read on that agent alone and every other
+    figure it gets is about that agent (the bug-062 rule, as bug-058 applied it to
+    the stats), so it is told its own rows: the file records each row's agent.
+    The whole-store call keeps the file's count.
+    """
+    if not agent_id:
+        return int(index.count)
+    import numpy as np
+
+    from cpersona import vector_index
+
+    return int(np.count_nonzero(index.agent_code == vector_index._code_of(index.agents, agent_id)))
+
+
 async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[dict]:
     """Report what the contiguous embedding index is doing, or why it is not.
 
@@ -3237,9 +3322,9 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
         # (bug-315 measured the last one going unreported) -- are named by the
         # change log, and every query reads them live. When the log cannot vouch
         # for the file, every query is handed back to the scan, which is this
-        # check's business to report. Global for the same reason the widths above
-        # are: the log is one object, and a count of ids is a size rather than
-        # corpus content (the bug-062 rule).
+        # check's business to report. Read globally because the log is one object;
+        # the ids reach the finding only through counts filtered to the checked
+        # scope below, so no other agent's size is reported (the bug-062 rule).
         changed, refusal = await vector_index.changed_since_build(db, index, table)
         if changed is None:
             return [
@@ -3274,7 +3359,9 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                 {
                     "type": "vector_index_tail_grown",
                     "table": table,
-                    "indexed_rows": index.count,
+                    # The checked agent's share of the file, like every other
+                    # figure here; the threshold above stays on the file.
+                    "indexed_rows": _indexed_rows_in_scope(index, agent_id),
                     "rows_past_watermark": tail,
                     "rows_read_exactly": read_exactly,
                     "hint": (
@@ -3434,11 +3521,15 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
                 "hint": f"the index is not being used; {hint}",
             }
     if issue is None:
-        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", all_axes, changed)
+        # The checked scope's rows, as check_vector_index counts them: a recall
+        # reads one agent's records, and the store-wide count told a caller with
+        # read on one agent how many rows every other agent had written since the
+        # build. The threshold stays on the file, which is what a rebuild redoes.
+        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", iso, changed)
         if index.count and read_exactly > INDEX_TAIL_RATIO * index.count:
             issue = {
                 "type": "coarse_index_tail_grown",
-                "indexed_rows": index.count,
+                "indexed_rows": _indexed_rows_in_scope(index, agent_id),
                 "rows_read_exactly": read_exactly,
                 "repairable": repairable,
                 "hint": f"the rows written since the build are read exactly on every recall; {hint}",
@@ -4222,9 +4313,9 @@ async def deep_anonymous_source(db, agent_id: str, fix: bool) -> dict:
     unrecoverable = []
     locked_ids: set[int] = set()
     for row_id, content, locked in rows:
-        match = _USERNAME_PREFIX_PATTERN.match(content)
-        if match:
-            recoverable.append({"id": row_id, "recovered_name": match.group(1)})
+        name = _speaker_from_prefix(content)
+        if name is not None:
+            recoverable.append({"id": row_id, "recovered_name": name})
             if locked:
                 locked_ids.add(row_id)  # bug-098: the fixer may not touch it
         else:
@@ -4640,12 +4731,18 @@ async def deep_unnormalized_content(db, agent_id: str, fix: bool) -> dict:
     counts = {}
     samples = []
     scanned = {}
+    complete = {}
     for table, column in (("memories", "content"), ("episodes", "summary")):
         rows = await db.execute_fetchall(
             f"SELECT id, {column} FROM {table} WHERE agent_id = ? "
             f"ORDER BY id DESC LIMIT ?",
-            (agent_id, NORMALIZATION_SCAN_CAP),
+            # One row past the cap, so a table of exactly the cap reads as
+            # complete (the bug-376 rule): `n < CAP` called that exhaustive scan
+            # a floor. The extra row only answers "is there more" and is dropped.
+            (agent_id, NORMALIZATION_SCAN_CAP + 1),
         )
+        complete[table] = len(rows) <= NORMALIZATION_SCAN_CAP
+        rows = rows[:NORMALIZATION_SCAN_CAP]
         scanned[table] = len(rows)
         offenders = 0
         for row_id, text in rows:
@@ -4679,7 +4776,7 @@ async def deep_unnormalized_content(db, agent_id: str, fix: bool) -> dict:
         "count": sum(counts.values()),
         "by_table": counts,
         "rows_scanned": scanned,
-        "complete": all(n < NORMALIZATION_SCAN_CAP for n in scanned.values()),
+        "complete": all(complete.values()),
     }
     if samples:
         result["samples"] = samples
@@ -4736,14 +4833,18 @@ async def deep_embedding_norm(db, agent_id: str, fix: bool) -> dict:
 
     counts: dict[str, int] = {}
     scanned: dict[str, int] = {}
+    complete: dict[str, bool] = {}
     samples: list[dict] = []
     for table in ("memories", "episodes"):
         rows = await db.execute_fetchall(
             f"SELECT id, embedding FROM {table} "
             f"WHERE agent_id = ? AND embedding IS NOT NULL "
             f"ORDER BY id DESC LIMIT ?",
-            (agent_id, _NORM_SAMPLE_ROWS),
+            # One row past the sample, as deep_unnormalized_content reads.
+            (agent_id, _NORM_SAMPLE_ROWS + 1),
         )
+        complete[table] = len(rows) <= _NORM_SAMPLE_ROWS
+        rows = rows[:_NORM_SAMPLE_ROWS]
         scanned[table] = len(rows)
         offenders = 0
         for row_id, blob in rows:
@@ -4769,7 +4870,7 @@ async def deep_embedding_norm(db, agent_id: str, fix: bool) -> dict:
         "by_table": counts,
         "rows_scanned": scanned,
         "tolerance": _NORM_TOLERANCE,
-        "complete": all(n < _NORM_SAMPLE_ROWS for n in scanned.values()),
+        "complete": all(complete.values()),
     }
     if samples:
         result["samples"] = samples
