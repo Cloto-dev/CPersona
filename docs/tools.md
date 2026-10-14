@@ -62,10 +62,10 @@ matters when you tighten `limit`.
 
 | Tool | What it does |
 |---|---|
-| `export_memories` | Write memories, episodes and profiles to JSONL. It is schema-version independent, so it doubles as a logical backup ([backup runbook](operations.md#backup-and-restore)) |
-| `import_memories` | Read that JSONL back. Idempotent, though not by one key: memories dedup on `msg_id` **and** on identical content within the project/channel scope, while episodes dedup on an identical summary (they carry no `msg_id`) |
-| `merge_memories` | Move or copy one agent's data into another, atomically and with deduplication |
-| `migrate_channel_axis` | Re-channel bridge-type memories onto their concrete channel. A one-time repair, not a routine operation |
+| `export_memories` | Write memories, episodes, profiles and the declared associations (entities, aliases, mentions, relations) to JSONL. It is schema-version independent, so it doubles as a logical backup ([backup runbook](operations.md#backup-and-restore)) |
+| `import_memories` | Read that JSONL back, with the declared associations pointed at the restored records. Idempotent, though not by one key: memories dedup on `msg_id` **and** on identical content within the project/channel scope, while episodes dedup on an identical summary (they carry no `msg_id`) |
+| `merge_memories` | Move or copy one agent's data into another, declared associations included, atomically and with deduplication |
+| `migrate_channel_axis` | Re-channel bridge-type memories onto their concrete channel, together with the associations declared about them. A one-time repair, not a routine operation |
 
 ## Health and maintenance
 

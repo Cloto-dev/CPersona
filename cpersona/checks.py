@@ -86,7 +86,7 @@ import stat
 
 import aiosqlite
 
-from cpersona import blocks, config, fileperms, generation, health, nodes, operating_context, vector
+from cpersona import associations, blocks, config, fileperms, generation, health, nodes, operating_context, vector
 from cpersona.isolation import isolation_where
 from cpersona.config import (
     FTS_ENABLED,
@@ -163,6 +163,17 @@ async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> 
             (new_content, row_id),
         )
     except sqlite3.IntegrityError:
+        # The rewritten text already exists in this agent, project and channel (the
+        # dedup index), and that row is kept. The declarations about this row move to
+        # it first: the delete trigger would otherwise take them with this row, though
+        # the text they are about survives.
+        survivor = await db.execute_fetchall(
+            "SELECT k.id, k.agent_id FROM memories k, memories r WHERE r.id = ? AND k.agent_id = r.agent_id"
+            " AND k.project_id = r.project_id AND k.channel = r.channel AND k.content = ? AND k.id != r.id LIMIT 1",
+            (row_id, new_content),
+        )
+        if survivor:
+            await associations.repoint(db, survivor[0][1], {f"mem:{row_id}": f"mem:{survivor[0][0]}"})
         await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
 
 
@@ -271,6 +282,16 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     # rather than after it).
     deletable = (await db.execute_fetchall(f"SELECT COUNT(*) {surplus}", iso.params))[0][0]
     if fix:
+        # A deleted copy's declarations move to its group's survivor, which holds the
+        # same text; the delete trigger would otherwise take them with the copy. Only
+        # rows something declares about are read.
+        for row_id, agent, keep in await db.execute_fetchall(
+            "SELECT id, agent_id, (SELECT COALESCE(MIN(CASE WHEN k.channel = '' THEN k.id END), MIN(k.id))"
+            " FROM memories k WHERE k.agent_id = memories.agent_id AND k.project_id = memories.project_id"
+            f" AND k.content = memories.content) {surplus} AND {associations.names_memory_sql('memories.id')}",
+            iso.params,
+        ):
+            await associations.repoint(db, agent, {f"mem:{row_id}": f"mem:{keep}"})
         await db.execute(f"DELETE {surplus}", iso.params)
     return [
         {

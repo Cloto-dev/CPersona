@@ -10,6 +10,7 @@ behaviour live there, response envelopes live here.
 import logging
 
 from cpersona import __version__
+from cpersona import associations
 from cpersona import checks as checks_registry
 from cpersona import config
 from cpersona import findings as findings_seam
@@ -438,6 +439,11 @@ async def do_migrate_channel_axis(
     Rows whose metadata is not valid JSON are unrecoverable by definition and
     are additionally reported on their own (`invalid_metadata_total` /
     `invalid_metadata_ids`, bug-239) — they used to abort the whole tool.
+
+    The declarations filed in channel 'discord' about a re-channelled memory go
+    with it to its new channel (``associations.follow_rechannelled``): a reader
+    sees its own channel and the global one, so left in 'discord' they would be
+    invisible to every reader of the memory.
     """
     # Under no-persist, force a report-only run so nothing mutates.
     key, _declared = resolve_session_key(session_key)
@@ -509,6 +515,14 @@ async def do_migrate_channel_axis(
         # bug-068: its auto-rollback discards a partial migrate on failure, so a later
         # committer on the shared connection cannot flush half-written rows.
         async with transaction() as db:
+            # The memories something declares about, read before they move so the
+            # declarations can follow (a row the OR IGNORE below skips does not move).
+            declared = await db.execute_fetchall(
+                f"""SELECT id FROM memories
+                   WHERE channel = 'discord'{iso.and_clause}
+                     AND {associations.names_memory_sql("memories.id")}""",
+                iso.params,
+            )
             # bug-021: OR IGNORE — a recovered (agent_id, project_id, channel, content)
             # can collide with an existing row on the v12 idx_memories_dedup_content
             # UNIQUE index. A bare UPDATE would ABORT+rollback the whole statement
@@ -545,6 +559,17 @@ async def do_migrate_channel_axis(
                 # Same rowcount semantics as `migrated` above: a real 0 (full collision)
                 # is authoritative; only None/negative means "count unavailable".
                 globalized = cur2.rowcount if cur2.rowcount is not None and cur2.rowcount >= 0 else unrecoverable_total
+            moved: dict[int, tuple[str, str]] = {}
+            ids = [r[0] for r in declared]
+            for offset in range(0, len(ids), 500):
+                batch = ids[offset:offset + 500]
+                marks = ",".join("?" for _ in batch)
+                for row_id, row_agent, channel in await db.execute_fetchall(
+                    f"SELECT id, agent_id, channel FROM memories WHERE id IN ({marks})", batch
+                ):
+                    if channel != "discord":
+                        moved[row_id] = (row_agent, channel)
+            await associations.follow_rechannelled(db, moved, from_channel="discord")
 
     out = {
         "agent_id": agent_id,

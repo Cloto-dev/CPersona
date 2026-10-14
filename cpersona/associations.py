@@ -36,6 +36,7 @@ empty, which is what keeps an empty graph a no-op (invariant 2).
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -45,6 +46,8 @@ from cpersona._vendored_mcp_common.isolation import coerce_for_write
 from cpersona.database import connection, transaction
 from cpersona.isolation import isolation_where, source_id_where
 from cpersona.utils import episode_timestamp
+
+logger = logging.getLogger(__name__)
 
 # Bounds on one call. A declaration that names more is cut at the bound and
 # says so, item by item, in `dropped`.
@@ -177,19 +180,26 @@ async def _register_entity(
     return cur.lastrowid, True
 
 
-async def _add_alias(db, scope: _Scope, entity_id: int, alias: str) -> str | None:
-    """Attach an alias; the reason it could not be, or None."""
+async def _alias_refusal(db, scope: _Scope, entity_id: int, alias: str) -> str | None:
+    """Why `alias` cannot be attached to `entity_id` in this scope, or None."""
     normalized = normalize(alias)
     if not normalized:
         return "empty after normalization"
     owner = await _resolve_entity(db, scope, normalized)
     if owner is not None and owner != entity_id:
         return "already names another entity in this scope"
-    await db.execute(
-        "INSERT OR IGNORE INTO entity_aliases (entity_id, alias, normalized) VALUES (?, ?, ?)",
-        (entity_id, alias, normalized),
-    )
     return None
+
+
+async def _add_alias(db, scope: _Scope, entity_id: int, alias: str) -> str | None:
+    """Attach an alias; the reason it could not be, or None."""
+    reason = await _alias_refusal(db, scope, entity_id, alias)
+    if reason is None:
+        await db.execute(
+            "INSERT OR IGNORE INTO entity_aliases (entity_id, alias, normalized) VALUES (?, ?, ?)",
+            (entity_id, alias, normalize(alias)),
+        )
+    return reason
 
 
 async def _add_mention(db, entity_id: int, ref: str, declared_by: str, now: str) -> None:
@@ -356,6 +366,427 @@ async def retract(
             )
             report["mentions"] += cur.rowcount
     return report
+
+
+# ------------------------------------------------------------------------------------
+# Carrying the graph with its records
+# ------------------------------------------------------------------------------------
+#
+# A declaration names its records by `mem:<id>` / `ep:<id>`, it is filed in the scope
+# columns of its entity or relation, and the delete triggers take it with any record
+# it names. So every path that gives a record a new identity -- a new id when merge or
+# import copies it, the survivor's id when a dedup repair deletes it, a new channel
+# when migrate_channel_axis re-files it -- has to bring the declarations along through
+# one map from the record's old ref to its new one. Without that the declaration is
+# deleted with the old row, or left where no reader of the record can see it, and
+# retraction stops being the only way a declaration leaves the store (§2).
+#
+# The record shapes below are the export file's (`_type` aside), so a declaration
+# read from the store and one read back from a backup go through the same writer.
+
+ENTITY_COLUMNS = "e.id, e.agent_id, e.project_id, e.channel, e.name, e.declared_by, e.created_at"
+MENTION_COLUMNS = "m.entity_id, m.ref, m.declared_by, m.created_at"
+RELATION_COLUMNS = (
+    "r.id, r.agent_id, r.project_id, r.channel, r.subject_kind, r.subject_id, r.predicate, "
+    "r.object_kind, r.object_id, r.anchor_ref, r.declared_by, r.declared_at"
+)
+_ENTITY_KEYS = ("id", "agent_id", "project_id", "channel", "name", "declared_by", "created_at")
+_MENTION_KEYS = ("entity", "ref", "declared_by", "created_at")
+_RELATION_KEYS = (
+    "id", "agent_id", "project_id", "channel", "subject_kind", "subject_id", "predicate",
+    "object_kind", "object_id", "anchor_ref", "declared_by", "declared_at",
+)
+
+
+def entity_record(row, aliases: list[str]) -> dict:
+    """An ENTITY_COLUMNS row and its aliases, as a record."""
+    return {**dict(zip(_ENTITY_KEYS, row)), "aliases": aliases}
+
+
+def mention_record(row) -> dict:
+    """A MENTION_COLUMNS row as a record."""
+    return dict(zip(_MENTION_KEYS, row))
+
+
+def relation_record(row) -> dict:
+    """A RELATION_COLUMNS row as a record."""
+    return dict(zip(_RELATION_KEYS, row))
+
+
+def names_memory_sql(column: str) -> str:
+    """SQL that is true when some declaration names the memory whose id is `column`."""
+    ref = f"'mem:' || {column}"
+    return (
+        f"(EXISTS (SELECT 1 FROM entity_mentions WHERE ref = {ref}) "
+        f"OR EXISTS (SELECT 1 FROM relations WHERE anchor_ref = {ref} "
+        f"OR (subject_kind = 'mem' AND subject_id = {column}) "
+        f"OR (object_kind = 'mem' AND object_id = {column})))"
+    )
+
+
+async def aliases_of(db, entity_ids: list[int]) -> dict[int, list[str]]:
+    """The aliases of each entity as written, in normalized order."""
+    out: dict[int, list[str]] = {}
+    for offset in range(0, len(entity_ids), 500):
+        batch = entity_ids[offset:offset + 500]
+        marks = ",".join("?" for _ in batch)
+        for entity_id, alias in await db.execute_fetchall(
+            f"SELECT entity_id, alias FROM entity_aliases WHERE entity_id IN ({marks}) "
+            "ORDER BY entity_id, normalized",
+            batch,
+        ):
+            out.setdefault(entity_id, []).append(alias)
+    return out
+
+
+@dataclass
+class Graph:
+    """Declarations keyed on the ids they had where they were read.
+
+    `entities` maps an entity id to its record; mentions and relations name
+    entities by those ids and records by refs of the same origin.
+    """
+
+    entities: dict[int, dict] = field(default_factory=dict)
+    mentions: list[dict] = field(default_factory=list)
+    relations: list[dict] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.entities or self.mentions or self.relations)
+
+
+async def read_graph(db, agent_id: str, *, channel: str | None = None) -> Graph:
+    """Every declaration of `agent_id`; with `channel`, the entities and relations filed there."""
+    graph = Graph()
+    e_where, r_where, params = "e.agent_id = ?", "r.agent_id = ?", [agent_id]
+    if channel is not None:
+        e_where += " AND e.channel = ?"
+        r_where += " AND r.channel = ?"
+        params.append(channel)
+    rows = await db.execute_fetchall(f"SELECT {ENTITY_COLUMNS} FROM entities e WHERE {e_where} ORDER BY e.id", params)
+    aliases = await aliases_of(db, [r[0] for r in rows])
+    for row in rows:
+        graph.entities[row[0]] = entity_record(row, aliases.get(row[0], []))
+    graph.mentions = [
+        mention_record(row)
+        for row in await db.execute_fetchall(
+            f"SELECT {MENTION_COLUMNS} FROM entity_mentions m JOIN entities e ON e.id = m.entity_id "
+            f"WHERE {e_where} ORDER BY m.entity_id, m.ref",
+            params,
+        )
+    ]
+    graph.relations = [
+        relation_record(row)
+        for row in await db.execute_fetchall(
+            f"SELECT {RELATION_COLUMNS} FROM relations r WHERE {r_where} ORDER BY r.id", params
+        )
+    ]
+    return graph
+
+
+@dataclass
+class Carried:
+    """What `carry` wrote, and what it could not."""
+
+    entities: int = 0
+    mentions: int = 0
+    relations: int = 0
+    # Entities, mentions and relations not written: malformed, or naming a record
+    # or entity that did not come along.
+    dropped: int = 0
+    # Aliases refused because they already name another entity the reader sees (§1),
+    # and the source ids of the entities that lost one.
+    aliases_dropped: int = 0
+    incomplete: set = field(default_factory=set)
+    entity_map: dict = field(default_factory=dict)
+
+    def counts(self) -> dict:
+        return {"entities": self.entities, "mentions": self.mentions, "relations": self.relations}
+
+
+def _carried_ref(ref, ref_map) -> str | None:
+    """The ref a record has here: `ref_map`'s value, or the ref itself when there is no map."""
+    canonical = canonical_ref(ref)
+    if canonical is None or ref_map is None:
+        return canonical
+    return ref_map.get(canonical)
+
+
+def _stamp(value, now: str) -> str:
+    return value if isinstance(value, str) and value else now
+
+
+async def carry(
+    db,
+    graph: Graph,
+    ref_map: dict | None,
+    *,
+    agent_id: str | None = None,
+    entity_map: dict | None = None,
+    dry_run: bool = False,
+) -> Carried:
+    """Write `graph` into the store with every record ref remapped through `ref_map`.
+
+    `ref_map` maps the ref a record had where the graph was read to the ref of the
+    same record here; None means refs are unchanged (a re-channelled record keeps
+    its id). A mention or relation naming a record the map does not hold is not
+    written -- the record it is about did not come along -- and neither is one
+    whose record is not its agent's (a declaration's records are its own agent's).
+
+    Each entity lands in its own scope, under `agent_id` when one is given: on the
+    entity of that exact scope its name already resolves to, or registered there
+    with its name, provenance and time. Its aliases follow, except one that already
+    names another entity its reader sees (§1). `entity_map` seeds entities that are
+    already in place and are referenced, not copied.
+
+    Mentions and relations go in with INSERT OR IGNORE, so carrying a graph twice
+    writes it once. `dry_run` writes nothing and counts what a real run would carry.
+    """
+    out = Carried(entity_map=dict(entity_map or {}))
+    owners: dict[int, str] = {}
+    now = _now()
+    for old_id, record in graph.entities.items():
+        name = _text(record.get("name"))
+        declared_by = record.get("declared_by")
+        owner = agent_id or record.get("agent_id")
+        if not _is_id(old_id) or name is None or declared_by not in DECLARED_BY or not isinstance(owner, str) \
+                or not owner:
+            out.dropped += 1
+            continue
+        scope = _Scope(owner, record.get("project_id"), record.get("channel"))
+        entity_id = await _resolve_entity(db, scope, normalize(name), exact=True)
+        if entity_id is None:
+            if dry_run:
+                entity_id = -old_id  # stands in for the row a real run would register
+            else:
+                cur = await db.execute(
+                    "INSERT INTO entities (agent_id, project_id, channel, name, normalized, declared_by, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (owner, scope.project_id, scope.channel, name, normalize(name), declared_by,
+                     _stamp(record.get("created_at"), now)),
+                )
+                entity_id = cur.lastrowid
+        out.entity_map[old_id] = entity_id
+        owners[old_id] = owner
+        out.entities += 1
+        aliases = record.get("aliases") or []
+        for alias in aliases if isinstance(aliases, list) else [None]:
+            text = _text(alias)
+            if text is None:
+                reason = "must be a nonempty string"
+            elif dry_run:
+                reason = await _alias_refusal(db, scope, entity_id, text)
+            else:
+                reason = await _add_alias(db, scope, entity_id, text)
+            if reason:
+                out.aliases_dropped += 1
+                out.incomplete.add(old_id)
+
+    async def record_here(owner: str, ref: str) -> str | None:
+        here = _carried_ref(ref, ref_map)
+        if here is None:
+            return None
+        if not dry_run and not await _record_exists(db, _Scope(owner, "", ""), *parse_ref(here)):
+            return None
+        return here
+
+    for record in graph.mentions:
+        source_entity = record.get("entity")
+        entity_id = out.entity_map.get(source_entity) if _is_id(source_entity) else None
+        owner = (agent_id or owners.get(source_entity)) if entity_id is not None else None
+        declared_by = record.get("declared_by")
+        ref = await record_here(owner, record.get("ref")) if entity_id is not None and owner else None
+        if ref is None or declared_by not in DECLARED_BY:
+            out.dropped += 1
+            continue
+        if not dry_run:
+            await _add_mention(db, entity_id, ref, declared_by, _stamp(record.get("created_at"), now))
+        out.mentions += 1
+
+    for record in graph.relations:
+        owner = agent_id or record.get("agent_id")
+        predicate = _text(record.get("predicate"))
+        declared_by = record.get("declared_by")
+        if not isinstance(owner, str) or not owner or predicate is None or not normalize(predicate) \
+                or declared_by not in DECLARED_BY:
+            out.dropped += 1
+            continue
+        ends = []
+        for kind, end_id in ((record.get("subject_kind"), record.get("subject_id")),
+                             (record.get("object_kind"), record.get("object_id"))):
+            if kind == "entity":
+                mapped = out.entity_map.get(end_id) if _is_id(end_id) else None
+                ends.append(("entity", mapped) if mapped is not None else None)
+            elif kind in RECORD_KINDS and _is_id(end_id):
+                here = await record_here(owner, f"{kind}:{end_id}")
+                ends.append(parse_ref(here) if here else None)
+            else:
+                ends.append(None)
+        anchor = record.get("anchor_ref") or ""
+        if anchor:
+            anchor = await record_here(owner, anchor)
+        if None in ends or anchor is None:
+            out.dropped += 1
+            continue
+        if not dry_run:
+            scope = _Scope(owner, record.get("project_id"), record.get("channel"))
+            (s_kind, s_id), (o_kind, o_id) = ends
+            await db.execute(
+                "INSERT OR IGNORE INTO relations (agent_id, project_id, channel, subject_kind, subject_id, "
+                "predicate, object_kind, object_id, anchor_ref, declared_by, declared_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (owner, scope.project_id, scope.channel, s_kind, s_id, normalize(predicate), o_kind, o_id,
+                 anchor, declared_by, _stamp(record.get("declared_at"), now)),
+            )
+        out.relations += 1
+    return out
+
+
+async def repoint(db, agent_id: str, ref_map: dict) -> None:
+    """Point the declarations naming each old record at its new one, in place.
+
+    For a record about to be deleted in favour of an equal record of the same agent
+    (a dedup repair): its mentions are added to the survivor and its relations are
+    re-pointed there, keeping their ids. A declaration the survivor already carries
+    is left on the old record, and the delete trigger takes it with that record.
+    """
+    for old, new in ref_map.items():
+        before, after = parse_ref(old), parse_ref(new)
+        if before is None or after is None or before[0] != after[0] or before == after:
+            continue
+        kind = before[0]
+        old_ref, new_ref = f"{kind}:{before[1]}", f"{kind}:{after[1]}"
+        await db.execute(
+            "INSERT OR IGNORE INTO entity_mentions (entity_id, ref, declared_by, created_at) "
+            "SELECT m.entity_id, ?, m.declared_by, m.created_at FROM entity_mentions m "
+            "JOIN entities e ON e.id = m.entity_id WHERE m.ref = ? AND e.agent_id = ?",
+            (new_ref, old_ref, agent_id),
+        )
+        await db.execute(
+            "UPDATE OR IGNORE relations SET "
+            "subject_id = CASE WHEN subject_kind = ? AND subject_id = ? THEN ? ELSE subject_id END, "
+            "object_id = CASE WHEN object_kind = ? AND object_id = ? THEN ? ELSE object_id END, "
+            "anchor_ref = CASE WHEN anchor_ref = ? THEN ? ELSE anchor_ref END "
+            "WHERE agent_id = ? AND ((subject_kind = ? AND subject_id = ?) "
+            "OR (object_kind = ? AND object_id = ?) OR anchor_ref = ?)",
+            (kind, before[1], after[1], kind, before[1], after[1], old_ref, new_ref,
+             agent_id, kind, before[1], kind, before[1], old_ref),
+        )
+
+
+def _landing(relation: dict, landing: dict[str, str]) -> str | None:
+    """The channel a relation follows: its anchor's, else that of a record it names."""
+    if relation["anchor_ref"]:
+        return landing.get(relation["anchor_ref"])
+    for kind, end_id in ((relation["subject_kind"], relation["subject_id"]),
+                         (relation["object_kind"], relation["object_id"])):
+        if kind in RECORD_KINDS and f"{kind}:{end_id}" in landing:
+            return landing[f"{kind}:{end_id}"]
+    return None
+
+
+async def follow_rechannelled(db, moved: dict[int, tuple[str, str]], *, from_channel: str) -> None:
+    """Take the `from_channel` declarations about re-channelled memories to their new channel.
+
+    `moved` maps a memory id to (its agent, the channel it now has). A reader sees
+    its own channel and the global one, so a mention of a moved memory and a
+    relation anchored on it (or, unanchored, naming it) stop being visible to the
+    memory's readers while they stay filed in `from_channel`. Each moves to the
+    memory's channel, and the `from_channel` entities they name are carried there
+    with their aliases -- into every channel their records went to, when those
+    differ. A relation between two entities with no record behind it is copied to
+    every channel one of them went to where the other is visible too.
+
+    An original entity nothing in `from_channel` names any more is removed; one that
+    lost an alias on the way, or that something left behind still names, stays.
+    """
+    by_agent: dict[str, dict[str, str]] = {}
+    for mem_id, (agent_id, channel) in moved.items():
+        if channel != from_channel:
+            by_agent.setdefault(agent_id, {})[f"mem:{mem_id}"] = channel
+    for agent_id, landing in sorted(by_agent.items()):
+        graph = await read_graph(db, agent_id, channel=from_channel)
+        per_channel: dict[str, Graph] = {}
+        gone_mentions: list[tuple[int, str]] = []
+        gone_relations: list[int] = []
+
+        def take(channel: str, entity_id) -> Graph:
+            into = per_channel.setdefault(channel, Graph())
+            if entity_id in graph.entities:
+                into.entities[entity_id] = {**graph.entities[entity_id], "channel": channel}
+            return into
+
+        for mention in graph.mentions:
+            channel = landing.get(mention["ref"])
+            if channel is not None:
+                take(channel, mention["entity"]).mentions.append(mention)
+                gone_mentions.append((mention["entity"], mention["ref"]))
+        for relation in graph.relations:
+            channel = _landing(relation, landing)
+            if channel is None:
+                continue
+            for kind, end_id in ((relation["subject_kind"], relation["subject_id"]),
+                                 (relation["object_kind"], relation["object_id"])):
+                if kind == "entity":
+                    take(channel, end_id)
+            per_channel[channel].relations.append({**relation, "channel": channel})
+            gone_relations.append(relation["id"])
+        if not per_channel:
+            continue
+        copied = set(gone_relations)
+        for relation in graph.relations:
+            if relation["anchor_ref"] or relation["subject_kind"] != "entity" or relation["object_kind"] != "entity":
+                continue
+            ends = (relation["subject_id"], relation["object_id"])
+            for channel, into in per_channel.items():
+                # Copied where one end was carried and the other is there too, or is
+                # filed outside `from_channel` (the global pool) and so already seen.
+                if any(e in into.entities for e in ends) and all(
+                    e in into.entities or e not in graph.entities for e in ends
+                ):
+                    into.relations.append({**relation, "channel": channel})
+                    copied.add(relation["id"])
+
+        incomplete: set[int] = set()
+        for channel, into in sorted(per_channel.items()):
+            # An endpoint filed outside `from_channel` (the global pool) is already
+            # visible in the new channel; the copy names it as it is.
+            in_place = {
+                end_id
+                for relation in into.relations
+                for kind, end_id in ((relation["subject_kind"], relation["subject_id"]),
+                                     (relation["object_kind"], relation["object_id"]))
+                if kind == "entity" and end_id not in into.entities
+            }
+            done = await carry(db, into, None, entity_map={e: e for e in in_place})
+            if done.dropped:
+                # Something could not be written: keep every original, a duplicate
+                # costs less than a declaration lost.
+                logger.warning(
+                    "migrate_channel_axis: %d declarations of %s could not follow their records to %r; "
+                    "the originals stay in %r", done.dropped, agent_id, channel, from_channel,
+                )
+                gone_mentions, gone_relations, incomplete = [], [], set(graph.entities)
+            incomplete |= done.incomplete
+
+        for entity_id, ref in gone_mentions:
+            await db.execute("DELETE FROM entity_mentions WHERE entity_id = ? AND ref = ?", (entity_id, ref))
+        for relation_id in gone_relations:
+            await db.execute("DELETE FROM relations WHERE id = ?", (relation_id,))
+        carried_entities = {e for into in per_channel.values() for e in into.entities}
+        for entity_id in sorted(carried_entities - incomplete):
+            if await db.execute_fetchall("SELECT 1 FROM entity_mentions WHERE entity_id = ? LIMIT 1", (entity_id,)):
+                continue
+            touching = {
+                r[0]
+                for r in await db.execute_fetchall(
+                    "SELECT id FROM relations WHERE (subject_kind = 'entity' AND subject_id = ?) "
+                    "OR (object_kind = 'entity' AND object_id = ?)",
+                    (entity_id, entity_id),
+                )
+            }
+            if touching <= copied:
+                await db.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
 
 
 # ------------------------------------------------------------------------------------

@@ -31,7 +31,11 @@ Recommended, in order:
 3. **Logical backup** (recommended as a low-frequency complement):
    `export_memories` writes JSONL that is independent of the schema version,
    and `import_memories` is idempotent (duplicates are skipped) — so restore
-   drills are safe to rehearse. Monthly is a reasonable cadence.
+   drills are safe to rehearse. Monthly is a reasonable cadence. The file
+   carries the declared associations (entities, aliases, mentions and
+   relations) as well as the records, and a restore points them at the
+   records it restores. A file written by an earlier version has no
+   associations in it and still imports as it always did.
 
 **The `.db` is not the whole instance.** State lives outside it that none of
 the backup forms above touch:

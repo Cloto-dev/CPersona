@@ -22,6 +22,7 @@ import httpx
 
 from cpersona.isolation import isolation_where
 
+from cpersona import associations
 from cpersona import blocks
 from cpersona import config
 from cpersona import fileperms
@@ -2445,6 +2446,19 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
     return {"ok": True, "deleted_id": episode_id}
 
 
+async def _equal_memory_id(db, agent_id: str, project_id: str, channel: str, content: str) -> int | None:
+    """The id of the row a copy or restore skipped as equal to `content` in that scope.
+
+    The skipped record lives on as that row, so the declarations naming it are
+    carried onto it.
+    """
+    rows = await db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+        (agent_id, project_id, channel, content),
+    )
+    return rows[0][0] if rows else None
+
+
 def _imported_label(record: dict, blob: bytes | None) -> str:
     """The ``embedding_model`` label a restored row takes.
 
@@ -2535,7 +2549,12 @@ def _confine_io_path(path: str) -> str | None:
 
 
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
-    """Export memories, episodes, and profiles to a JSONL file.
+    """Export memories, episodes, profiles and the declared graph to a JSONL file.
+
+    The graph -- entities with their aliases, mentions and relations -- follows the
+    records, keyed on the ids the file gives them, so import can point it at the
+    ids the records get on the way back in. It is declared data that nothing can
+    re-derive, so a logical backup without it is not a backup of it.
 
     **Deliberately not gated on no-persist, and it takes no ``session_key``.**
     A pause means "do not write to my memory"; this writes a file the caller
@@ -2555,6 +2574,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     output_path = confined
 
     iso = isolation_where(agent_id=agent_id or None)
+    iso_e = isolation_where(agent_id=agent_id or None, alias="e")
+    iso_r = isolation_where(agent_id=agent_id or None, alias="r")
 
     out_dir = os.path.dirname(output_path)
     if out_dir:
@@ -2563,6 +2584,7 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     exported_memories = 0
     exported_episodes = 0
     exported_profiles = 0
+    exported_graph = {"entities": 0, "mentions": 0, "relations": 0}
 
     # bug-091: write to a temp file and os.replace() on success. Opening the
     # destination directly with "w" destroyed the previous backup the moment the
@@ -2595,11 +2617,24 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 row = await cur.fetchone()
                 counts.append(row[0])
             memory_count, episode_count, profile_count = counts
+            graph_sql = {
+                "entities": (f"FROM entities e{iso_e.where}", iso_e.params),
+                "mentions": (
+                    f"FROM entity_mentions m JOIN entities e ON e.id = m.entity_id{iso_e.where}", iso_e.params
+                ),
+                "relations": (f"FROM relations r{iso_r.where}", iso_r.params),
+            }
+            graph_counts = {}
+            for kind, (from_sql, params) in graph_sql.items():
+                cur = await db.execute(f"SELECT COUNT(*) {from_sql}", params)
+                graph_counts[kind] = (await cur.fetchone())[0]
 
             with fileperms.open_private(tmp_path, "w", encoding="utf-8") as f:
                 header = {
                     "_type": "header",
-                    "version": "cpersona-export/1.0",
+                    # 1.1 adds the entity / mention / relation records and their counts.
+                    # A 1.0 file has neither and imports exactly as it did.
+                    "version": "cpersona-export/1.1",
                     "agent_id": agent_id,
                     "exported_at": datetime.now(timezone.utc).isoformat(),
                     "memory_count": memory_count,
@@ -2608,6 +2643,9 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                     # bug-110: an exact count, so the import can detect a file cut at
                     # the episode/profile boundary (has_profile alone cannot).
                     "profile_count": profile_count,
+                    "entity_count": graph_counts["entities"],
+                    "mention_count": graph_counts["mentions"],
+                    "relation_count": graph_counts["relations"],
                 }
                 f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
@@ -2688,19 +2726,53 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                         }
                         f.write(json.dumps(record, ensure_ascii=False) + "\n")
                         exported_profiles += 1
+
+                # The declared graph, after the records it names so an import has
+                # mapped them by the time it reads a reference.
+                cur = await db.execute(
+                    f"SELECT {associations.ENTITY_COLUMNS} {graph_sql['entities'][0]} ORDER BY e.id",
+                    iso_e.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    aliases = await associations.aliases_of(db, [row[0] for row in rows])
+                    for row in rows:
+                        record = {"_type": "entity", **associations.entity_record(row, aliases.get(row[0], []))}
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_graph["entities"] += 1
+                cur = await db.execute(
+                    f"SELECT {associations.MENTION_COLUMNS} {graph_sql['mentions'][0]} ORDER BY m.entity_id, m.ref",
+                    iso_e.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    for row in rows:
+                        record = {"_type": "mention", **associations.mention_record(row)}
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_graph["mentions"] += 1
+                cur = await db.execute(
+                    f"SELECT {associations.RELATION_COLUMNS} {graph_sql['relations'][0]} ORDER BY r.id",
+                    iso_r.params,
+                )
+                while rows := await cur.fetchmany(500):
+                    for row in rows:
+                        record = {"_type": "relation", **associations.relation_record(row)}
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported_graph["relations"] += 1
         os.replace(tmp_path, output_path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.remove(tmp_path)
         raise
 
-    return {
+    result = {
         "ok": True,
         "path": output_path,
         "memories": exported_memories,
         "episodes": exported_episodes,
         "profiles": exported_profiles,
     }
+    if any(exported_graph.values()):
+        result["associations"] = exported_graph
+    return result
 
 
 @dataclass
@@ -2747,6 +2819,15 @@ class _ImportTally:
     file_memories: int = 0
     file_episodes: int = 0
     file_profiles: int = 0
+    file_entities: int = 0
+    file_mentions: int = 0
+    file_relations: int = 0
+    # The declared graph the file carries, and where each of its records now lives:
+    # the file's `mem:<id>` / `ep:<id>` to the row imported for it, or the equal row
+    # that was already here. The graph is written through this map after the records.
+    graph: associations.Graph = field(default_factory=associations.Graph)
+    ref_map: dict[str, str] = field(default_factory=dict)
+    associations: dict | None = None
     # bug-070: dry_run performs no INSERT OR IGNORE, so it cannot collide against a row
     # it "inserted" earlier IN THE SAME FILE — a duplicate later in the file was
     # over-counted as imported (a real run sees its own uncommitted row on the shared
@@ -2765,6 +2846,13 @@ class _ImportTally:
         if self.dry_run:
             return
         self.remote_items.setdefault(agent_id, []).append({"id": ref, "text": text})
+
+    def map_record(self, kind: str, record: dict, row_id: int | None) -> None:
+        """Record which row now holds the file's record. A preview has no row id, so
+        the file's own ref stands in: what is counted is that it maps at all."""
+        file_id = record.get("id")
+        if isinstance(file_id, int) and not isinstance(file_id, bool):
+            self.ref_map[f"{kind}:{file_id}"] = f"{kind}:{file_id if row_id is None else row_id}"
 
 
 def _validate_import_preconditions(
@@ -2871,6 +2959,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         )
         if existing or (tally.dry_run and (aid, pid, msg_id) in tally.seen_msgid):
             tally.skipped_memories += 1
+            tally.map_record("mem", record, existing[0][0] if existing else None)
             return
 
     # bug-349: the content axis, asked on BOTH arms rather than only on the preview.
@@ -2889,6 +2978,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     )
     if dup or (tally.dry_run and (aid, pid, chan, content) in tally.seen_content):
         tally.skipped_memories += 1
+        tally.map_record("mem", record, await _equal_memory_id(db, aid, pid, chan, content) if dup else None)
         return
 
     if not tally.dry_run:
@@ -2929,6 +3019,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
             tally.skipped_memories += 1
             return
         tally.queue_remote(aid, f"mem:{cur.lastrowid}", content)
+        tally.map_record("mem", record, cur.lastrowid)
     else:
         # bug-056/bug-070: the probe itself now runs on both arms (above). What stays
         # here is the half a preview has and a real run does not need: a real INSERT is
@@ -2938,6 +3029,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         if msg_id:
             tally.seen_msgid.add((aid, pid, msg_id))
         tally.seen_content.add((aid, pid, chan, content))
+        tally.map_record("mem", record, None)
     # N-03: a restore reports a stamp ahead of the clock and imports it anyway.
     #
     # This seam is deliberately not the one that refuses. `store` is an external
@@ -3008,6 +3100,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     )
     if existing or (tally.dry_run and (aid, ep_pid, ep_chan, summary) in tally.seen_episode):
         tally.skipped_episodes += 1
+        tally.map_record("ep", record, existing[0][0] if existing else None)
         return
 
     if not tally.dry_run:
@@ -3032,8 +3125,10 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
             ),
         )
         tally.queue_remote(aid, f"ep:{cur.lastrowid}", summary)
+        tally.map_record("ep", record, cur.lastrowid)
     else:
         tally.seen_episode.add((aid, ep_pid, ep_chan, summary))
+        tally.map_record("ep", record, None)
     tally.imported_episodes += 1
 
 
@@ -3132,6 +3227,57 @@ def _validate_file_header(tally: _ImportTally) -> None:
             f"{declared_prof} profiles, file contains "
             f"{tally.file_memories} / {tally.file_episodes} / {tally.file_profiles}"
         )
+    # The graph section comes last, so it is where a cut file ends. A file written
+    # before the graph was exported declares no graph counts and is not checked here.
+    declared_graph = [tally.file_header.get(f"{kind}_count") for kind in ("entity", "mention", "relation")]
+    in_file = [tally.file_entities, tally.file_mentions, tally.file_relations]
+    if any(isinstance(d, int) and d != n for d, n in zip(declared_graph, in_file)):
+        raise ValueError(
+            "file truncated or inconsistent: header declares "
+            "{} entities / {} mentions / {} relations, file contains {} / {} / {}".format(*declared_graph, *in_file)
+        )
+
+
+def _collect_graph_record(record: dict, rtype: str, target_agent_id: str, tally: _ImportTally, line_num: int) -> None:
+    """Hold one declared-graph record until every record it can name has been imported."""
+    if rtype == "entity":
+        tally.file_entities += 1
+    elif rtype == "mention":
+        tally.file_mentions += 1
+        tally.graph.mentions.append(record)
+        return
+    else:
+        tally.file_relations += 1
+    aid = target_agent_id or record.get("agent_id", "")
+    if not aid or not isinstance(aid, str):
+        tally.errors.append(f"Line {line_num}: {rtype} missing agent_id")
+        return
+    if rtype == "relation":
+        tally.graph.relations.append({**record, "agent_id": aid})
+        return
+    entity_id = record.get("id")
+    if not isinstance(entity_id, int) or isinstance(entity_id, bool):
+        tally.errors.append(f"Line {line_num}: entity missing id")
+        return
+    tally.graph.entities[entity_id] = {**record, "agent_id": aid}
+
+
+async def _import_graph(db, tally: _ImportTally) -> None:
+    """Write the file's declared graph, pointed at the rows its records now live in."""
+    if not tally.graph:
+        return
+    carried = await associations.carry(db, tally.graph, tally.ref_map, dry_run=tally.dry_run)
+    tally.associations = carried.counts()
+    if carried.dropped:
+        tally.errors.append(
+            f"{carried.dropped} declared associations were not restored: they are malformed, or name a "
+            "record or entity this import did not restore"
+        )
+    if carried.aliases_dropped:
+        tally.errors.append(
+            f"{carried.aliases_dropped} aliases were not restored: each already names another entity "
+            "in its scope"
+        )
 
 
 async def do_import_memories(
@@ -3220,6 +3366,9 @@ async def do_import_memories(
                         continue
                     await _import_profile_record(db, record, aid, tally, line_num)
 
+                elif rtype in ("entity", "mention", "relation"):
+                    _collect_graph_record(record, rtype, target_agent_id, tally, line_num)
+
                 else:
                     if rtype:
                         tally.errors.append(f"Line {line_num}: unknown type '{rtype}'")
@@ -3227,6 +3376,7 @@ async def do_import_memories(
             # Inside the transaction scope: the raise must roll a real run back
             # rather than commit a partial restore (bug-091).
             _validate_file_header(tally)
+            await _import_graph(db, tally)
 
     except Exception as e:
         # bug-110: keep the per-line diagnostics (a torn last line lands in
@@ -3262,6 +3412,8 @@ async def do_import_memories(
         "skipped_episodes": tally.skipped_episodes,
         "profile_updated": tally.profile_updated,
     }
+    if tally.associations is not None:
+        result["associations"] = tally.associations
     if tally.future_timestamps:
         result["future_timestamps"] = tally.future_timestamps
     if tally.errors:
@@ -3301,6 +3453,14 @@ class _MergeTally:
     copied_memory_ids: list[int] = field(default_factory=list)
     copied_episode_ids: list[int] = field(default_factory=list)
     copied_profile_ids: list[int] = field(default_factory=list)
+    # The source ref of every record that now exists in the target -- the copy, or
+    # the equal row the target already held -- mapped to its target ref. The declared
+    # graph is carried through it: a declaration names records by ref, and a move
+    # deletes the source rows it names.
+    ref_map: dict[str, str] = field(default_factory=dict)
+    # False when some of the source's declarations could not be carried; the move
+    # then leaves the source's graph where it is rather than delete the only copy.
+    graph_carried: bool = True
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: list[dict] = field(default_factory=list)
 
@@ -3309,6 +3469,11 @@ class _MergeTally:
         if self.dry_run:
             return
         self.remote_items.append({"id": ref, "text": text})
+
+    def map_record(self, kind: str, src_id: int, target_id: int | None) -> None:
+        """Record where a source record lives in the target. A preview has no target
+        id, so the source ref stands in: what is counted is that it maps at all."""
+        self.ref_map[f"{kind}:{src_id}"] = f"{kind}:{src_id if target_id is None else target_id}"
 
 
 async def _merge_memory_rows(db, source_agent_id: str, target_agent_id: str, tally: _MergeTally) -> None:
@@ -3368,6 +3533,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
             )
             if existing:
                 tally.skipped_memories += 1
+                tally.map_record("mem", src_id, existing[0][0])
                 continue
         # bug-349: the import twin, for the same reason -- strategy='skip' must not
         # depend on an index whose creation is allowed to fail. Measured on a database
@@ -3379,6 +3545,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
         )
         if dup:
             tally.skipped_memories += 1
+            tally.map_record("mem", src_id, await _equal_memory_id(db, target_agent_id, project_id, channel, content))
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -3408,6 +3575,7 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
                 continue
             tally.copied_memory_ids.append(src_id)
             tally.queue_remote(f"mem:{cur.lastrowid}", content)
+        tally.map_record("mem", src_id, None if tally.dry_run else cur.lastrowid)
         tally.merged_memories += 1
 
 
@@ -3468,6 +3636,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
             tally.dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in tally.seen_summary
         ):
             tally.skipped_episodes += 1
+            tally.map_record("ep", src_id, existing[0][0] if existing else None)
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -3493,6 +3662,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
             tally.queue_remote(f"ep:{cur.lastrowid}", summary)
         else:
             tally.seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
+        tally.map_record("ep", src_id, None if tally.dry_run else cur.lastrowid)
         tally.merged_episodes += 1
 
 
@@ -3560,6 +3730,12 @@ _MOVE_LEFT_SQL = (
     ("profiles", "SELECT COUNT(*) FROM profiles WHERE agent_id = ?"),
 )
 
+# The declared graph a move can leave behind. Reported only when nonzero.
+_MOVE_LEFT_GRAPH_SQL = (
+    ("entities", "SELECT COUNT(*) FROM entities WHERE agent_id = ?"),
+    ("relations", "SELECT COUNT(*) FROM relations WHERE agent_id = ?"),
+)
+
 
 async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTally) -> tuple[dict, dict]:
     """Move phase: remove exactly the rows this merge copied (bug-218 / bug-222).
@@ -3579,6 +3755,13 @@ async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTall
     The crash-recovery queue is per agent, not per row (bug-093): it is drained only
     when the move leaves the source with nothing at all — the wiped-agent case that
     guard was written for.
+
+    The declared graph was carried to the target before this runs. Deleting the
+    copied rows takes their mentions and anchored relations by trigger; what remains
+    is the agent's entities and its record-free relations. Those go too when the
+    move empties the source and the graph arrived whole -- they are copies now, as
+    ``_delete_agent_rows`` treats them -- and otherwise they stay and are counted in
+    ``left_at_source``, so a source still holding declarations is not reported empty.
     """
     ids_for = {
         "deleted_memories": tally.copied_memory_ids,
@@ -3610,6 +3793,13 @@ async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTall
             "DELETE FROM pending_memory_tasks WHERE agent_id = ?", (source_agent_id,)
         )
         deleted["deleted_pending_tasks"] = cur.rowcount
+        if tally.graph_carried:
+            await db.execute("DELETE FROM entities WHERE agent_id = ?", (source_agent_id,))
+            await db.execute("DELETE FROM relations WHERE agent_id = ?", (source_agent_id,))
+    for kind, sql in _MOVE_LEFT_GRAPH_SQL:
+        rows = await db.execute_fetchall(sql, (source_agent_id,))
+        if rows[0][0]:
+            left[kind] = rows[0][0]
     return deleted, left
 
 
@@ -3687,6 +3877,16 @@ async def do_merge_memories(
             await _merge_episode_rows(db, source_agent_id, target_agent_id, tally)
             await _merge_profile_rows(db, source_agent_id, target_agent_id, tally)
 
+            # The declared graph follows the records it names, before a move deletes
+            # them (their delete triggers would take every declaration with them).
+            graph = await associations.read_graph(db, source_agent_id)
+            carried = None
+            if graph:
+                carried = await associations.carry(
+                    db, graph, tally.ref_map, agent_id=target_agent_id, dry_run=dry_run
+                )
+                tally.graph_carried = not (carried.dropped or carried.aliases_dropped)
+
             move_counts = None
             left_at_source = None
             if mode == "move" and not dry_run:
@@ -3746,6 +3946,13 @@ async def do_merge_memories(
         "profile_copied": tally.profile_copied,
         "skipped_profile": tally.skipped_profile,
     }
+    if carried is not None:
+        result["associations"] = carried.counts()
+        not_carried = carried.dropped + carried.aliases_dropped
+        if not_carried:
+            # A declaration naming a record that was not copied, or an alias that
+            # already names another entity in the target.
+            result["associations"]["not_carried"] = not_carried
     if move_result:
         result["source_deleted"] = move_result
         # bug-218/bug-222: the residue is part of the answer — a caller that reads

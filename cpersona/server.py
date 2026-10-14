@@ -2239,7 +2239,8 @@ registry.auto_tool(
 
 registry.auto_tool(
     "export_memories",
-    "Export memories, episodes, and profiles to a JSONL file for backup or portability.",
+    "Export memories, episodes, profiles and declared associations (entities, aliases, mentions, relations) "
+    "to a JSONL file for backup or portability.",
     {
         "type": "object",
         "properties": {
@@ -2274,7 +2275,8 @@ registry.auto_tool(
     # bug-220: the claim now matches the code. Episodes were re-inserted on every run
     # while this said "idempotent" and the annotation below said idempotentHint=True,
     # which is what a host acts on when it retries a lost response.
-    "Import memories, episodes, and profiles from a JSONL file. Idempotent: memories deduplicate on "
+    "Import memories, episodes, profiles and declared associations from a JSONL file; the associations are "
+    "pointed at the records they name as restored. Idempotent: memories deduplicate on "
     "msg_id (and on content within a project/channel), episodes on their summary within a project/channel.",
     {
         "type": "object",
@@ -2304,7 +2306,7 @@ registry.auto_tool(
 
 registry.auto_tool(
     "merge_memories",
-    "Merge memories, episodes, and profiles from one agent into another. "
+    "Merge memories, episodes, profiles and declared associations from one agent into another. "
     "Atomic one-shot equivalent of export→import without intermediate files. "
     "Strategy 'skip' deduplicates by msg_id (memories) and summary (episodes).",
     {
