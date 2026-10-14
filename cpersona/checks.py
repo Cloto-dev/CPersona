@@ -2868,8 +2868,9 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                     "indexed_rows": index.count,
                     "rows_still_present": live_indexed,
                     "hint": (
-                        "rows the index holds are gone from the database; the index "
-                        "hands each query back to the scan until it is rebuilt: "
+                        "rows the index holds are gone from the database; every query "
+                        "whose window holds one of them is handed back to the scan until "
+                        "the index is rebuilt: "
                         f"python -m cpersona.vector_index --db <path> --table {table} build"
                     ),
                 }

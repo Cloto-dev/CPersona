@@ -134,8 +134,9 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
     row set from the metadata alone, then the stored vectors are streamed in the
     same order and reduced to bits a chunk at a time, so no more than one chunk
     of float32 is ever held. The second pass must produce exactly the rows the
-    plan counted; a mismatch aborts the build rather than leaving bits shifted by
-    a row against their ids.
+    plan counted, and the ids it reads must be the plan's in the plan's order
+    (bug-589, see ``vector_index.build_index``); a mismatch aborts the build rather
+    than leaving bits shifted by a row against their ids.
     """
     if table not in COARSE_TABLES:
         return {"built": False, "reason": f"no coarse index is built for {table}"}
@@ -189,12 +190,15 @@ async def build_coarse_index(db, table: str = "memories", path: str | None = Non
             fh.write(MAGIC)
             fh.write(struct.pack("<I", len(blob)))
             fh.write(blob)
-            fh.write(np.array([r[0] for r in plan.kept], dtype="<i8").tobytes())
+            planned_ids = [r[0] for r in plan.kept]
+            fh.write(np.array(planned_ids, dtype="<i8").tobytes())
             for column in plan.axis_code_arrays():
                 fh.write(column)
 
             written = 0
-            async for blobs in vector_index.iter_embedding_chunks(db, table, plan.watermark, plan.width):
+            async for blobs in vector_index.iter_embedding_chunks(
+                db, table, plan.watermark, plan.width, planned_ids
+            ):
                 matrix = np.frombuffer(b"".join(blobs), dtype="<f4").reshape(len(blobs), plan.dim)
                 fh.write(sign_bits(matrix).tobytes())
                 written += len(blobs)

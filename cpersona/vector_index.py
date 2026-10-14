@@ -313,12 +313,16 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
     blobs, under a predicate built from the first pass's findings, and must
     produce exactly the rows the first pass counted.
 
-    Both passes read on the seam's read connection, which WAL gives snapshot
-    isolation from the serialised writer. The second pass's row count is checked
-    against the first anyway: snapshot isolation is an argument, and an argument
-    is not a check. A mismatch aborts the build rather than leaving a file whose
-    embeddings are shifted by a row against their ids — the one corruption that
-    would still pass every length check below.
+    The two passes are two statements, and on a connection with no transaction
+    open each reads its own snapshot (bug-589): a commit between them can delete
+    one planned row and give an embedding to a row the plan skipped, which leaves
+    the count unchanged and shifts every vector between the two rows one slot
+    against its id. So the operator command builds inside one read transaction
+    (`database.read_snapshot()`), and the second pass checks the id of every row
+    it reads against the plan's order rather than only their count: whatever
+    connection a caller passes, a file whose embeddings are shifted against their
+    ids -- the one corruption that would still pass every length check below --
+    is never written. A mismatch aborts the build; building again succeeds.
 
     The index spans every agent (the axes ride as columns, and the authority is
     re-applied when the caller hydrates), so this is a deliberate global scan,
@@ -364,9 +368,10 @@ async def build_index(db, table: str = "memories", path: str | None = None) -> d
             fh.write(MAGIC)
             fh.write(struct.pack("<I", len(blob)))
             fh.write(blob)
-            fh.write(np.array([r[0] for r in kept], dtype="<i8").tobytes())
+            planned_ids = [r[0] for r in kept]
+            fh.write(np.array(planned_ids, dtype="<i8").tobytes())
 
-            written = await _stream_embeddings(db, fh, table, watermark, width)
+            written = await _stream_embeddings(db, fh, table, watermark, width, planned_ids)
             if written != count:
                 raise IndexUnusable(
                     f"embedding pass returned {written} rows, metadata pass counted {count}"
@@ -419,33 +424,48 @@ def _is_canonical(value: str) -> bool:
     )
 
 
-async def iter_embedding_chunks(db, table: str, watermark: int, width: int):
+async def iter_embedding_chunks(db, table: str, watermark: int, width: int, planned_ids):
     """The blobs of the planned rows in canonical order, a chunk at a time.
 
     The predicate mirrors the metadata pass exactly — same watermark, same width,
     same canonical-created_at test, same ORDER BY — so the two passes describe one
     row set. Global by design, like the first pass. Both index files read their
     second pass through here, so they cannot disagree about which blob is which row.
+
+    The predicate makes the two passes describe one row set only when they read
+    one state of the database (bug-589). Each row's id is therefore read with its
+    blob and checked against `planned_ids`, the metadata pass's ids in the same
+    order, and a difference raises `IndexUnusable` before the chunk is yielded. A
+    row the plan did not count shows up as a difference too; a row it counted and
+    this pass did not reach is left to the caller's count check.
     """
     iso = isolation_where(agent_id=None)
     sql = (
-        f"SELECT embedding FROM {table}"
+        f"SELECT id, embedding FROM {table}"
         f" WHERE embedding IS NOT NULL AND id <= ? AND length(embedding) = ?"
         f"   AND {_canonical_predicate()}{iso.and_clause}"
         f" ORDER BY created_at DESC, id ASC"
     )
+    seen = 0
     async with db.execute(sql, (watermark, width, *iso.params)) as cursor:
         while True:
             rows = await cursor.fetchmany(512)
             if not rows:
                 return
-            yield [r[0] for r in rows]
+            ids = [r[0] for r in rows]
+            if ids != list(planned_ids[seen : seen + len(ids)]):
+                raise IndexUnusable(
+                    "the embedding pass read a different row set than the metadata pass "
+                    "(a write landed between them); build again"
+                )
+            seen += len(ids)
+            yield [r[1] for r in rows]
 
 
-async def _stream_embeddings(db, fh, table: str, watermark: int, width: int) -> int:
+async def _stream_embeddings(db, fh, table: str, watermark: int, width: int, planned_ids) -> int:
     """Append the blobs in canonical order, without holding them all at once."""
     written = 0
-    async for blobs in iter_embedding_chunks(db, table, watermark, width):
+    async for blobs in iter_embedding_chunks(db, table, watermark, width, planned_ids):
         fh.write(b"".join(blobs))
         written += len(blobs)
     return written
@@ -718,10 +738,11 @@ def main(argv: list | None = None) -> int:
         config.DB_PATH = args.db
 
     async def run() -> int:
-        # The read seam, not get_db(): the commit/rollback boundary belongs to
-        # database.py, and a builder that only reads has no business owning one.
+        # Reads go through a read seam, not get_db()'s connection: the
+        # commit/rollback boundary belongs to database.py, and a builder that only
+        # reads has no business owning one.
         from cpersona import database
-        from cpersona.database import close_db, connection
+        from cpersona.database import close_db, connection, read_snapshot
 
         # An operator tool does not migrate, and must not create a database behind
         # a mistyped path. Restored afterwards: this is process state, and the
@@ -732,7 +753,14 @@ def main(argv: list | None = None) -> int:
             from cpersona import coarse_index
 
             if args.command == "build":
-                async with connection() as db:
+                # One read transaction for both passes of both builders (bug-589):
+                # the documented way to run this is from a timer against a live
+                # server, and the shared read connection gives each statement its
+                # own snapshot. Entering the read seam first keeps the refusal
+                # above: the snapshot's private connection would create a missing file.
+                async with connection():
+                    pass
+                async with read_snapshot() as db:
                     result = await build_index(db, args.table)
                     if args.table in coarse_index.COARSE_TABLES:
                         # The same command builds both (design §10 B): an operator who

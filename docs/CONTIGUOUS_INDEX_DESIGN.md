@@ -185,10 +185,11 @@ rebuild schedule:
    measurably; it never returns a wrong answer.
 3. **The tail is exact.** The newest rows, which are the ones most likely to be
    retrieved, are never served from a derived structure.
-4. **Deletion needs no index path at all.** A row deleted after the build still
-   appears as a candidate, and the hydrate fails closed on it. The index never
-   needs a delete, a repair or a compaction: if it is wrong, throw it away and
-   rebuild.
+4. **Deletion needs no index path at all.** A row deleted after the build stays
+   in the file. The query path counts the selected rows that still exist and
+   hands the query to the scan when one is gone: a deleted row would otherwise
+   keep a window position the scan gives to the next row. The index never needs
+   a delete, a repair or a compaction: if it is wrong, throw it away and rebuild.
 5. **The tail read is the shape SQLite is best at** — the newest few rows in
    index order.
 
