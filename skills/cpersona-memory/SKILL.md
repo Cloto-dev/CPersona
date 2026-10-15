@@ -377,11 +377,12 @@ afterwards.
   "relations": [{"subject": "Kirari", "predicate": "maintains", "object": "MizEye"}]}`.
 - **Only `reconstruct` and `traverse` read it.** `recall` is unchanged, and with
   nothing declared so is `reconstruct`. In `reconstruct`, an alias in your query
-  adds the entity's other names to the keyword search — a vote, not a pass: a
-  record found only that way is still judged against your query as written. A
-  relation between two records bundles them into one item; a relation between
-  entities adds records about related entities as evidence inside the item
-  (`why: "relation:<predicate>"`, `hops`), never as items of their own.
+  adds the entity's other names to the keyword search: a record found that way
+  is gated like any keyword match and comes back when it passes, naming the
+  entity. A relation between two records bundles them into one item; a relation
+  between entities adds records about related entities as evidence inside the
+  item (`why: "relation:<predicate>"`, `hops`), never as items of their own, and
+  not under a `mode` (use `traverse` there).
 - **Relate records with a role word** — `corrects`, `supersedes`, `qualifies`,
   `contradicts`, `supports`, `temporal_predecessor` — with the record that plays
   the role as subject (the correction, the newer version, the support, the

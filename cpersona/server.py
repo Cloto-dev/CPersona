@@ -1109,8 +1109,8 @@ registry.auto_tool(
     # consumers branch on `persisted`, not on key presence.
     "Under pause_persistence the write is skipped and the response carries persisted:false "
     "(id:'no-persist'), which tells a paused write from a duplicate. "
-    "The older message={content, id, source, timestamp, metadata} form is still accepted; "
-    "send those fields there or at the top level, not both.",
+    "The older message={content, id, source, timestamp, metadata} form still works; use "
+    "it or the top level, not both.",
     {
         "type": "object",
         "properties": {
@@ -1119,7 +1119,7 @@ registry.auto_tool(
                 # bug-168: "skipped" means ok:true in this tool's own
                 # vocabulary, so the old wording told callers to treat a
                 # refusal as a harmless no-op.
-                "description": "The text to store. Content that is empty — or that sanitizes to empty — is refused with ok:false, result:'rejected'.",
+                "description": "The text to store; a [Memory from …] annotation is removed anywhere in it, and text left empty is refused with ok:false, result:'rejected'.",
             },
             "agent_id": {
                 "type": "string",
@@ -1842,7 +1842,7 @@ registry.auto_tool(
                 "maximum": associations_module.TRAVERSE_MAX_HOPS,
                 "description": (
                     "Relation hops the walk may follow from an item's candidates through declared "
-                    "entity -> entity relations. 0 adds no walked evidence. A relation left "
+                    "entity -> entity relations. 0, or any mode, adds no walked evidence. A relation left "
                     "unfollowed at the bound is named in bounds.omitted. At most "
                     f"{associations_module.TRAVERSE_MAX_HOPS}, as for traverse: a larger value is "
                     "lowered to it, and bounds.max_hops then states the value applied."
@@ -1913,7 +1913,7 @@ registry.auto_tool(
                 "enum": ["lite", "pro"],
                 "description": (
                     "A named answer size whose returned JSON is at most `cap` cl100k_base tokens, "
-                    "counted as sent (`used_tokens` says how many). \"lite\" (cap 3,000) is for a "
+                    "counted as sent (`used_tokens`). \"lite\" (cap 3,000) is for a "
                     "question one or two records can answer: up to 2,800 characters unless `budget` "
                     "is given, short records whole first, then the best-ranked passages of longer "
                     "ones. \"pro\" (cap 5,000) reads 15 items by default and quotes as much as the "
@@ -2223,9 +2223,10 @@ registry.auto_tool(
         ("beta", float, 0),
         ("session_key", str, ""),
     ],
-    # Writes the agent's beta override and recalibrates its gate; setting the
-    # same precision twice lands in the same state (ACL_DESIGN.md §6 survey gap).
-    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True),
+    # Writes the agent's beta override and recalibrates its gate. Each call draws a
+    # new calibration sample and restamps the calibration time, so setting the same
+    # precision twice can leave a different gate: not idempotent, as calibrate_threshold.
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
 )
 
 registry.auto_tool(

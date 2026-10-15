@@ -1136,3 +1136,34 @@ def test_section_seven_names_the_pool_threshold_not_only_limit():
         "§7 does not say the drop happens before scoring, which is why it applies with "
         "confidence on as well as off"
     )
+
+
+@pytest.mark.asyncio
+async def test_the_profile_row_takes_no_memory_place_in_a_listing(clean_db, fake_embedding_client):
+    """bug-671: an empty-query listing used to count the profile row against `limit`
+    before the keyword stage filled it, so a scope too small for the profile to pass
+    the gate came back one memory short. The profile now takes a place only by
+    surviving the gate, where it keeps the place it had."""
+    from cpersona import admin_handlers
+
+    async def _listing(memories: int) -> list[str]:
+        for table in ("memories", "episodes", "profiles"):
+            await clean_db.execute(f"DELETE FROM {table}")
+        await clean_db.commit()
+        await admin_handlers.do_update_profile(AGENT_A, "operator prefers metric units")
+        for index in range(memories):
+            await memory_handlers.do_store(AGENT_A, {"content": f"listing note {index} on soil"})
+        result = await memory_handlers.do_recall(AGENT_A, "", limit=5)
+        return [m["content"] for m in result["messages"]]
+
+    small = await _listing(5)
+    assert not any(c.startswith("[Profile]") for c in small), small
+    assert len(small) == 5, (
+        f"a 5-memory scope listed {len(small)} memories at limit=5: the profile row the "
+        f"gate drops below 50 rows still held a place. Got: {small}"
+    )
+
+    large = await _listing(60)
+    assert len(large) == 5 and large[-1].startswith("[Profile]"), (
+        f"at 60 rows the profile passes the gate and keeps the last place it had: {large}"
+    )

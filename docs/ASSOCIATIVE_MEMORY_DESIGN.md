@@ -236,10 +236,11 @@ bound, `entities_omitted` counts the entities found within it.
    tables. Test: a fixture corpus reconstructed with and without schema v15
    compares equal; a mutation that consults the graph unconditionally must turn
    it red.
-3. **Association never creates or reorders an item.** Item heads and item
-   order with the graph populated equal those without it; the graph adds
-   evidence inside items, bundles by declared record relations, and labels
-   roles. Test: assert head refs and their order; a mutation that lets a
+3. **The entity walk never creates or reorders an item.** Item heads and item
+   order with entity relations declared equal those without them; the walk adds
+   evidence inside items, and none under a `mode`, which follows no walk. Record
+   relations bundle and label roles, and an alias adds a keyword vote that can
+   admit a record naming the entity (section 9). Test: assert head refs and their order; a mutation that lets a
    reached record become an item must turn it red.
 4. **No model is called.** Declarations are stored as written, apart from
    §2's normalization; the walk is SQL and pure functions.
@@ -348,10 +349,10 @@ has a test and a mutation that turns it red.
   `why: "relation:<predicate>"` and no `hops`; a row the walk reached carries
   the same with `hops`. A cluster a relation formed has
   `independence_reason: "cluster:relation"`.
-- **Stage 1 adds a vote, not an admission.** The extra terms give a record a
-  lexical match the query's words could not. The fused row still has to clear
-  recall's quality gate, which scores it against the unchanged query, so a
-  record found by the lexical arm alone stays below the gate exactly as it
-  would without the alias. The gate is recall's and this step does not change
-  it. Whether a match on a declared name should be admitted on its own is a
-  separate decision.
+- **Stage 1 adds a keyword vote.** The extra terms give a record a lexical
+  match the query's words could not. The fused row is gated by recall's quality
+  gate like any other keyword match, and this step does not change the gate, so
+  a record matched only on a declared name comes back when that match clears it
+  (under `rsf`, whose fused score is relative to the query's candidates, a lone
+  keyword match can), and under a `mode` it can take the keyword seat. Such a
+  record names the declared entity.

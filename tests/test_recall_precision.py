@@ -347,3 +347,27 @@ async def test_deep_relaxes_the_per_agent_gate_the_way_it_relaxes_the_global_one
     monkeypatch.setattr(memory_handlers, "_apply_quality_gate", spy)
     await memory_handlers.do_recall(agent, "anything at all", limit=5, deep=True)
     assert seen == [0.4], seen
+
+
+# ---- bug-721: the annotation agrees with what a repeated call does ----------------
+
+
+@pytest.mark.asyncio
+async def test_setting_the_same_precision_twice_recalibrates_twice_so_it_is_not_idempotent(_stub_calibrate):
+    import mcp.types as types
+
+    from cpersona import server
+
+    await admin_handlers.do_set_recall_precision("alice", "strict")
+    await admin_handlers.do_set_recall_precision("alice", "strict")
+    # The fact the annotation has to agree with: each call draws a new calibration.
+    assert _stub_calibrate == ["alice", "alice"]
+
+    handler = server.registry.server.request_handlers[types.ListToolsRequest]
+    listed = (await handler(types.ListToolsRequest(method="tools/list"))).root
+    tool = next(t for t in listed.tools if t.name == "set_recall_precision")
+    assert tool.annotations is not None
+    assert tool.annotations.idempotentHint is False, (
+        "set_recall_precision recalibrates on every call, so a host that retries it on "
+        "the strength of idempotentHint can persist a different gate"
+    )

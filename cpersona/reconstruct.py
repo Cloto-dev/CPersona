@@ -1791,7 +1791,10 @@ async def do_reconstruct(
         # bounds the payload, and the held items, being last, are cut first.
         effective_budget, budget_policy = resolve_budget(budget, effective_count + len(held), mode_budget)
         response["effective_budget"], response["budget_policy"] = effective_budget, budget_policy
-    graph = await associations.walk_graph(
+    # Under a mode the walk is not followed: its evidence would count against the
+    # mode's token cap and could shorten the prefix of items, where the walk is
+    # promised to change no item. traverse reads the same relations on request.
+    graph = None if mode else await associations.walk_graph(
         agent_id,
         [candidates[i].ref for group in chosen for i in group],
         pool_refs,

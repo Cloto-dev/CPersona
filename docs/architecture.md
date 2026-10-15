@@ -185,7 +185,8 @@ multiplies the *already fused* score of memories older than the most recent
   50 rows** (memories and episodes together, the pool the gate governs; below
   that the gate drops it). It is never preview-trimmed, and it
   [carries no score](behavior-contracts.md#7-profile-rows-carry-no-score), so
-  in the default configuration it sorts last and can be cut by `limit`.
+  in the default configuration it sorts last and can be cut by `limit` (in a
+  listing for an empty query it keeps the last place instead).
 
 ## Isolation axes
 

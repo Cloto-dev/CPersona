@@ -659,7 +659,11 @@ async def _recall_cascade(
 
     await _append_profile_rows(db, agent_id, results)
 
-    remaining = max(0, limit - len(results))
+    # The profile row does not take a keyword row's place here: the quality gate
+    # drops it while the pool is under 50 rows, and a place it held would leave the
+    # answer one memory short. Where it survives, the cut to `limit` takes the last
+    # keyword row instead, so that answer is the one it was.
+    remaining = max(0, limit - sum(1 for r in results if r.get("id") != -1))
     if remaining > 0:
         memory_rows = await _search_memories_keyword(
             db, agent_id, query, remaining, channel=channel, project_id=project_id, source_id=source_id,

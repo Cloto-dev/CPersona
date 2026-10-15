@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ACL_DESIGN.md@blob:86556fe1f86e3053565bb84761bddb14e1945da0 -->
+<!-- i18n-source: docs/ACL_DESIGN.md@blob:06d51efe711b1172128205a2064e199edb285d3a -->
 
 # クライアント別ケーパビリティ / ACL 設計
 
@@ -226,8 +226,13 @@ fail-closed な既定はこうです。レジストリには存在するが分�
 ```json
 { "ok": false, "error": "permission_denied",
   "tool": "store", "agent_id": "beta", "required": "read-write",
-  "client_id": "assistant-a" }
+  "client_id": "assistant-a", "result": "rejected" }
 ```
+
+拒否はツールの応答の代わりに返るので、そのツールがすべての応答に約束している
+フィールドを保ちます。`store` と `declare_associations` は `result: "rejected"`
+を持ち、`lock: true` を付けた `store` は `locked: false` も持ちます。それぞれの
+ツール自身の拒否と同じです。ほかのツールの拒否はどちらも持ちません。
 
 上の形は最小であって、最大ではありません。既存フィールドが運んでいない原因を
 guard が名指しできるときは、`detail` 文字列がこれに加わります。未分類のツール、
