@@ -391,12 +391,8 @@ Three things account for most setup problems:
   is degraded.
 - `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` are the generic aliases of
   `CPERSONA_EMBEDDING_MODE` / `CPERSONA_EMBEDDING_URL`. The prefixed form wins
-  when both are set. The [configuration reference](configuration.md) covers
-  the settings you are likely to reach for, but it is not exhaustive: a few
-  variables (`CPERSONA_STORE_BLOB`, `CPERSONA_FTS_ENABLED`,
-  `CPERSONA_EMBEDDING_API_KEY`, the `CPERSONA_CALIBRATE_*` pair and some
-  others) are read by the server without appearing there. `cpersona/config.py`
-  is the complete list.
+  when both are set. The [configuration reference](configuration.md) lists
+  every variable the server reads, with its default.
 
 ## 4. Verify it works
 

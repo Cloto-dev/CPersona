@@ -873,6 +873,16 @@ async def test_move_removes_the_moved_vectors_from_the_source_namespace_346(
         f"the moved rows were deleted from SQLite but their vectors stay indexed under "
         f"{src_ns}: {orphaned}; the whole merge produced {remote_346.posts}"
     )
+    # The skipped profile keeps the source live, so the cleanup has to be the per-row
+    # removal: a whole-namespace purge would also satisfy the check above while
+    # de-indexing whatever the still-live source holds.
+    assert result["left_at_source"]["profiles"] == 1, result
+    assert not purged, (
+        f"{src_ns} was purged although the move left rows at the source: {remote_346.posts}"
+    )
+    assert cleaned >= {f"mem:{i}" for i in src_ids}, (
+        f"the moved rows were not removed from {src_ns} by id: {remote_346.posts}"
+    )
 
 
 # ==========================================================================

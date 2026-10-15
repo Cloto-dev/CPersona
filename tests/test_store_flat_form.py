@@ -11,6 +11,7 @@ removes those keys from the call, and the two rules that keep it from guessing:
 * agent_id is filled in only where the connection can write to exactly one agent.
 """
 
+import contextlib
 import json
 
 import pytest
@@ -23,17 +24,40 @@ from cpersona.database import get_db
 AGENT = "flat-form-agent"
 
 
-@pytest_asyncio.fixture
-async def db():
-    handle = await get_db()
-    for table in ("memories", "episodes", "profiles", "pending_memory_tasks"):
+_TABLES = ("memories", "episodes", "profiles", "pending_memory_tasks")
+
+
+async def _empty_tables(handle):
+    for table in _TABLES:
         await handle.execute(f"DELETE FROM {table}")
     await handle.commit()
+
+
+@contextlib.asynccontextmanager
+async def _clean_store():
+    """The store this module's tests run against, emptied before and after.
+
+    After as well as before: the suite shares one database file per session, and
+    a test here stores under a ledger-issued ``u-`` alias. Left behind, that row
+    is a reserved-prefix agent no later test's ledger records, and the boot guard
+    any later test runs refuses the database over it.
+    """
+    handle = await get_db()
+    await _empty_tables(handle)
     session.reset_pauses_for_tests()
-    yield handle
-    acl.activate(None)
-    acl.activate_ledger(None)
-    session.reset_pauses_for_tests()
+    try:
+        yield handle
+    finally:
+        acl.activate(None)
+        acl.activate_ledger(None)
+        session.reset_pauses_for_tests()
+        await _empty_tables(handle)
+
+
+@pytest_asyncio.fixture
+async def db():
+    async with _clean_store() as handle:
+        yield handle
 
 
 async def _rows(handle):

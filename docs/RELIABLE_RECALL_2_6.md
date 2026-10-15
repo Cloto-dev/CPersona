@@ -347,14 +347,14 @@ recall items returned. It is not a fill target, and it is not a search depth.
 base      = forced_count ?? requested_count ?? default_count
 effective = min(base, max_count)
 0 <= returned - reserved <= effective
-0 <= reserved <= reservation        (0 unless the block arm is on)
+0 <= reserved <= held_places
 ```
 
 - `default_count` is the server's default when the caller says nothing;
-  `max_count` is an absolute ceiling; `forced_count` lets an operator pin the
-  base for every call and is null unless set. A configuration in which the
-  default or the forced value exceeds the maximum is a startup error, not a
-  silent clamp.
+  `max_count` is an absolute ceiling (at least 15 under `mode: "pro"`, below);
+  `forced_count` lets an operator pin the base for every call and is null
+  unless set. A configuration in which the default or the forced value exceeds
+  the maximum is a startup error, not a silent clamp.
 - Every response states `effective_count` and `returned_count`. When the server
   did something other than what was asked — it clamped the count, or an operator
   forced it — the response adds `requested_count` and a `count_policy` (`source`,
@@ -374,10 +374,16 @@ effective = min(base, max_count)
   window left out that hold one follow it as items marked
   `admission: "reservation"`, and `reserved_count` says how many came back. They
   displace no item of the window, a short window is judged without them, and
-  `returned_count` can exceed `effective_count` by at most the reservation. The
+  `returned_count` can exceed `effective_count` by at most `held_places`. The
   default budget widens by one head per held item; a budget the caller or an
   operator named does not, and a held item it leaves out is reported as
   `reserved_omitted`.
+- The block arm's places are not the only ones. `held_places` is every place
+  the candidate recall can hold beside its answer, and each held row follows the
+  window the same way: the block reservation (two), up to three time-cue seats
+  when a cue is given, the two far seats when they are on, and under a `mode`
+  its keyword seat and, for `pro`, two more block places (below). Held items can
+  therefore follow the window with the block arm off.
 - The unconfigured default is **ten items** from 2.6.0: the count at which the
   recommended configuration was measured with a reader on a pack of a real
   agent's memory. The maximum remains experimental until a sweep
@@ -488,9 +494,10 @@ effective_budget = min(budget_base, max_budget)
     ([evidence allocation](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length))
     whatever `CPERSONA_RECONSTRUCT_SEQUENCE` says, and the cap is 3,000, above
     every lite response measured while the modes were developed.
-  - `mode: "pro"` reads 15 items when `count` is omitted, whatever the
-    configured maximum, has no character budget unless one is named, and quotes
-    as much of the `whole` sequence as its cap of 5,000 holds. Only its first 10
+  - `mode: "pro"` reads 15 items when `count` is omitted and lets a named
+    `count` reach 15, whatever the configured maximum, has no character budget
+    unless one is named, and quotes as much of the `whole` sequence as its cap
+    of 5,000 holds. Only its first 10
     items join the floor of records shown whole: on a store of short records, a
     floor of every item spent the cap on the short records of the last items.
     Whether `pro` ships in a release is decided by a test registered before it

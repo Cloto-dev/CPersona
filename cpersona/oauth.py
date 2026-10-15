@@ -504,10 +504,12 @@ class IdpTokenVerifier:
         ``subject_types_supported``, so the gate below was applied to a document
         structurally incapable of failing it while the document that must
         declare the field was never fetched. So the walk continues until an OIDC
-        discovery document has actually been read, and if none can be, the
-        issuer is refused. A gate that could not read the field it depends on
-        has not passed — it has abstained, and fail-closed is the whole point of
-        the setting.
+        discovery document has actually been read. An issuer that declares
+        pairwise-only subjects is refused ("" is returned). If no OIDC document
+        can be read, the issuer is still accepted with the RFC 8414 key set
+        location: absence is not a pairwise declaration, so the gate abstains
+        rather than refuses, and the abstention is logged so an operator can
+        tell a gate that passed from one that never ran.
         """
         gated = self._require_public_subject
         jwks_uri = ""

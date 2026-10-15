@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/behavior-contracts.md@blob:065ba1d163386f9b1cd38e66f7f7ca1eb0f74882 -->
+<!-- i18n-source: docs/behavior-contracts.md@blob:6936f9f92b75902bef55e5f8a1bd9803e6a9b163 -->
 
 # 挙動契約 (Behavior Contracts)
 
@@ -289,10 +289,19 @@ recall の応答が `gate_fallback: true` を伴う場合 (伴わないときは
 
 ## 9. `lock_memory` は保護する、押し上げはしない { #9-lock_memory-protects-it-does-not-boost }
 
-`lock_memory` は行を削除と編集から保護します。ランキングには**影響しません**。
-ロックした記憶でも recall に負けることはあります。要件が「決して*失われて*は
+`lock_memory` は、`delete_memory` と `update_memory` がその行を拒否するように
+します。ランキングには**影響しません**。ロックした記憶でも recall に負けることはあります。要件が「決して*失われて*は
 ならない」ならロックしてください。要件が「常に*文脈に載って*いてほしい」なら、
 決定的注入を使ってください (プロフィールに関する注意は §7 を参照)。
+
+ロックは行の内容を固定し、削除を拒みますが、行の agent や channel を
+固定はしません。行のスコープを付け替える運用者向けツールは、ロックされた行も他の行と
+同じように動かし、ロックはそのまま保ちます: `migrate_channel_axis` はそれを別の channel へ
+振り直し (`globalize_unrecoverable=true` では、channel 単位のすべての recall が一致する
+channel `''` へ)、`merge_memories` の `mode="move"` は移動先のエージェントへ運びます。
+取り残せば、失われてはならない行こそが、もう誰も読まない channel やエージェントに
+置き去りになるからです。`delete_agent_data` はエージェントを丸ごと削除し、ロックされた
+行も含みます。
 
 ## 10. 応答の形: 成功と失敗の見分け方 { #10-response-shapes-how-to-tell-success-from-failure }
 

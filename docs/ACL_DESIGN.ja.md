@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ACL_DESIGN.md@blob:7639603b32fd47b282242f41f06ac93d6d972b88 -->
+<!-- i18n-source: docs/ACL_DESIGN.md@blob:86556fe1f86e3053565bb84761bddb14e1945da0 -->
 
 # クライアント別ケーパビリティ / ACL 設計
 
@@ -288,7 +288,7 @@ annotations はクライアント向けのヒントであり、ACL 表はサー�
 | `recall`, `recall_with_context`, `get_contents`, `get_profile`, `list_memories`, `list_episodes`, `get_recall_precision` | read | `agent_id` 引数 |
 | `store`, `update_profile`, `archive_episode`, `update_memory`, `lock_memory`, `unlock_memory`, `delete_memory`, `delete_episode`, `delete_agent_data` | read-write | `agent_id` 引数 |
 | `calibrate_threshold`, `set_recall_precision` | read-write | `agent_id` 引数 (エージェント別の較正状態を変更する) |
-| `check_health`, `deep_check` | read。**`fix=true` のときは read-write** | `agent_id` 引数。空 = 全エージェント → `"*"` に対する grant が必要 |
+| `check_health`, `deep_check` | read。**`fix=true` のときは read-write**。`check_health` では、選んだチェックに効果が全エージェントに及ぶ修復 (`dedup_msg_id_index`、`coarse_index`、`block_index`、`file_permissions`。`checks` が空ならすべて選ばれます) が含まれると、`"*"` に対する read-write にも格上げされます | `agent_id` 引数。空 = 全エージェント → `"*"` に対する grant が必要 |
 | `migrate_channel_axis` | read-write | `agent_id` 引数。空 = 全エージェント → `"*"` |
 | `export_memories` | read-write。**`CPERSONA_EXPORT_DIR` が未設定のあいだ (出荷時の既定) は、要求が `"*"` に格上げされます** — パス引数はファイルシステム上のどこでも呼び出し側が選べるため、影響範囲は 1 エージェントのデータでは済みません (§9-D4、マージ前レビューによる 2 つ目の修正)。設定されているあいだは、`output_path` にある既存のファイルを置き換えるのに、そのファイルが属するエージェントへの read-write も要ります: ヘッダの `agent_id`、または全エージェントのエクスポートやエクスポートでないファイルなら `"*"` | `agent_id` 引数、および置き換えられるファイルの持ち主 |
 | `import_memories` | read-write。`CPERSONA_EXPORT_DIR` が未設定のあいだは同じ `"*"` への格上げ。設定されているあいだは、ファイルがヘッダとレコードで名指すすべてのエージェントへの **read** も要ります (全エージェントのエクスポートなら `"*"`) — `merge_memories` が source に要求するのと同じ read です | `target_agent_id`。空 = 「ファイルに記録されたとおり」→ `"*"`。加えてファイルが名指すすべてのエージェント |

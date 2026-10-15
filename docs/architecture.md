@@ -176,9 +176,10 @@ multiplies the *already fused* score of memories older than the most recent
 - **Declarative** (`store` / `recall`) — individual facts, decisions, rules.
   The everyday unit.
 - **Episodic** (`archive_episode`) — session summaries. They are searched
-  alongside declarative memories. Archiving one also moves the boundary that
-  ages everything written before it, which is what keeps an old corpus from
-  drowning today's answers.
+  alongside declarative memories. Archiving one also moves the episode
+  boundary; with the boundary penalty enabled (it is off by default), that
+  boundary ages everything written before it, so an old corpus does not drown
+  today's answers.
 - **Profile** (`update_profile`) — accumulated attributes about the user or
   project. It is appended to recall responses **when the scope holds at least
   50 rows** (memories and episodes together, the pool the gate governs; below

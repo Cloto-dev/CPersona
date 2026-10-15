@@ -84,6 +84,10 @@ async def _recall(monkeypatch, mode: str, seats: int, limit: int = 5):
     # Two words: the vector hit also holds both, so it ranks first on the keyword
     # arm too, and the keyword-only row (one word) ranks last on every scale.
     out = await M.do_recall(AGENT, "apples orchard", limit=limit, keyword_seats=seats)
+    # The dict below keys by content, which would collapse a row returned twice (an
+    # ordinary hit and a keyword seat for the same record); check refs are unique first.
+    refs = [m.get("ref") for m in out["messages"]]
+    assert len(refs) == len(set(refs)), f"the same row was returned twice: {refs}"
     return out, {m["content"]: m for m in out["messages"]}
 
 
@@ -143,6 +147,8 @@ async def test_a_keyword_only_row_the_count_cut_takes_a_seat(monkeypatch):
     _gate("rsf", 0.0)
     monkeypatch.setattr(M, "RECALL_MODE", "rsf")
     out = await M.do_recall(AGENT, "zzz apples", limit=1, trace=True, keyword_seats=2)
+    refs = [m.get("ref") for m in out["messages"]]
+    assert len(refs) == len(set(refs)), f"the same row was returned twice: {refs}"
     rows = {m["content"]: m for m in out["messages"]}
     cut = out["trace"]["order"]["cut_by_count"]
     assert len(cut) == 1, f"fixture is vacuous: the count cut {cut}"

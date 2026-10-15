@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:bf9d2967d64d8148f28e820822cfe5fc10490595 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:9420e315c0d6c3227b5b6154d37a09cd8effaee1 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -145,8 +145,9 @@ exit 2 を返し、想起は走査を使います (答えは同じで、速さ�
   `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1` を設定してください。`CPERSONA_RECONSTRUCT_MAX_COUNT` だけを
   下げると、既定も一緒に下がります。
 
-- **`limit` は返す行数です** (2.6.0a2)。融合がどこまで深く見るかは
+- **`limit` は返す順位付きの行の数です** (2.6.0a2)。融合がどこまで深く見るかは
   `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)` で、floor の既定は 0 なので、順位は 2.5 と同じです。
+  数の外に確保される行はこれに加わります。上の Block の予約と、下の時期の手がかりの席です。
 - **`reconstruct` には `recall` と同じエージェントごとの読み取り権限が要ります** (2.6.0a2)。
   [アクセス制御](ACL_DESIGN.md)を設定している場合だけ関係します。
 - **confidence は recall の並べ直しにもゲートにも使われなくなりました** (2.6.0a7)。

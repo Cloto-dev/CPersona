@@ -282,7 +282,10 @@ async def test_fifo_ordering():
         await queue.enqueue("archive_episode", "agent-C", [])
 
         await queue.start()
-        await asyncio.sleep(1)
+        # Wait for the rows to go, not for a fixed time: stop() ends the loop between
+        # tasks, so a drain still running after a fixed sleep left tasks unprocessed
+        # on a slow runner with no change to the code under test.
+        assert await _wait_queue_drained(await get_db()), "the queue did not drain"
         await queue.stop()
 
         assert len(processed) == 3

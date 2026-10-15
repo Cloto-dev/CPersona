@@ -4016,7 +4016,9 @@ HEALTH_CHECKS: list[Check] = [
     # CREATE). Same ordering doctrine as oversized_content before duplicate_content.
     # cross_agent_fix: its repair blanks colliding msg_id values under every
     # agent on purpose (see the runner) — the only registered repair that
-    # writes rows the call's own agent_id does not name.
+    # writes rows the call's own agent_id does not name. coarse_index,
+    # block_index and file_permissions below reach every agent too, through
+    # files and state they all share rather than through rows.
     Check("dedup_msg_id_index", "critical", True, check_dedup_msg_id_index, cross_agent_fix=True),
     Check("schema_objects", "critical", True, check_schema_objects),
     Check("sqlite_integrity", "critical", False, check_sqlite_integrity),

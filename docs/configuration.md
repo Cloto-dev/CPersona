@@ -1,8 +1,9 @@
 # Configuration
 
 > **Applies to: CPersona {{ version_line }}.** All settings are environment variables with
-> sensible defaults. This page is the canonical reference; the README keeps
-> only the quick-start subset. An on/off setting accepts `true`, `1`, `yes` or
+> sensible defaults. This page is the canonical reference and lists every
+> `CPERSONA_*` variable the server reads; the README keeps only the
+> quick-start subset. An on/off setting accepts `true`, `1`, `yes` or
 > `on` and `false`, `0`, `no` or `off`, in any case; an empty value is unset, and
 > any other value keeps the documented default and logs a warning (except
 > `CPERSONA_UPDATE_CHECK`, which such a value turns off).
@@ -14,13 +15,25 @@
 | `CPERSONA_DB_PATH` | `data/cpersona.db` | SQLite database path, relative to the client's working directory — set it to an absolute path to keep one memory across sessions |
 | `CPERSONA_EMBEDDING_MODE` | `none` | Embedding mode: `http` (a local embedding server), `api` (an OpenAI-compatible endpoint — `CPERSONA_EMBEDDING_API_URL` defaults to OpenAI's, so this mode bills per request), or `none` |
 | `CPERSONA_EMBEDDING_URL` | *(unset)* | Embedding server URL, e.g. `http://127.0.0.1:8401/embed` |
+| `CPERSONA_EMBEDDING_API_URL` | `https://api.openai.com/v1/embeddings` | The endpoint the `api` mode posts to; any OpenAI-compatible embeddings endpoint |
+| `CPERSONA_EMBEDDING_API_KEY` | *(unset)* | The key the `api` mode sends as a bearer token |
+| `CPERSONA_EMBEDDING_MODEL` | `text-embedding-3-small` | The model the `api` mode asks for. The `http` mode sends no model name — the backend chooses — so there the value is only a label for what was stored, used when the backend reports no fingerprint (see `CPERSONA_EMBEDDING_MODEL_MODE`) |
+| `CPERSONA_EMBEDDING_TIMEOUT_SECS` | `30` | Seconds one embedding request may take |
+| `CPERSONA_EMBEDDING_CACHE_SIZE` | `256` | Query embeddings kept in memory, so a repeated query text is not embedded again. Only single-text requests are cached |
+| `CPERSONA_EMBEDDING_CACHE_TTL` | `300` | Seconds a cached query embedding stays usable |
 | `CPERSONA_EMBEDDING_MODEL_MODE` | `warn` | What a stored vector labelled with a different model than the current one costs. Every vector is written with a label naming what produced it: the fingerprint a backend reports from `GET /capabilities` (CEmbedding 0.9.0 and later), else the model the `api` transport sends or the name you configured, else nothing. Labels are compared only when there is a current identity: a reported fingerprint, or the `api` transport's model. `warn` reports the vectors another model wrote in `check_health` (`embedding_model`) and changes nothing recall returns. `reject` stops comparing those vectors with the query, so the rows are found only by keyword and score without a vector vote. `off` drops the report. Vectors stored before 2.6.3 carry no label and are never counted |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | Vector search execution (`local` in-process cosine, or `remote` offload). `remote` sends `/index`, `/search`, `/remove` and `/purge` to the routes beside `CPERSONA_EMBEDDING_URL`, with its query string, so that URL must end in `/embed`; with any other URL no remote call is made, and a warning says so once |
+| `CPERSONA_STORE_BLOB` | `true` | Under `remote`, also keep each embedding in its database row (local search always does). `false` leaves the vectors only in the remote index: an outage of `/search` leaves recall on the keyword channels, and a backup of the database carries no vectors ([backup](operations.md#backup-and-restore)) |
+| `CPERSONA_REMOTE_SEARCH_TIMEOUT_SECS` | `5.0` | Seconds the remote `/search` call may take before recall falls back to local search |
+| `CPERSONA_REMOTE_INDEX_TIMEOUT_SECS` | `10.0` | Seconds the remote `/index` push may take on a write. A push that fails does not fail the write |
+| `CPERSONA_FTS_ENABLED` | `true` | Create the full-text (keyword) index at startup. `false` leaves a database that has none without one, so recall has no keyword channel over it; set back to `true`, the next start creates the index and fills it from the stored rows. It does not remove an index that already exists |
 | `CPERSONA_RECALL_MODE` | `rrf` | Recall fusion strategy (`rrf`, `rsf`, or `cascade`) — see below |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | Preview tier: max content chars returned by the recall tools. `full_content=true` returns full text under a 200,000-char per-response budget (bug-211): past it, rows degrade back to the preview tier — most relevant kept whole first (bug-214) — and the response carries `full_content_budget_chars`; `get_contents` fetches the remainder under its own 40,000-char budget. `0` disables the preview tier **and both budgets** — degrading to a disabled tier would silently drop content, so opting out of trimming opts out of it everywhere. Left unset, `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` and `CPERSONA_RECONSTRUCT_MAX_BUDGET` rise to hold one excerpt of this size |
 | `CPERSONA_RECALL_EXCERPT_CHARS` | `800` | The query-relevant excerpt a recall row carries beside its preview when the preview cuts it: the parts of the record that matched, filled in ranking order up to this many characters and shown in text order ([design](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26)). Absent on rows shown whole, including every `full_content=true` row within that response's budget; a `full_content=true` row the budget cuts back to the preview carries one. `0` disables it, and it is off whenever the preview tier is disabled |
 | `CPERSONA_RRF_K` | `60` | RRF smoothing parameter |
+| `CPERSONA_RECALL_LIBRARY_MAX_LIMIT` | `10000` | The library layer's ceiling on `limit` and on the Recall Depth. The recall tools' schema caps `limit` at 100, so this bounds callers of the library itself, such as a full-ranking benchmark. A `limit` it lowers is logged as a warning |
 | `CPERSONA_MAX_CONTENT_LENGTH` | `16000` | Max characters per stored memory or episode. Longer writes are truncated; `check_health(fix=true)` also cuts existing rows above the cap, so lowering it shortens data that was already stored. Raised from `2000` in 2.5.4a2 — text past the embedding window is still searchable through the keyword channel, which indexes the stored row in full |
+| `CPERSONA_MAX_METADATA_LENGTH` | `8000` | Max characters of a write's `source` and of its `metadata`, each as serialised JSON. A larger one refuses the write rather than being truncated, because part of a JSON document is not a JSON document |
 | `CPERSONA_MAX_PROFILE_LENGTH` | `2000` | Max characters per profile row, capped separately from memories: the profile is never preview-trimmed, so this cap is the only thing bounding it. It is not injected into *every* response: the quality gate drops profile rows while the pool holds fewer than 50 rows, and `limit` cuts them when the scored results already fill it ([contract §7](behavior-contracts.md#7-profile-rows-carry-no-score)) |
 | `CPERSONA_CONFIDENCE_ENABLED` | `false` | Include a `confidence` value with each returned row. From 2.6.0a7 it neither orders the result nor keys the quality gate unless `CPERSONA_CONFIDENCE_ORDERING=legacy` ([contract §2](behavior-contracts.md#2-confidence-scoring-overrides-the-fusion-mode)) |
 | `CPERSONA_CONFIDENCE_ORDERING` | `fusion` | `fusion`: confidence is returned beside each row and does nothing else. `legacy`: the behaviour before 2.6.0a7 — with confidence on, the result is re-sorted by the confidence score and the quality gate keys on it, so `CPERSONA_RECALL_MODE` no longer decides the returned order |
@@ -29,9 +42,14 @@
 | `CPERSONA_BLOCK_INDEX` | `true` | Read the block arm's rows from a file beside the database instead of SQLite, with the same answer ([contract §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions), [operations](operations.md#the-block-index-file)). On by default from 2.6.7, after a registered run found recall faster with every answer unchanged ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md)). On, the server keeps a log of the records whose blocks change and its queue builds the file at startup and after it writes blocks; a recall reads the changed records from SQLite and every other record from the file, and any state the file cannot answer exactly reads SQLite as before. Off, the server stops that log at startup and writes nothing for it. Needs `CPERSONA_BLOCK_RETRIEVAL_ENABLED`; without the task queue, build the file with `python -m cpersona.block_index build` |
 | `CPERSONA_BLOCK_RETRIEVAL_ENABLED` | follows `CPERSONA_BLOCK_BUILD_ENABLED` | Read the block index during recall ([block reach](BLOCK_REACH_DESIGN.md)): the block arm, and the quotation `reconstruct` returns — a claim is quoted from the block that matches, carrying the contiguous context that governs it, or reported as incomplete. Records it reaches are admitted by **reservation**: a fixed, small number of places held for them after the quality gate, which is neither consulted for those places nor altered for any other. The response therefore carries up to that many rows **beyond** the requested `limit`, and every row the previous release returned is still returned. Needs `CPERSONA_BLOCK_BUILD_ENABLED=true` — reading an index nothing fills is a startup error, not a quiet no-op. No effect where vector search is remote: the arm ranks against the query vector the local search embedded, and a remote search does not produce one |
 | `CPERSONA_TASK_QUEUE_ENABLED` | `true` | Background task queue (DB-persisted, crash-recoverable) |
+| `CPERSONA_TASK_MAX_RETRIES` | `3` | Attempts a background task gets; after this many failures it is discarded |
+| `CPERSONA_TASK_RETRY_DELAY` | `30` | Seconds the queue waits before retrying a failed task. A failed index or block build with other work waiting goes to the back of the queue instead, so it does not hold that work up |
+| `CPERSONA_SCOPE_STATS_CACHE` | `true` | Cache the per-scope aggregates a recall reads (the quality gate's pool counts and, with confidence on, the corpus time span). This process's own writes invalidate it exactly; `false` recomputes them on every recall |
+| `CPERSONA_SCOPE_STATS_TTL_SECONDS` | `60.0` | How long a cached aggregate may outlive a write made by another process on the same database file. Lower it for a shared file with an active second writer; `0` disables reuse |
 | `CPERSONA_RECENT_RECALL_PENALTY` | `0.7` | Penalty for recently recalled memories |
 | `CPERSONA_RECENT_RECALL_WINDOW_MIN` | `5` | Window (minutes) for recent recall penalty |
-| `CPERSONA_MAX_MEMORIES` | `10000` | The vector retriever's **scan window** (not a storage cap) — raise it for large corpora ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)). A value below 1 is not a window: it falls back to `10000` and logs a warning |
+| `CPERSONA_MAX_MEMORIES` | `10000` | The vector retriever's **scan window** (not a storage cap): the newest rows it ranks, which also makes it a recency prior. To reach older records by meaning, set `CPERSONA_VECTOR_REACH` or the far seats rather than widening it — measured, widening it from 10,000 to 200,000 cost 20 NDCG@10 points on answers inside the window to gain 5 below it ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)). A value below 1 is not a window: it falls back to `10000` and logs a warning |
+| `CPERSONA_VECTOR_SCAN_CHUNK_ROWS` | `512` | Rows a vector scan that reads the database, rather than an index file, takes at a time. It bounds the scan's memory, not its speed, and a small value can move scores in their last bit, so leave it at the default |
 | `CPERSONA_VECTOR_REACH` | `0` | How far past the scan window the vector retriever may look, in rows. It **must exceed `CPERSONA_MAX_MEMORIES` to have any effect**: at or below it (and at the default `0`) the far list does not exist and nothing extra runs. Above it, the rows between the two numbers are ranked as a **second list** and fused alongside the first, so the window keeps working as a recency prior while the reach extends independently. Local vector search and the `rrf`/`rsf` fusion modes only ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_VECTOR_FAR_LIMIT` | `0` | How many rows of that second list reach fusion. `0` (the default) means **the same as the response `limit`**, which is the second list exactly as it is built without this setting; a positive value cuts it to `min(limit, N)` rows. It bounds a candidate count and changes nothing about how a row is scored, so the rows it keeps are the ones the full-length list led with. Irrelevant unless `CPERSONA_VECTOR_REACH` is above `CPERSONA_MAX_MEMORIES`; the first list's own cut stays at `limit` ([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)) |
 | `CPERSONA_FAR_SEATS_ENABLED` | `false` | Far seats ([binary coarse search](BINARY_COARSE_SEARCH_DESIGN.md#5-far-seats)): two places held after the block reservation for records **past the scan window** that a one-bit coarse search finds by meaning. The search starts where `CPERSONA_MAX_MEMORIES` and `CPERSONA_VECTOR_REACH` end, and its best candidates are re-ranked by the cosine of their stored vectors and held to the vector arm's similarity floor. Like the block reservation, the places displace nothing: every row the recall returned without them is returned, in the same order, and a response carries up to two rows **beyond** `limit`. A seated row reports `match_reason.signal` = `far` and is not credited to its record's recall count. The coarse index that `python -m cpersona.vector_index build` writes beside the contiguous index makes the search cheaper, never different: without it the stored vectors are read instead. Off, the search does not run. No effect where vector search is remote, and episodes are not searched |
@@ -39,6 +57,8 @@
 | `CPERSONA_RECALL_DEPTH_FLOOR` | `0` | Recall Depth: the fewest candidates each retrieval arm hands to the fusion, whatever `limit` asks to receive. The depth is `max(limit, this)`, capped by `CPERSONA_RECALL_LIBRARY_MAX_LIMIT`; at `0` it equals `limit`, which is the coupling the 2.5 line shipped with — nothing in the ranking moves until you set it. When it exceeds `limit`, the response carries `depth`, so a caller can see that a 5-row answer was ranked over more than 5 candidates per arm. Fusion modes only: `cascade` fills `limit` slots stage by stage and has no list to deepen ([design](RELIABLE_RECALL_2_6.md#4-depth-is-not-count)) |
 | `CPERSONA_RECALL_PROPAGATION_SEAT` | `false` | The propagation seat: one held place after a `recall`'s answer for the row that a second ranking of the same query, at a Recall Depth of 100, finds best by its place in that deeper order and its closeness to the answer's first row. It displaces nothing, so `recall` can return one row more than `limit`, marked `match_reason.signal: "propagation"`. Adds a second ranking pass to each recall that takes it. `recall` only (not `recall_with_context` or `reconstruct`), fusion modes only, not for a blank query ([design](RELIABLE_RECALL_2_6.md#the-propagation-seat)) |
 | `CPERSONA_RECALL_CUE_TIME_LIMIT_MS` | `1000` | The time cue's one revision (`recall` / `reconstruct` with `time_cue`): when the cue's period holds nothing, the period is widened once and searched again, unless the recall has already taken this many milliseconds. A stop at the limit is recorded in the recall trace ([design](RECALL_PROCESS_DESIGN.md#25-one-revision)) |
+| `CPERSONA_AUTOCUT_ENABLED` | `true` | Autocut: cut the result list at its largest score gap. Whether it can fire depends on the fusion mode (see `CPERSONA_AUTOCUT_MIN_RESULTS`) |
+| `CPERSONA_AUTOCUT_MIN_GAP_RATIO` | `0.15` | The smallest gap, as a fraction of the top score, that autocut treats as a break; when no gap reaches it, the list is kept whole |
 | `CPERSONA_AUTOCUT_MIN_RESULTS` | `3` | Result sets smaller than this are never autocut. Autocut fires on similarity-scale signals — under confidence ordering (`CPERSONA_CONFIDENCE_ORDERING=legacy`), or on the homogeneous raw-cosine list `cascade` produces — and is deliberately inert under `rsf`/`rrf` ([contract §6](behavior-contracts.md#6-autocut-fires-only-on-similarity-scale-signals)), so the fusion mode decides whether this knob does anything |
 | `CPERSONA_FUSED_GATE_ENABLED` | `true` | The post-fusion quality gate. Disabling it is a last resort: filtering falls back to the pool-size heuristic, which is coarser but still rejects weak matches — what you lose is the operating point measured for this corpus |
 | `CPERSONA_DEGRADED_ADVISORY` | `true` | Attach an `advisory` to recall responses while embeddings are unavailable ([runbook](operations.md#detecting-a-dead-embedding-server)) |
@@ -47,13 +67,14 @@
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | Episode boundary penalty ([contract §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | Penalty decay rate per hour before the boundary |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | Penalty floor (older memories are at most halved) |
-| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | What a vote from the far list is worth, from `0` to `1`, in both fusions ([one prior function](PRIOR_FUNCTION_DESIGN.md#2-the-prior)). Only meaningful when `CPERSONA_VECTOR_REACH` is set above the window; `1` is the unpriced far vote, and `0` is the reach turned off: the far region is not scanned |
+| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | What a vote from the far list is worth, from `0` to `1`, in both fusions ([one prior function](PRIOR_FUNCTION_DESIGN.md#2-the-prior)). Only meaningful when `CPERSONA_VECTOR_REACH` is set above the window; `1` is the unpriced far vote, and `0` takes the far list out of both fusions, so the region between the window and the reach is not scanned. It does not move the far seats, which still start where the reach ends; with them on, set `CPERSONA_VECTOR_REACH` to `0` to turn the reach off |
 | `CPERSONA_PRIOR_AGE_RATE` | `0` | Rate of the age weight `max(floor, 1 / (1 + age_hours × rate))`, which reorders the rows the quality gate admitted and never admits or removes one. `0` turns it off |
 | `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | Floor of the age weight |
 | `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | Where age is measured from: the newest memory in the recall's scope (`newest`, so an idle store ranks as it did when last used) or the current time (`now`) |
 
 The generic aliases `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` / `EMBEDDING_MODEL`
-are also accepted, and the `CPERSONA_`-prefixed form wins when both are set.
+/ `EMBEDDING_API_URL` / `EMBEDDING_API_KEY` are also accepted, and the
+`CPERSONA_`-prefixed form wins when both are set.
 The marketplace catalog and the Quick Start use the generic names.
 
 ## Reconstruction count
@@ -66,7 +87,7 @@ the ceiling is **10** (or the configured maximum, when that is lower).
 |----------|---------|-------------|
 | `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `10`, or `CPERSONA_RECONSTRUCT_MAX_COUNT` if that is lower | Ceiling used when the caller omits `count`. 10 from 2.6.0, the count the recommended configuration was measured with; set explicitly above the maximum, it is a startup error |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(unset)* | Override the caller's count and the default for every call; still a ceiling, never a fill target |
-| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. This is an experimental limit, not an empirically optimal count |
+| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. Under `mode: "pro"` the ceiling is at least 15, Pro's own window, whose cap bounds the payload in tokens instead; a forced count still applies. This is an experimental limit, not an empirically optimal count |
 | `CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS` | `60` | How close in time, in seconds, candidates from the same source in the same project and channel must be to bundle into one item. The burst is measured from its first row, so a run of short gaps does not join hours of conversation. `0` turns this bundling off |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | An item's head quote: the parts of its record that matched, filled in ranking order up to this many characters and shown in text order — the same filling as the recall excerpt. A record no longer than this is quoted whole. `0` quotes the single governing passage instead, cut at the preview tier, as before 2.6 |
 | `CPERSONA_RECONSTRUCT_FULL_QUOTES` | `5` | How many items, from the first, take the full head quote size above. Since 2.6.4 |
@@ -75,15 +96,68 @@ the ceiling is **10** (or the configured maximum, when that is lower).
 | `CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` | `4000` | Payload budget in characters of quoted text when the caller omits `budget`; the window's head quote sizes summed when that is more. Left unset it rises to one preview-tier excerpt and follows a lower `CPERSONA_RECONSTRUCT_MAX_BUDGET` down. Provisional until the count and budget sweep chooses it |
 | `CPERSONA_RECONSTRUCT_FORCED_BUDGET` | *(unset)* | Override the caller's budget and the default for every call |
 | `CPERSONA_RECONSTRUCT_MAX_BUDGET` | `20000` | Absolute budget ceiling; requests above it are clamped and reported. Left unset it rises to one preview-tier excerpt when `CPERSONA_RECALL_PREVIEW_CHARS` is larger. A default or forced value set above it, or any value set below one preview-tier excerpt, stops the server at startup |
+| `CPERSONA_RECONSTRUCT_TOP_K` | `20` | Candidates the recall under `reconstruct` hands to bundling when the call omits `top_k`. Independent of `count` by design; capped by `CPERSONA_RECALL_LIBRARY_MAX_LIMIT` |
+| `CPERSONA_RECONSTRUCT_MAX_HOPS` | `2` | Relation hops the walk follows when the call omits `max_hops`. Above 5 it is lowered to 5, and the response says so |
+| `CPERSONA_RECONSTRUCT_MAX_EVIDENCE` | `40` | Rows kept per item when the call omits `max_evidence`. Above 100 it is lowered to 100, and the response says so |
 
 Precedence is `forced ?? requested ?? default`, capped by the maximum.
 A default or forced value above the maximum is a startup error.
 If `count=5` produces only two valid items, return two, with
-`requested_count=5`, `effective_count=5`, `returned_count=2` and a
-`shortfall_reason`. Do not duplicate items, split a cluster or relax selection
+`effective_count=5`, `returned_count=2` and a `shortfall_reason`.
+`requested_count` and `count_policy` are added only when the server clamped
+or forced the count; a count honoured as asked is not restated. Do not duplicate items, split a cluster or relax selection
 to fill the window. Forcing a count does not change this rule.
 Bundling uses deterministic provenance keys; it does not establish semantic
 equivalence between arbitrary texts.
+
+## Calibration and the quality gate
+
+`calibrate_threshold` measures the stored vectors and sets two things: the
+cosine floor of the vector arm, and the post-fusion quality gate
+(`CPERSONA_FUSED_GATE_ENABLED`). The startup calibration and
+`set_recall_precision` use the same defaults as a call that names nothing.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_VECTOR_MIN_SIMILARITY` | `0.3` | The vector arm's cosine floor for an agent with no calibrated threshold of its own. A calibration without `agent_id` replaces it |
+| `CPERSONA_RRF_THRESHOLD_FACTOR` | `0.5` | In `rrf` and `rsf` the vector arm admits rows down to the floor times this, because the fusion and the gate decide afterwards; `cascade` uses the floor itself |
+| `CPERSONA_CALIBRATE_SAMPLE_SIZE` | `200` | Memories sampled when the call gives no `sample_size`; capped by `CPERSONA_CALIBRATE_MAX_SAMPLE` |
+| `CPERSONA_CALIBRATE_METHOD` | `separation` | How the vector floor is placed when the call gives no `method`. `separation` picks the cosine that best separates random pairs from memories stored close together in time; `percentile` takes a quantile of the random-pair similarities; `zscore` takes their mean plus `CPERSONA_CALIBRATE_Z_FACTOR` standard deviations |
+| `CPERSONA_CALIBRATE_PERCENTILE` | `0.95` | The quantile `percentile` uses when the call gives none. A value above 1 is read as a percent; one outside (0, 100] falls back to `0.95` with a warning |
+| `CPERSONA_CALIBRATE_Z_FACTOR` | `1.0` | The `z` that `zscore` uses when the call gives none, clamped to ±10 |
+| `CPERSONA_CALIBRATE_FLOOR` | `0.05` | The lowest value a calibration may set, for the vector floor and the gate alike |
+| `CPERSONA_CALIBRATE_TEMPORAL_WINDOW_MIN` | `30` | Minutes within which two memories count as related, for `separation` and for the gate. With fewer than 10 such pairs, the vector calibration uses each sampled memory's nearest neighbour instead |
+| `CPERSONA_CALIBRATE_ON_MODEL_CHANGE` | `true` | Recalibrate at startup when the stored calibration cannot be used: there is none, the corpus's embedding dimension changed, or the scoring version did. With this and `CPERSONA_AUTO_CALIBRATE` both off, a stale calibration is not applied and `deep_check` reports it until `calibrate_threshold` runs |
+| `CPERSONA_RECALL_PRECISION` | `balanced` | Where the gate sits on its calibrated curve: `strict` (fewer unrelated rows, more misses), `balanced` or `lenient` (fewer misses, more unrelated rows), weighting specificity 2.0, 1.0 and 0.5. `set_recall_precision` overrides it per agent |
+| `CPERSONA_FUSED_GATE_BETA` | follows `CPERSONA_RECALL_PRECISION` | A raw specificity weight that replaces the named level |
+| `CPERSONA_FUSED_GATE_SAMPLE_QUERIES` | `40` | Stored memories used as pseudo-queries in one gate calibration draw; each runs one recall |
+| `CPERSONA_FUSED_GATE_CALIBRATION_DRAWS` | `5` | Independent draws per gate calibration. The gate applied is their median, so a calibration runs draws × sample queries recalls |
+
+## Confidence score
+
+With `CPERSONA_CONFIDENCE_ENABLED=true`, each returned row carries a
+`confidence` value; under `CPERSONA_CONFIDENCE_ORDERING=legacy` it also orders
+the result and keys the quality gate. These settings shape that value and
+nothing else.
+
+The score is `sqrt(c × t) × r × p`, or `sqrt(t) × r × p` for a row without a
+cosine. `c` is the cosine rescaled between the floor and the ceiling below, `t`
+the time decay, `r` the resolved factor and `p` the recent-recall penalty
+(`CPERSONA_RECENT_RECALL_PENALTY` within `CPERSONA_RECENT_RECALL_WINDOW_MIN`).
+`deep=true` sets `t`, `r` and `p` to 1.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_COSINE_FLOOR` | `0.2` | The cosine that maps to `c = 0`; anything lower is 0 too |
+| `CPERSONA_COSINE_CEIL` | `0.75` | The cosine that maps to `c = 1`; anything higher is 1 too |
+| `CPERSONA_DECAY_RATE` | `0.005` | `t = 1 / (1 + age_hours × rate)`, never below the decay floor. Over a corpus spanning more than `CPERSONA_REFERENCE_HOURS`, the rate is divided by span / reference hours, so a store spanning months decays more slowly than one spanning a week |
+| `CPERSONA_DECAY_FLOOR` | `0.3` | The lowest `t` of a row never recalled |
+| `CPERSONA_DECAY_CEIL` | `0.5` | The highest that recalls can raise that floor |
+| `CPERSONA_RECALL_BOOST` | `0.02` | How far recalls raise the floor: `ln(1 + recall_count) × this`, fading with the time since the last recall |
+| `CPERSONA_BOOST_DECAY_RATE` | `0.002` | That fading: the raise is multiplied by `1 / (1 + hours_since_last_recall × rate)` |
+| `CPERSONA_REFERENCE_HOURS` | `168` | The corpus span at which the decay rate applies as set |
+| `CPERSONA_MIN_TIME_RANGE_HOURS` | `24` | The shortest corpus span the rate scaling assumes |
+| `CPERSONA_RESOLVED_DECAY_FACTOR` | `0.3` | `r` for an episode archived as resolved; every other row has `r = 1` |
 
 ## Corpus scale caps
 
@@ -113,6 +187,19 @@ machine, at a path the caller supplies.
 |----------|---------|-------------|
 | `CPERSONA_EXPORT_DIR` | *(unset)* | The directory both tools' paths must stay in. When set, a path is accepted only if it resolves, symlinks followed, to this directory or to something under it; a sibling directory whose name merely starts with the same characters is outside it. When unset, only a path with a `..` segment is refused, and with an ACL file both tools then demand access to every agent ([ACL design](ACL_DESIGN.md)) |
 | `CPERSONA_MAX_IMPORT_BYTES` | `104857600` | The largest file `import_memories` reads, in bytes (100 MiB). A larger file is refused before a line of it is imported, with an error that names this variable. `export_memories` has no such cap, so the export of a large corpus, or one written with `include_embeddings=true`, can be larger than an import accepts: raise this before restoring such a file |
+
+## Operating context
+
+An operator-owned file the server reads on demand, so edits apply without a
+restart: instructions sent to every client at connect, the list of valid
+`project_id` values and the `@auto` defaults ([design](OPERATING_CONTEXT_DESIGN.md)).
+A missing or unreadable file leaves the feature dormant, and `check_health`
+reports a file that does not parse.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_OPERATING_CONTEXT` | *(unset)* | `off`, in any case, turns the feature off whether or not the file exists; any other value leaves it on |
+| `CPERSONA_OPERATING_CONTEXT_PATH` | `operating-context.toml` in `~/.cpersona/` | The file to read; `~` is expanded |
 
 ## Remote (HTTP) transport
 
@@ -282,6 +369,17 @@ In that mode `CPERSONA_AUTH_TOKEN` is **ignored**, with a startup warning.
 Credentials come from the ACL file only, and a client that should keep using
 the old token must be listed there explicitly. For the grant model, file format
 and per-tool classification, see [ACL design](ACL_DESIGN.md).
+
+### The stdio proxy
+
+`python -m cpersona.proxy_stdio` lets a client that speaks only stdio use a
+server running the HTTP transport: it forwards each message it reads to that
+server, sending `CPERSONA_AUTH_TOKEN` as the bearer token.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_REMOTE_URL` | `http://localhost:8402/mcp` | The server's MCP endpoint |
+| `CPERSONA_PROXY_MAX_INFLIGHT` | 8 | Messages read from stdin but not yet answered, which also caps concurrent requests. A value below 1 is taken as 1 |
 
 ## Recall fusion mode (`CPERSONA_RECALL_MODE`)
 

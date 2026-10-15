@@ -748,13 +748,16 @@ async def do_recall_with_context_boundary(
 
 
 # =============================================================================
-# C26 (d): '@auto' is accepted by every project_id-taking tool (the six
-# *_boundary wrappers above), but it used to be documented only on store —
-# so five of the six schemas hid a sentinel the server implements. One
-# clause, appended everywhere it is true.
+# C26 (d): '@auto' is accepted by every project_id-taking tool (the nine
+# *_boundary wrappers above, each calling check_project_id), but it used to be
+# documented only on store — so the other schemas hid a sentinel the server
+# implements. One clause, appended everywhere it is true. The unmapped-agent
+# outcome follows check_project_id: a warning, none under enforce='off', and a
+# refusal only for a write under enforce='reject' (a bad read filter loses
+# nothing, a bad write pollutes a bucket).
 _AUTO_PROJECT_ID_CLAUSE = (
-    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context (the resolution is echoed as resolved_project_id; an unmapped agent yields operating_context_warning). "
-    "bug-186: resolution requires a configured operating context. With none — the default, and equally the outcome of a sidecar that fails to parse — the sentinel is NOT resolved: it is stored and filtered as the literal project_id '@auto', resolved_project_id echoes '@auto', and no warning is raised. Read resolved_project_id before relying on the resolution."
+    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context, echoed as resolved_project_id. An unmapped agent gets '' with operating_context_warning; enforce='off' omits the warning, and enforce='reject' refuses a write. "
+    "bug-186: resolution requires a configured operating context. With none (the default, or an unparsable sidecar) '@auto' is NOT resolved: it is stored and filtered as a literal project_id, resolved_project_id echoes '@auto', and no warning is raised. Check resolved_project_id before relying on it."
 )
 
 # MCP Tool Registry
@@ -1369,16 +1372,21 @@ registry.auto_tool(
     "supporting them, within a character budget. "
     "Rows come in ascending order of relevance: the LAST row is the best match "
     "(docs/behavior-contracts.md section 1). "
+    # The rescue keys on rows the cosine backfill marked, and that backfill runs only
+    # when confidence orders recall (memory_handlers._confidence_orders).
     "`gate_fallback: true` (absent otherwise) means every candidate fell below the "
-    "quality gate and the below-gate lexical matches were returned instead of an empty "
-    "result: treat them as low-confidence. "
+    "quality gate and the below-gate lexical matches were returned: treat them as "
+    "low-confidence. That rescue runs only with CPERSONA_CONFIDENCE_ENABLED=true and "
+    "CPERSONA_CONFIDENCE_ORDERING=legacy; otherwise an all-below-gate recall is empty. "
     "`suggestion` (absent otherwise, at most once per session) is something only the "
     "user can decide: that this scope has outgrown the scan window with no coarse index "
     "for a time cue to search the rest. Relay its message, and run its fix only if the "
     "user agrees. "
     "Content is a preview of the record's start by default. A row the preview cut also "
-    "carries `excerpt`, the part of the record that matched the query (at most 800 "
-    "characters, CPERSONA_RECALL_EXCERPT_CHARS; passages joined by ' … ' in text "
+    # Rendered from the configuration, which is what bounds the served excerpt.
+    "carries `excerpt`, the part of the record that matched the query (at most "
+    f"{config.RECALL_EXCERPT_CHARS} characters, CPERSONA_RECALL_EXCERPT_CHARS, 0 = none; "
+    "passages joined by ' … ' in text "
     "order), and `excerpt_basis` (blocks / lexical / start). Read the excerpt before "
     "expanding a row with get_contents(refs). `full_content=true` returns whole rows, "
     "capped at 200,000 characters per response: rows past it fall back to the preview "
@@ -1396,7 +1404,12 @@ registry.auto_tool(
             "query": {"type": "string", "description": "Search query (empty returns recent memories)"},
             "limit": {
                 "type": "integer",
-                "description": "Per-retriever search depth, not a pure response cap: the value is handed to each retrieval channel (vector / episode FTS / keyword) as its top-K, so lowering it shrinks the candidate pool itself — rows beyond the depth are unreachable at any gate value, and score normalization / autocut operate on the smaller pool, which can also reorder what remains. Fewer rows than this may be returned. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
+                "description": "Per-retriever search depth, not a pure response cap: the value is handed to each retrieval channel (vector / episode FTS / keyword) as its top-K, so lowering it shrinks the candidate pool itself — rows beyond the depth are unreachable at any gate value, and score normalization / autocut operate on the smaller pool, which can also reorder what remains. Fewer rows than this may be returned, and more: "
+                # The held places sit beside the count: do_recall appends them after the
+                # gate and the cut, and providers.check_recall_count allows for them.
+                f"places held beside it add up to {blocks.BLOCK_RESERVATION} rows the block arm reached, which the "
+                "quality gate does not judge (CPERSONA_BLOCK_RETRIEVAL_ENABLED, on by default), and any "
+                "`time_cue`, far or propagation seats. (Agent-facing cap; the library layer accepts up to the scan window for direct callers.)",
                 "default": 10,
                 "minimum": 0,
                 "maximum": 100,
@@ -1570,7 +1583,8 @@ registry.auto_tool(
     "without it. CPERSONA_EXTERNAL_CONTEXT_MODE=reject refuses such a call instead. "
     "gate_fallback=true (absent otherwise) is forwarded from the underlying recall: every "
     "candidate fell below the quality gate and the below-gate lexical matches were returned "
-    "instead of an empty result — treat them as low-confidence.",
+    "— treat them as low-confidence. Only CPERSONA_CONFIDENCE_ORDERING=legacy with "
+    "confidence on does that; otherwise such a recall contributes no rows.",
     {
         "type": "object",
         "properties": {
@@ -1771,17 +1785,19 @@ registry.auto_tool(
     "`head_ref`, or an item's `expand` as it is, to get_contents to read more. No model "
     "is called and nothing is summarised; stored rows are never modified. "
     "COUNT IS A CEILING, not a fill target or a search depth: fewer items is a normal "
-    "result and carries `shortfall_reason`, and nothing is padded. With the block arm "
-    "on, up to `reserved_count` held items may follow the window. Breadth is set apart "
+    "result and carries `shortfall_reason`, and nothing is padded. `reserved_count` "
+    "held items (block, cue, far, mode seats) may trail the window. Breadth is set apart "
     "from count: raise `top_k` when items are missing evidence; `max_hops` and "
     "`max_evidence` bound the declared-relation walk and the rows kept per item. "
     "BUDGET bounds the characters of quoted text (`content` plus `excerpts`), where "
     "count bounds items: excerpts are omitted before items, and raising the budget "
     "never removes an item or an excerpt. Omit it for the server default. "
     "`mode` (lite / pro) caps the tokens returned (see it). "
-    "READ FURTHER IN STEPS, smallest first: an item's `expand`, then the neighbouring "
-    "nodes ({ref, node: [index - 1, index + 1]}), and the bare ref, the whole record, "
-    "only when the parts did not answer. "
+    # A quote carries `node` or `block` by how its record is split (reconstruct._quote);
+    # a filled head quote carries neither, and its `expand` is the next read.
+    "READ FURTHER IN STEPS, smallest first: an item's `expand`, then the neighbours "
+    "of a quote's `node` or `block` index ({ref, node: [i-1, i+1]}, or block), and "
+    "the bare ref, the whole record, last. "
     "ITEM: `claims` lists the retained rows newest first (`ref`, `as_of`, `why`, `hops`, "
     "`roles`); `excerpts` quote the other claims. `roles[].role` names what the "
     "REFERENCED row is to this claim (supports / supersedes / corrects / qualifies / "
@@ -2096,7 +2112,7 @@ registry.auto_tool(
         "prefixes plus summary_truncated/summary_len and keywords_truncated/"
         "keywords_len; budget_chars appears iff at least one row was degraded. Their "
         "`ref` expands the summary via get_contents (under the row's own agent_id); a "
-        "full keywords string is only available through export_data."
+        "full keywords string is only available through export_memories."
     ),
     {
         "type": "object",
@@ -2301,7 +2317,9 @@ registry.auto_tool(
 
 registry.auto_tool(
     "lock_memory",
-    "Lock a memory to prevent deletion and editing. Ownership enforced when agent_id provided.",
+    "Lock a memory to prevent deletion and editing (delete_memory, update_memory). Operator re-scoping "
+    "(migrate_channel_axis, merge_memories move) still relocates it, lock kept; delete_agent_data removes it. "
+    "Ownership enforced when agent_id provided.",
     {
         "type": "object",
         "properties": {
@@ -2489,16 +2507,23 @@ registry.auto_tool(
     # bug-230: an unrecognised name used to select nothing and answer 'healthy'.
     "`checks` runs a subset: an unknown name is rejected (ok=false), and every response "
     "echoes `checks_run`. "
-    # bug-310: one repair is not agent-scoped, and saying so is the difference
-    # between a caller that knows what it authorised and one that does not.
-    "fix=true repairs, agent-scoped and locked-safe, except dedup_msg_id_index: its "
-    "repair blanks colliding msg_id values under every agent because the UNIQUE index "
-    "it restores is global, so under an ACL it needs read-write on '*'; exclude it via "
-    "`checks` to stay agent-scoped. critical file-integrity findings are report-only. "
-    "Two repairs are lossy and irreversible: oversized memories are cut to "
+    # bug-310: some repairs are not agent-scoped, and saying so is the difference
+    # between a caller that knows what it authorised and one that does not. The
+    # names are rendered from the registry flag the ACL guard reads, so the two
+    # cannot drift apart.
+    "fix=true repairs, agent-scoped and locked-safe, except "
+    f"{', '.join(sorted(checks_module.CROSS_AGENT_FIX_CHECKS))}, whose repairs reach every "
+    "agent, so under an ACL they need read-write on '*'; leave them out of `checks` to "
+    "stay agent-scoped. critical file-integrity findings are report-only. "
+    # Every repair that discards stored data, not only the two truncations.
+    "Lossy, irreversible repairs: oversized memories are cut to "
     "CPERSONA_MAX_CONTENT_LENGTH (default 16000) and the profile to "
-    "CPERSONA_MAX_PROFILE_LENGTH (default 2000), keeping the start, and lowering a cap "
-    "shortens rows that fit the old one. Some repairs are bounded per run (source "
+    "CPERSONA_MAX_PROFILE_LENGTH (default 2000), keeping the start (lowering a cap "
+    "shortens rows that fit the old one); duplicate_content and empty_content delete "
+    "rows; memory_annotation and discord_mention strip text; invalid_json blanks "
+    "unparseable JSON to '{}'; stale_pending_tasks deletes queued writes over an hour "
+    "old; dedup_msg_id_index blanks colliding msg_ids; timestamp checks copy created_at "
+    "over bad stamps. Some repairs are bounded per run (source "
     # bug-364/362: the bound was typed here while the enforced cap lives in the
     # configuration, so the two drifted by an order of magnitude. Render it.
     f"canonicalisation classifies at most {checks_module.INVALID_SOURCE_CLASSIFY_CAP} rows): "

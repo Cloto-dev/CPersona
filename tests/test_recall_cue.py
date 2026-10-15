@@ -400,6 +400,29 @@ def test_a_cue_is_recent_only_when_its_own_period_starts_within_the_last_day():
                            (now - timedelta(hours=6), now))
 
 
+class _ClockAtNow(datetime):
+    """A datetime whose wall-clock reads return this module's NOW.
+
+    The today cues below are built from NOW when the module is collected, and the
+    recall judges them against its own clock when the test runs. Collected before
+    00:00 UTC and run after it, "today" is yesterday by the recall's clock: the
+    cue reaches more than a day back, is used, and the test fails with no change
+    to the code. Stopping the recall's clock at NOW makes both read one instant.
+    A subclass, so the parsing and arithmetic the module also does are unchanged.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return NOW.replace(tzinfo=None)
+        return NOW.astimezone(tz)
+
+
+@pytest.fixture
+def recall_clock_at_now(monkeypatch):
+    monkeypatch.setattr(memory_handlers, "datetime", _ClockAtNow)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("time_cue", [
     {"after": NOW.date().isoformat(), "before": NOW.date().isoformat(), "confidence": "sure"},
@@ -407,7 +430,9 @@ def test_a_cue_is_recent_only_when_its_own_period_starts_within_the_last_day():
     {"ago": {"unit": "days", "value": 0}, "confidence": "sure"},
     {"after": (NOW + timedelta(days=2)).date().isoformat(), "confidence": "likely"},
 ])
-async def test_a_cue_for_only_today_is_not_used_and_the_response_says_so(fake_embedding_client, monkeypatch, time_cue):
+async def test_a_cue_for_only_today_is_not_used_and_the_response_says_so(
+    fake_embedding_client, monkeypatch, recall_clock_at_now, time_cue
+):
     # The newest record is a day old, so a cue for today would find nothing and widen;
     # an unused cue must do neither.
     await _seed(CORPUS)
@@ -418,6 +443,11 @@ async def test_a_cue_for_only_today_is_not_used_and_the_response_says_so(fake_em
     assert out == plain  # the rows, their order and every other field are those of no cue
     traced = await memory_handlers.do_recall(AGENT, QUERY, limit=5, trace=True, time_cue=time_cue)
     assert traced["trace"]["cue_ignored"]["reason"] == "recent_only"
+    # The period it judged is the cue's own period at NOW: the recall read the same
+    # instant the cue was written against. Were it to read a clock the fixture does
+    # not stop, the open-ended cues would close at the real time instead.
+    own = cue.period(cue.parse(time_cue), "sure", NOW, (None, None))
+    assert traced["trace"]["cue_ignored"]["period"] == [w.isoformat() for w in own]
     assert "cue" not in traced["trace"]["arms"] and not traced["trace"].get("suspected")
     assert traced["trace"]["policy"]["process"] == cue.POLICY == "cued-v0.3"
 
@@ -439,7 +469,7 @@ async def test_a_cue_that_reaches_past_the_last_day_is_used(fake_embedding_clien
 
 
 @pytest.mark.asyncio
-async def test_reconstruct_reports_a_cue_it_did_not_use(fake_embedding_client):
+async def test_reconstruct_reports_a_cue_it_did_not_use(fake_embedding_client, recall_clock_at_now):
     from cpersona import reconstruct
 
     await _seed(CORPUS)

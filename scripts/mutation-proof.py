@@ -155,7 +155,8 @@ MUTATIONS: list[Mutation] = [
     ),
     Mutation(
         id="M06",
-        target="do_import_memories dry_run guard — the REMOTE half of the promise",
+        tests=("tests/test_2611a2_y12.py",),
+        target="do_import_memories dry_run guard — the preview beside concurrent reads",
         file="cpersona/admin_handlers.py",
         # `if not dry_run:` appears six times; anchor on the memory-record body
         # that follows it so the match is unambiguous.
@@ -163,8 +164,8 @@ MUTATIONS: list[Mutation] = [
         # bug-016: carry the project_id / channel γ-axes, the locked""",
         replace="""    if True:
         # bug-016: carry the project_id / channel γ-axes, the locked""",
-        # This entry has been classified three times, and the history is the
-        # useful part — it is a record of an invariant gaining a layer.
+        # This entry has been classified four times, and the history is the
+        # useful part — each verdict was right about the readers it imagined.
         #
         # (1) EQUIVALENT, pre-#287. Reasoning: dry_run runs on the read seam, so
         #     an INSERT that escapes this guard is never committed. True of the
@@ -186,14 +187,24 @@ MUTATIONS: list[Mutation] = [
         #     escaped INSERT runs on the shared read connection, which sees its
         #     own uncommitted rows, so INSERT OR IGNORE reproduces exactly the
         #     skips that seen_msgid / seen_content were emulating.
+        # (4) BEHAVIOURAL. (3) holds only while nothing else reads. connection()
+        #     hands every read scope the same connection, and each scope's exit
+        #     rolls back whatever transaction that connection holds. So under the
+        #     mutant a concurrent read sees previewed rows that never come to
+        #     exist, and its exit rolls them back in the middle of the preview.
+        #     The mutant also skips the else branch that records seen_msgid /
+        #     seen_content, so the within-file dedup rests entirely on those rows:
+        #     once a read has rolled them back, the second of a pair counts as an
+        #     import and the preview stops matching a real run (bug-070). A read
+        #     between every two records turns a 25 / 25 preview into 50 / 0.
         #
-        # Keep it. A future edit that moves the queue back outside queue_remote
-        # flips this to CAUGHT, and that is exactly the alarm we want.
-        breaks="nothing observable: the read seam holds the database and queue_remote holds the index (see the history above)",
-        expect="(none — equivalent mutant)",
-        equivalent=True,
+        # The remote-index half stays doubly held (queue_remote refuses a
+        # preview), so what this entry catches now is the count drift, not a
+        # publish.
+        breaks="previewed rows are visible to concurrent reads, whose scope exits roll them back; within-file duplicates then count as imports and the preview stops matching a real run (bug-070)",
+        expect="test_2611a2_y12.py::test_a_read_between_preview_records_leaves_the_preview_counts_alone, test_a_preview_shows_concurrent_readers_nothing_and_counts_like_a_real_run",
     ),
-    # The load-bearing layers the two equivalent mutants sit above.
+    # The read seam M06 was once taken to sit above as a redundant layer.
     Mutation(
         id="M10",
         tests=("tests/test_refactor_seams_252.py",),
@@ -205,10 +216,11 @@ MUTATIONS: list[Mutation] = [
             for line_num, line in enumerate(lines, 1):""",
         replace="""        async with transaction() as db:
             for line_num, line in enumerate(lines, 1):""",
-        # dry_run write-freedom has two independently-sufficient layers, so each
-        # alone is equivalent. Remove BOTH: this is the real failure mode — a
-        # preview that silently writes — and a test must watch the database to
-        # see it. M06 alone and M10's seam edit alone both survive.
+        # A preview commits nothing while either layer holds: the read seam or the
+        # guard. Remove BOTH: this is the real failure mode — a preview that
+        # silently commits — and a test must watch the database to see it. M10's
+        # seam edit alone survives. M06 alone commits nothing either; what it
+        # breaks is seen only by a reader sharing the preview's connection.
         also=(
             (
                 """    if not tally.dry_run:

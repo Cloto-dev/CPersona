@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:4afbe86856c01d6bd14be44a6ee23c1606399cb1 -->
+<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:921de151ba2e16d9224b9f9a8e49fa0c09a19962 -->
 
 # サーバー供給の運用コンテキスト (グローバル設定 + MCP instructions 配布)
 
@@ -169,8 +169,9 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 
 ### 5.1 レジストリ検証 { #51-registry-validation }
 
-`project_id` を受け取る 6 つのツールに適用されます。書き込み側は `store` と
-`archive_episode`、読み取り側は `recall` / `recall_with_context` / `list_memories` /
+`project_id` を受け取る 9 つのツールに適用されます。書き込み側は `store` /
+`archive_episode` / `declare_associations`、読み取り側は `recall` /
+`recall_with_context` / `reconstruct` / `traverse` / `list_memories` /
 `list_episodes` です (`update_memory` は現行のツール契約では `project_id` を取り
 ません)。モードは次の 3 つです。
 
@@ -191,8 +192,9 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 ### 5.2 `@auto` センチネル { #52-auto-sentinel }
 
 - 解決: `defaults[agent_id]` がその project_id を与えます。対応が無ければ `""` に
-  解決され、応答に `operating_context_warning` が付きます (`reject` モードでは
-  代わりにエラー)。
+  解決され、応答に `operating_context_warning` が付きます。`off` では警告は付きません。
+  `reject` では**書き込み**が代わりにエラーで拒否されますが、読み取りは `""` に解決して
+  警告に留めます — §5.1 と同じ非対称性です。
 - 解決された値は応答に `resolved_project_id` として返るので、呼び出し側は実際に
   何が起きたのかを常に見られます。沈黙よりも透明性を取ります。
 - `@auto` はリテラルであり opt-in です。これを送らない呼び出し側が影響を受ける

@@ -301,10 +301,20 @@ returns nothing.
 
 ## 9. `lock_memory` protects; it does not boost
 
-`lock_memory` protects a row from deletion and editing. It does **not** affect
-ranking, so a locked memory can still lose a recall. If the requirement is
-"must never be *lost*", lock it. If the requirement is "must always be *in
-context*", use deterministic injection — and see §7 for the profile caveat.
+`lock_memory` makes `delete_memory` and `update_memory` refuse a row. It does
+**not** affect ranking, so a locked memory can still lose a recall. If the
+requirement is "must never be *lost*", lock it. If the requirement is "must
+always be *in context*", use deterministic injection — and see §7 for the
+profile caveat.
+
+A lock freezes a row's content and blocks its deletion; it does not pin the
+row's agent or channel. The operator tools that re-scope rows move locked rows
+like any other and keep the lock on them: `migrate_channel_axis` re-channels
+them (with `globalize_unrecoverable=true`, onto channel `''`, which every
+channel-scoped recall matches), and `merge_memories` with `mode="move"` carries
+them to the target agent. Leaving them behind would strand exactly the rows
+that must not be lost on a channel or agent nothing reads any more.
+`delete_agent_data` removes an agent outright, locked rows included.
 
 ## 10. Response shapes: how to tell success from failure
 

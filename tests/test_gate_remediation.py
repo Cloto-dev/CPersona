@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 
+import numpy as np
 import pytest
 import pytest_asyncio
 
@@ -56,6 +57,22 @@ AGENT = "agent.gate-remediation"
 
 def _pack_of(text: str) -> bytes:
     return EmbeddingClient.pack_embedding(fake_embed_one(text))
+
+
+def _blob_at_cosine(query: str, cosine: float, filler: str) -> bytes:
+    """A unit vector at exactly *cosine* to ``fake_embed_one(query)``.
+
+    Built from the query's own embedding plus the component of *filler*'s embedding
+    orthogonal to it, so the backfilled cosine is a chosen value rather than whatever
+    two unrelated texts happen to hash to.
+    """
+    q = np.asarray(fake_embed_one(query), dtype=np.float64)
+    q /= np.linalg.norm(q)
+    v = np.asarray(fake_embed_one(filler), dtype=np.float64)
+    v -= v.dot(q) * q
+    v /= np.linalg.norm(v)
+    blob = cosine * q + np.sqrt(1.0 - cosine * cosine) * v
+    return EmbeddingClient.pack_embedding(blob.tolist())
 
 
 def _reset_calibration_globals() -> None:
@@ -565,9 +582,10 @@ async def test_rescue_survives_autocut_when_a_profile_row_is_present(
     assert M.AUTOCUT_ENABLED, "this test is about the autocut interaction; it must be on"
     await _insert_profile("the operator prefers concise answers")
     await _insert_filler(50)  # memory_count >= 50 so the profile row passes the gate
-    # TWO rescued rows, not one: with the profile they make three, and autocut returns
-    # any set smaller than AUTOCUT_MIN_RESULTS whole. At two rows this test passes with
-    # the cut restored — it would look like a regression test and be none.
+    # THREE rescued rows, not fewer. ``_autocut`` sets the profile sentinel aside before
+    # its size check, so only the rescued rows count toward AUTOCUT_MIN_RESULTS: with two
+    # of them autocut returns the set whole and this test passes with the cut restored --
+    # it would look like a regression test and be none.
     await _insert_mem(
         content="apples zzz yyy www",
         blob=_pack_of("completely different unrelated content xxxx"),
@@ -577,23 +595,48 @@ async def test_rescue_survives_autocut_when_a_profile_row_is_present(
         blob=_pack_of("another entirely unrelated body of text yyyy"),
         ts="2026-01-01T00:00:01Z",
     )
+    # The rescued rows need a score gap for autocut to cut at. A backfilled cosine below
+    # COSINE_FLOOR (0.20) scores 0, and at the default threshold the vector arm reaches
+    # every row above 0.15 (threshold 0.3 x RRF_THRESHOLD_FACTOR), so by default every
+    # rescued row scores 0 and autocut has nothing to cut. A calibrated per-agent
+    # threshold of 0.6 moves the vector arm's floor to 0.3: the third row's blob, at
+    # cosine 0.29, is then found only by the keyword arm, backfilled, and scored above
+    # the two unrelated rows while still below the gate.
+    vector._agent_thresholds[AGENT] = 0.6
+    await _insert_mem(
+        content="apples ooo ppp nnn",
+        blob=_blob_at_cosine("apples", 0.29, "a third unrelated passage zzzz"),
+        ts="2026-01-01T00:00:02Z",
+    )
 
     out = await M.do_recall(AGENT, "apples", limit=10)
     contents = [m["content"] for m in out["messages"]]
+    rescued = [m for m in out["messages"] if not m["content"].startswith("[Profile]")]
 
     assert out.get("gate_fallback") is True, (
         f"the rescue did not fire while a profile row occupied the result set: {out!r}"
     )
-    assert len(contents) >= M.AUTOCUT_MIN_RESULTS, (
-        f"fixture is vacuous: {len(contents)} rows is below AUTOCUT_MIN_RESULTS "
-        f"({M.AUTOCUT_MIN_RESULTS}), where autocut declines to cut anything"
-    )
     assert any(c.startswith("[Profile]") for c in contents), (
         f"the profile row passed the gate but is missing from the output: {contents!r}"
     )
+    assert "apples ooo ppp nnn" in contents, (
+        f"the rescued row with the highest score is missing: {contents!r}"
+    )
     assert "apples zzz yyy www" in contents and "apples qqq rrr sss" in contents, (
         f"gate_fallback=true but the rescued rows are gone — autocut cut them away at the "
-        f"profile/below-gate score gap: {contents!r}"
+        f"score gap inside the below-gate set: {contents!r}"
+    )
+    # The vacuity checks come last: they only mean something once every rescued row is
+    # back, and they show that an autocut run on this set would have cut it.
+    assert len(rescued) >= M.AUTOCUT_MIN_RESULTS, (
+        f"fixture is vacuous: {len(rescued)} non-profile rows is below AUTOCUT_MIN_RESULTS "
+        f"({M.AUTOCUT_MIN_RESULTS}), where autocut declines to cut anything"
+    )
+    scores = sorted((m["confidence"]["score"] for m in rescued), reverse=True)
+    widest = max(scores[i] - scores[i + 1] for i in range(len(scores) - 1))
+    assert scores[0] > 0 and widest / scores[0] >= M.AUTOCUT_MIN_GAP_RATIO, (
+        f"fixture is vacuous: the rescued rows' scores {scores!r} hold no gap autocut "
+        f"would cut at (AUTOCUT_MIN_GAP_RATIO={M.AUTOCUT_MIN_GAP_RATIO})"
     )
 
 
