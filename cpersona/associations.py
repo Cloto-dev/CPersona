@@ -7,10 +7,11 @@ which and adds nothing of its own: it does not extract an entity from stored
 text and does not infer a relation from two that exist. Coverage is exactly
 what was declared.
 
-Normalization is the only processing a declaration receives, and it is
-lossless on the stored form: `name`, `alias` and `predicate` are kept as
-written, and their `normalized` twin — NFKC, case-folded, whitespace collapsed,
-trimmed — is what lookups compare. No tokenizer and no named-entity
+Normalization is the only processing a declaration receives: `name` and
+`alias` are kept as written beside a `normalized` twin — NFKC, case-folded,
+whitespace collapsed, trimmed — which is what lookups compare. A `predicate` is
+stored in that normalized form only, so it reads back folded (`Maintains` as
+`maintains`). No tokenizer and no named-entity
 recognizer: a deterministic cut of a Japanese proper noun does not exist, so
 none is attempted.
 

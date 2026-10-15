@@ -748,13 +748,16 @@ async def do_recall_with_context_boundary(
 
 
 # =============================================================================
-# C26 (d): '@auto' is accepted by every project_id-taking tool (the six
-# *_boundary wrappers above), but it used to be documented only on store —
-# so five of the six schemas hid a sentinel the server implements. One
-# clause, appended everywhere it is true.
+# C26 (d): '@auto' is accepted by every project_id-taking tool (the nine
+# *_boundary wrappers above, each calling check_project_id), but it used to be
+# documented only on store — so the other schemas hid a sentinel the server
+# implements. One clause, appended everywhere it is true. The unmapped-agent
+# outcome follows check_project_id: a warning, none under enforce='off', and a
+# refusal only for a write under enforce='reject' (a bad read filter loses
+# nothing, a bad write pollutes a bucket).
 _AUTO_PROJECT_ID_CLAUSE = (
-    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context (the resolution is echoed as resolved_project_id; an unmapped agent yields operating_context_warning). "
-    "bug-186: resolution requires a configured operating context. With none — the default, and equally the outcome of a sidecar that fails to parse — the sentinel is NOT resolved: it is stored and filtered as the literal project_id '@auto', resolved_project_id echoes '@auto', and no warning is raised. Read resolved_project_id before relying on the resolution."
+    "v2.5.1: pass '@auto' to resolve this agent's default from the server's operating context, echoed as resolved_project_id. An unmapped agent gets '' with operating_context_warning; enforce='off' omits the warning, and enforce='reject' refuses a write. "
+    "bug-186: resolution requires a configured operating context. With none (the default, or an unparsable sidecar) '@auto' is NOT resolved: it is stored and filtered as a literal project_id, resolved_project_id echoes '@auto', and no warning is raised. Check resolved_project_id before relying on it."
 )
 
 # MCP Tool Registry
@@ -2314,7 +2317,9 @@ registry.auto_tool(
 
 registry.auto_tool(
     "lock_memory",
-    "Lock a memory to prevent deletion and editing. Ownership enforced when agent_id provided.",
+    "Lock a memory to prevent deletion and editing (delete_memory, update_memory). Operator re-scoping "
+    "(migrate_channel_axis, merge_memories move) still relocates it, lock kept; delete_agent_data removes it. "
+    "Ownership enforced when agent_id provided.",
     {
         "type": "object",
         "properties": {

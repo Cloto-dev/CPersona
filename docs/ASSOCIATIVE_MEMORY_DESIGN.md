@@ -127,10 +127,11 @@ infer a relation from two that exist. Coverage is therefore exactly the
 coverage of what was declared, which is the trade this layer makes: narrow and
 certain, where the two other arms are wide and approximate.
 
-**Normalization** is the only processing a declaration receives, and it is
-lossless on the stored form: the declared `name`, `alias` and `predicate` are
-kept as written, and a `normalized` twin — Unicode NFKC, case-folded,
-whitespace collapsed to one space, trimmed — is what lookups compare. Two
+**Normalization** is the only processing a declaration receives. The declared
+`name` and `alias` are kept as written beside a `normalized` twin — Unicode
+NFKC, case-folded, whitespace collapsed to one space, trimmed — which is what
+lookups compare. A `predicate` has no twin: it is stored in that normalized
+form only, so a relation declared with `Maintains` reads back as `maintains`. Two
 declarations that normalize alike are one entity. No tokenizer, no
 named-entity recognizer: a deterministic cut of a Japanese proper noun does not
 exist, so the server does not attempt one.
@@ -240,8 +241,8 @@ bound, `entities_omitted` counts the entities found within it.
    evidence inside items, bundles by declared record relations, and labels
    roles. Test: assert head refs and their order; a mutation that lets a
    reached record become an item must turn it red.
-4. **No model is called.** Declarations are stored as written; the walk is
-   SQL and pure functions.
+4. **No model is called.** Declarations are stored as written, apart from
+   §2's normalization; the walk is SQL and pure functions.
 5. **Bounded and deterministic.** Nothing is followed past `max_hops` or
    kept past `max_evidence`; truncation follows the written order of §3, and
    the same database, query and bounds give the same output.
@@ -323,7 +324,7 @@ has a test and a mutation that turns it red.
 
 - **Direction.** The walk follows an entity → entity relation from either end.
   Association is reach: *Kirari maintains MizEye* relates the two whichever of
-  them the query names. The predicate is reported as declared.
+  them the query names. The predicate is reported in its normalized form (§2).
 - **Hops start at one.** A record is evidence only through at least one
   declared relation. A record that mentions the same entity as the candidate is
   not: sharing an entity is not a relation, as it is not a bundling key.

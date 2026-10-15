@@ -170,8 +170,9 @@ The invariant table:
 
 ### 5.1 Registry validation
 
-Applied on the six tools that accept `project_id`: `store` and `archive_episode`
-on the write side, and `recall`, `recall_with_context`, `list_memories`,
+Applied on the nine tools that accept `project_id`: `store`, `archive_episode`
+and `declare_associations` on the write side, and `recall`,
+`recall_with_context`, `reconstruct`, `traverse`, `list_memories` and
 `list_episodes` on the read side. (`update_memory` does not take `project_id`
 in the current tool contract.) The modes are:
 
@@ -192,8 +193,10 @@ deliberately.
 ### 5.2 `@auto` sentinel
 
 - Resolution: `defaults[agent_id]` gives that project_id. With no mapping it
-  resolves to `""`, and the response carries an `operating_context_warning` (in
-  `reject` mode, an error instead).
+  resolves to `""`, and the response carries an `operating_context_warning`.
+  Under `off` there is no warning. Under `reject` a **write** is refused with
+  an error instead, while a read still resolves to `""` and warns — the same
+  asymmetry as §5.1.
 - The resolved value is echoed as `resolved_project_id` in the response, so the
   caller can always see what actually happened. Transparency over silence.
 - `@auto` is literal and opt-in. A caller that never sends it is never
