@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/faq.md@blob:08c936946dea30dbd7e5b0077a38dfbd4177b322 -->
+<!-- i18n-source: docs/faq.md@blob:b2e2fe252f9cbfdcb95a7ca997825f759ff18027 -->
 
 # FAQ
 

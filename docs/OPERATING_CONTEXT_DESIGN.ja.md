@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:4afbe86856c01d6bd14be44a6ee23c1606399cb1 -->
+<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:921de151ba2e16d9224b9f9a8e49fa0c09a19962 -->
 
 # サーバー供給の運用コンテキスト (グローバル設定 + MCP instructions 配布)
 

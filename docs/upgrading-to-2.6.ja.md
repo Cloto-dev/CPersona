@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:bf9d2967d64d8148f28e820822cfe5fc10490595 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:9420e315c0d6c3227b5b6154d37a09cd8effaee1 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 

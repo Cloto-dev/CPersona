@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:62dca2624d7940e1e17c63baf272dc7e8c2c1fdc -->
+<!-- i18n-source: docs/getting-started.md@blob:bf9e320810727e4f479717d56167fcddde9e12f0 -->
 
 # はじめに
 

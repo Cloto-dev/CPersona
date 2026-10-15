@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:5bde90afb63b750641bb42b5ce37304725b94285 -->
+<!-- i18n-source: docs/architecture.md@blob:5982a938c5bf80af36fa6c3ced0382ec9a722b03 -->
 
 # アーキテクチャ
 

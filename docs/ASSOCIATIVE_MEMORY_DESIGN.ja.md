@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:df3a1eb91b07fd4fe3960bc38d20488122183664 -->
+<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:27fe9a0c3885fe8657b473b167064bb369b0d7bb -->
 # 連想記憶 — 設計 { #associative-memory-design }
 
 状態: 2.6 系。宣言 (§1–2)、§3 の再構成の段、`traverse` (§4) は実装済みです。
