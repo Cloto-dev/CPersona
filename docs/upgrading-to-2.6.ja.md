@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:9420e315c0d6c3227b5b6154d37a09cd8effaee1 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:29977fe2128292c3894c434547d532e5a29829b8 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -42,7 +42,7 @@
 | 17 | 2.6.0a6 | `record_block_vectors`: Block ごとのベクトル | Block と一緒に作られます |
 | 18 | 2.6.3a1 | `memories` と `episodes` の `embedding_model`: 各ベクトルを作ったモデルのラベル。保存済みの行は空のラベル (不明) になります | なし: ベクトルは次に書かれるときにラベルが付きます |
 | 19 | 2.6.7a2 | `block_log_clock`、`record_block_changes`: どの記録の Block が変わったかの記録。Block の索引ファイルが on の間だけ付けます ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **自動で作ります**: キューで作ります。ファイルを off にした場合を除きます ([下](#the-block-index-file-is-on-by-default)) |
-| 20 | 2.6.11 | `vector_log_clock`、`record_vector_changes`: ベクトル索引ファイルが持つ行のうち、どれが変わったかの記録。そのファイルが 1 つでもある間だけ付けます ([設計 §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **ベクトル索引を作っているなら、あり**: 作り直します ([下](#build-the-vector-index-again)) |
+| 20 | 2.6.11a2 | `vector_log_clock`、`record_vector_changes`: ベクトル索引ファイルが持つ行のうち、どれが変わったかの記録。そのファイルが 1 つでもある間だけ付けます ([設計 §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **ベクトル索引を作っているなら、あり**: 作り直します ([下](#build-the-vector-index-again)) |
 
 2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1、2.6.7、2.6.8a1、2.6.8、2.6.9a1、2.6.9、2.6.10a1、2.6.10a2、2.6.10a3、2.6.10a4、2.6.10、2.6.11a1 はスキーマを変えていません。
 
