@@ -67,7 +67,7 @@
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | Episode boundary penalty ([contract §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | Penalty decay rate per hour before the boundary |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | Penalty floor (older memories are at most halved) |
-| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | What a vote from the far list is worth, from `0` to `1`, in both fusions ([one prior function](PRIOR_FUNCTION_DESIGN.md#2-the-prior)). Only meaningful when `CPERSONA_VECTOR_REACH` is set above the window; `1` is the unpriced far vote, and `0` is the reach turned off: the far region is not scanned |
+| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | What a vote from the far list is worth, from `0` to `1`, in both fusions ([one prior function](PRIOR_FUNCTION_DESIGN.md#2-the-prior)). Only meaningful when `CPERSONA_VECTOR_REACH` is set above the window; `1` is the unpriced far vote, and `0` takes the far list out of both fusions, so the region between the window and the reach is not scanned. It does not move the far seats, which still start where the reach ends; with them on, set `CPERSONA_VECTOR_REACH` to `0` to turn the reach off |
 | `CPERSONA_PRIOR_AGE_RATE` | `0` | Rate of the age weight `max(floor, 1 / (1 + age_hours × rate))`, which reorders the rows the quality gate admitted and never admits or removes one. `0` turns it off |
 | `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | Floor of the age weight |
 | `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | Where age is measured from: the newest memory in the recall's scope (`newest`, so an idle store ranks as it did when last used) or the current time (`now`) |
@@ -87,7 +87,7 @@ the ceiling is **10** (or the configured maximum, when that is lower).
 |----------|---------|-------------|
 | `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `10`, or `CPERSONA_RECONSTRUCT_MAX_COUNT` if that is lower | Ceiling used when the caller omits `count`. 10 from 2.6.0, the count the recommended configuration was measured with; set explicitly above the maximum, it is a startup error |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(unset)* | Override the caller's count and the default for every call; still a ceiling, never a fill target |
-| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. This is an experimental limit, not an empirically optimal count |
+| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | Absolute ceiling; requests above it are clamped and reported. Under `mode: "pro"` the ceiling is at least 15, Pro's own window, whose cap bounds the payload in tokens instead; a forced count still applies. This is an experimental limit, not an empirically optimal count |
 | `CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS` | `60` | How close in time, in seconds, candidates from the same source in the same project and channel must be to bundle into one item. The burst is measured from its first row, so a run of short gaps does not join hours of conversation. `0` turns this bundling off |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | An item's head quote: the parts of its record that matched, filled in ranking order up to this many characters and shown in text order — the same filling as the recall excerpt. A record no longer than this is quoted whole. `0` quotes the single governing passage instead, cut at the preview tier, as before 2.6 |
 | `CPERSONA_RECONSTRUCT_FULL_QUOTES` | `5` | How many items, from the first, take the full head quote size above. Since 2.6.4 |
@@ -103,8 +103,9 @@ the ceiling is **10** (or the configured maximum, when that is lower).
 Precedence is `forced ?? requested ?? default`, capped by the maximum.
 A default or forced value above the maximum is a startup error.
 If `count=5` produces only two valid items, return two, with
-`requested_count=5`, `effective_count=5`, `returned_count=2` and a
-`shortfall_reason`. Do not duplicate items, split a cluster or relax selection
+`effective_count=5`, `returned_count=2` and a `shortfall_reason`.
+`requested_count` and `count_policy` are added only when the server clamped
+or forced the count; a count honoured as asked is not restated. Do not duplicate items, split a cluster or relax selection
 to fill the window. Forcing a count does not change this rule.
 Bundling uses deterministic provenance keys; it does not establish semantic
 equivalence between arbitrary texts.

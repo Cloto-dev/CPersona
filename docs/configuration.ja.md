@@ -71,7 +71,7 @@
 | `CPERSONA_EPISODE_PENALTY_ENABLED` | `false` | エピソード境界ペナルティ ([契約 §3](behavior-contracts.md#3-episode-boundary-penalty)) |
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | 境界より前の記憶に対する 1 時間あたりの減衰率 |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | ペナルティの下限 (古い記憶でも最大で半分まで) |
-| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | far リストの票の値打ち (`0`〜`1`)。両方の融合に効きます ([一本化した事前分布](PRIOR_FUNCTION_DESIGN.md#2-the-prior))。`CPERSONA_VECTOR_REACH` が窓より大きく設定されている時だけ意味を持ちます。`1` は値段の付いていない far の票、`0` は reach を切ったのと同じで、far の領域を走査しません |
+| `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | far リストの票の値打ち (`0`〜`1`)。両方の融合に効きます ([一本化した事前分布](PRIOR_FUNCTION_DESIGN.md#2-the-prior))。`CPERSONA_VECTOR_REACH` が窓より大きく設定されている時だけ意味を持ちます。`1` は値段の付いていない far の票、`0` は両方の融合から far リストを外し、窓と reach の間の領域を走査しません。窓の外の席の開始位置は動かず、reach が終わる位置から始まるままです。席を有効にしている時に reach を切るには `CPERSONA_VECTOR_REACH` を `0` にしてください |
 | `CPERSONA_PRIOR_AGE_RATE` | `0` | 年齢の重み `max(floor, 1 / (1 + age_hours × rate))` の率。品質ゲートが通した行の順序だけを入れ替え、行を通しも除きもしません。`0` で無効 |
 | `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | 年齢の重みの下限 |
 | `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | 年齢をどこから測るか。想起のスコープで最も新しい記憶 (`newest`。放置したストアも最後に使った時と同じ順位になる) か、現在時刻 (`now`) |
@@ -90,7 +90,7 @@
 |----------|---------|-------------|
 | `CPERSONA_RECONSTRUCT_DEFAULT_COUNT` | `10`。`CPERSONA_RECONSTRUCT_MAX_COUNT` がそれより小さければその値 | 呼び出し側が `count` を省略した時の上限。2.6.0 から 10 で、推奨の構成を計測した件数です。明示的に上限より大きく設定すると起動時のエラーになります |
 | `CPERSONA_RECONSTRUCT_FORCED_COUNT` | *(未設定)* | 全呼び出しで要求値と既定値を上書きします。充足目標ではなく上限です |
-| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | 絶対上限。超える要求は切り詰めて報告します。実験的な制限であり、実測で最適とされた件数ではありません |
+| `CPERSONA_RECONSTRUCT_MAX_COUNT` | `10` | 絶対上限。超える要求は切り詰めて報告します。`mode: "pro"` では上限は少なくとも 15 で、これは Pro 自身の窓です (Pro はペイロードをトークン数の上限で抑えます)。強制した件数はそのまま効きます。実験的な制限であり、実測で最適とされた件数ではありません |
 | `CPERSONA_RECONSTRUCT_ADJACENCY_SECONDS` | `60` | 同じ送り手の候補を、同じ project と channel の中で何秒以内なら 1 つの item に束ねるか。最初の行から測るので、短い間隔が続いても何時間もの会話は 1 つになりません。`0` でこの束ねを無効にします |
 | `CPERSONA_RECONSTRUCT_QUOTE_CHARS` | `800` | item の先頭引用: そのレコードのうち一致した部分を、ランキング順にこの文字数まで詰め、本文中の順序で示します — recall の抜粋と同じ詰め方です。これ以下の長さのレコードは全体が引用されます。`0` にすると、2.6 より前と同様に、支配する 1 節をプレビュー階層で切って引用します |
 | `CPERSONA_RECONSTRUCT_FULL_QUOTES` | `5` | 先頭から何件の item に、上の先頭引用の大きさをそのまま使うか。2.6.4 から |
@@ -105,8 +105,9 @@
 
 優先順位は `forced ?? requested ?? default` で、最大値で制限します。
 既定値や強制値が最大値を超える設定は、起動時エラーになります。
-`count=5` に対して有効な item が 2 件なら、`requested_count=5`、`effective_count=5`、
-`returned_count=2` と `shortfall_reason` を返します。件数を埋めるために item を複製したり、
+`count=5` に対して有効な item が 2 件なら、`effective_count=5`、`returned_count=2` と
+`shortfall_reason` を返します。`requested_count` と `count_policy` は、サーバーが件数を
+切り詰めた時か強制した時だけ加わり、要求どおりに処理した件数は繰り返しません。件数を埋めるために item を複製したり、
 クラスタを分割したり、選択基準を緩めたりしません。強制値を設定しても、この規則は変わりません。
 束ねには確定的な出典キーを使い、任意の文章間の意味的同一性は判定しません。
 

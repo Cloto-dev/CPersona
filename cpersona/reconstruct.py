@@ -382,7 +382,7 @@ def resolve_count(requested: int | None, *, mode: str | None = None) -> tuple[in
 
         base      = forced_count ?? requested_count ?? default_count
         effective = min(base, max_count)
-        0 <= returned <= effective
+        0 <= returned - reserved <= effective
 
     `count` is the CEILING on items returned. It is not a fill target and it is
     not a search depth. Returns `(effective, count_policy)`; the policy says

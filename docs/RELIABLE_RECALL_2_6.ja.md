@@ -298,11 +298,11 @@ admission floor と gate です。[識別可能性ノート](research/adaptive-f
 base      = forced_count ?? requested_count ?? default_count
 effective = min(base, max_count)
 0 <= returned - reserved <= effective
-0 <= reserved <= reservation        (Block の腕が off なら 0)
+0 <= reserved <= held_places
 ```
 
 - `default_count` は呼び出し側が何も言わない時のサーバーの既定、`max_count` は絶対の
-  上限、`forced_count` は運用者がすべての呼び出しの base を固定できる設定で、設定しない
+  上限 (`mode: "pro"` では少なくとも 15、後述)、`forced_count` は運用者がすべての呼び出しの base を固定できる設定で、設定しない
   限り null です。既定または強制値が最大を超える構成は起動時のエラーであって、黙った
   clamp ではありません。
 - すべての応答は `effective_count` と `returned_count` を述べます。サーバーが要求と違うことを
@@ -320,9 +320,14 @@ effective = min(base, max_count)
   外れた束のうちそうした行を含むものが、別枠の行数まで、窓の後ろに `admission: "reservation"`
   の印を付けた項目として続き、`reserved_count` が返った数を述べます。これらは窓の項目を
   押しのけず、窓が足りないかどうかはこれらを除いて判定し、`returned_count` が
-  `effective_count` を超えるのは別枠の行数までです。既定の予算は別枠の項目 1 件ごとに見出し
+  `effective_count` を超えるのは `held_places` までです。既定の予算は別枠の項目 1 件ごとに見出し
   1 つ分広がります。呼び出し側や運用者が指定した予算は広がらず、それが外した別枠の項目は
   `reserved_omitted` として報告されます。
+- 別枠は Block の腕のものだけではありません。`held_places` は候補の recall が答えの横に確保できる
+  場所のすべてで、確保された行はどれも同じように窓の後ろに続きます: Block の予約 (2 つ)、時間の
+  手がかりを渡した時の手がかりの席 (最大 3 つ)、窓の外の席を有効にした時のその 2 席、`mode` を指定した
+  時のキーワードの席と、`pro` ならさらに 2 つの block の場所 (後述) です。したがって Block の腕が off でも、
+  別枠の項目は窓の後ろに続くことがあります。
 - 未設定時の既定は 2.6.0 から **10 件**です。推奨の構成を、実際のエージェントの記憶のパックで回答モデルを使って計測した時の件数です。
   最大値は、長期記憶ベンチマークで `count` とペイロード予算を sweep し、回答と証拠の品質を
   ペイロードのトークン量・レイテンシと比較するまでは実験的な値です。
@@ -408,7 +413,7 @@ effective_budget = min(budget_base, max_budget)
     `budget_policy` が出どころをサーバーとし、`requested_budget` は null です。列は `CPERSONA_RECONSTRUCT_SEQUENCE` の値にかかわらず `whole`
     ([証拠の配分](EVIDENCE_ALLOCATION_DESIGN.md#a-floor-by-record-length)) で、上限は 3,000 です。
     mode を開発する間に測った lite の応答はすべてこれより下でした。
-  - `mode: "pro"` は、`count` を省くと設定の上限にかかわらず 15 件を読み、指定がない限り字数の予算を持たず、
+  - `mode: "pro"` は、`count` を省くと設定の上限にかかわらず 15 件を読み、指定した `count` も同じく 15 件まで認め、指定がない限り字数の予算を持たず、
     上限 5,000 に収まるだけ `whole` の列を引用します。丸ごと見せる記録の床に入るのは最初の 10 件だけです:
     短い記録のストアでは、全件の床が上限を最後の方の item の短い記録に使っていました。`pro` を
     リリースに入れるかは、作る前に登録した判定で決めます。
