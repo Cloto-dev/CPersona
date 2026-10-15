@@ -477,10 +477,13 @@ def _health_demands(args: dict) -> list[tuple[str, int]]:
     read-write on one agent rewrote another agent's rows (bug-310). The demand
     is sized to the reach of the write instead, the same escalation
     ``_file_io_demands`` makes when its blast radius stops being one agent.
+    The other repairs flagged ``cross_agent_fix`` in the registry (an index
+    file, a change log or the file modes every agent shares) take the same
+    demand.
 
     Only when such a check is actually selected: ``checks=[...]`` that excludes
-    it keeps the narrow demand, so a client repairing its own agent is not made
-    to hold every agent to do it.
+    every one of them keeps the narrow demand, so a client repairing its own
+    agent is not made to hold every agent to do it.
     """
     if not args.get("fix"):
         return [(_agent_arg(args), PERM_READ)]

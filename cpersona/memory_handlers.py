@@ -2891,9 +2891,11 @@ async def _do_recall(
     # silently invisible"; `gate_fallback` is what keeps that honest by marking the rows
     # as below-gate rather than passing them off as hits.
     #
-    # Reachability: `_cosine_backfilled` is only ever set under CONFIDENCE_ENABLED (any
-    # fusion mode — cascade included — since the backfill is gated at the call site, not
-    # by mode), so the DEFAULT config can never set gate_fallback; and an empty-query
+    # Reachability: `_cosine_backfilled` is only ever set when confidence orders recall
+    # (CONFIDENCE_ENABLED with CONFIDENCE_ORDERING=legacy, see _confidence_orders; any
+    # fusion mode, cascade included, since the backfill is gated at the call site, not
+    # by mode), so the DEFAULT config, and confidence on under the default `fusion`
+    # ordering, can never set gate_fallback; and an empty-query
     # pure-recency listing never reaches it either, because the backfill returns early on
     # a blank query and marks nothing.
     #

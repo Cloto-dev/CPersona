@@ -327,7 +327,7 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
 
     One honest asymmetry: the `ref` on a degraded row expands the SUMMARY
     (get_contents returns '[Episode] <summary>'), and no tool returns an
-    episode's keywords in full except export_data. Trimming it anyway is the
+    episode's keywords in full except export_memories. Trimming it anyway is the
     lesser evil — the alternative is a response with no upper bound at all —
     but a caller that needs the whole keyword string must export.
     """

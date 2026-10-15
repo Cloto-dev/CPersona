@@ -168,9 +168,10 @@ Check these against what your deployment relies on. Each is off, or equal to
   `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1`; lowering
   `CPERSONA_RECONSTRUCT_MAX_COUNT` alone lowers the default with it.
 
-- **`limit` is the number of rows returned** (2.6.0a2). How deep fusion looks
-  is `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`; the floor defaults to 0, so the
-  ranking is the one 2.5 gave.
+- **`limit` is the number of ranked rows returned** (2.6.0a2). How deep fusion
+  looks is `max(limit, CPERSONA_RECALL_DEPTH_FLOOR)`; the floor defaults to 0,
+  so the ranking is the one 2.5 gave. Rows held beside the count come on top of
+  it: the block reservation above and the time-cue seats below.
 - **`reconstruct` needs the same per-agent read grant as `recall`** (2.6.0a2).
   This matters only where [access control](ACL_DESIGN.md) is configured.
 - **Confidence no longer re-sorts or gates recall** (2.6.0a7). With

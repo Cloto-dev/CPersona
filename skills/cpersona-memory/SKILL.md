@@ -284,8 +284,10 @@ Use the `agent_id` chosen at setup (step 3) on every call.
    Pass the **real** conversation history, not an empty array — it sets the
    episode's start and end times from the turns' timestamps. It does not reach
    the embedding, which comes from `summary` alone. Set `resolved=true` for
-   finished topics to decay them out of future recalls — effective only under
-   `CPERSONA_CONFIDENCE_ENABLED=true`, ignored under the default.
+   finished topics to decay them out of future recalls — effective only with
+   `CPERSONA_CONFIDENCE_ENABLED=true` and `CPERSONA_CONFIDENCE_ORDERING=legacy`.
+   Under the default `fusion` ordering it lowers only the `confidence` value
+   shown beside each row, not which rows return or their order.
 
 5. **Benchmarking / throwaway / "don't save this" sessions** →
    `pause_persistence(ttl_seconds=1800)` turns all writes into no-ops for a TTL
@@ -321,7 +323,9 @@ Use the `agent_id` chosen at setup (step 3) on every call.
   every candidate fell below the quality gate and the below-gate lexical
   matches were returned instead of an empty result. Treat them as
   low-confidence: likely for identifier/hash lookups whose exact match is
-  semantically distant from the query.
+  semantically distant from the query. The rescue runs only with
+  `CPERSONA_CONFIDENCE_ENABLED=true` and `CPERSONA_CONFIDENCE_ORDERING=legacy`;
+  under any other configuration an all-below-gate recall returns nothing.
 
 ### Reading past context with `reconstruct`
 
@@ -337,8 +341,9 @@ it covers) bundled, each quoted verbatim with the rows behind it in `claims`.
 - **No score comes back.** An item being returned is not evidence that it is
   relevant: with `count=3`, two unrelated items is a normal answer. Read them.
 - **Read further smallest first.** A cut quote from a long record carries
-  `expand` — pass it to `get_contents` as it is — then the neighbouring nodes,
-  then the bare ref (the whole record) last.
+  `expand` — pass it to `get_contents` as it is — then the neighbours of a
+  quote that carries a `node` or `block` index (`{ref, node: [i-1, i+1]}`, or
+  the same with `block`), then the bare ref (the whole record) last.
 - **Fields that read wrong at first sight.** `node.span` is the range the quote
   covers, which is the whole node only when the quote was not cut; the
   record's length is `content_len`.
