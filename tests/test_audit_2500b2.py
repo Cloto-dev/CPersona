@@ -17,7 +17,7 @@ import pytest_asyncio
 
 import test_structural_gates as tsg
 from cpersona import session
-from cpersona import admin_handlers, config, database, memory_handlers, server
+from cpersona import admin_handlers, config, database, memory_handlers, server, utils
 from cpersona.checks import deep_orphaned_episodes
 from cpersona.database import get_db
 from cpersona.utils import _content_excluded, _format_memory_timestamp, _parse_timestamp_utc
@@ -314,6 +314,16 @@ def test_gate_skips_fts_control_commands():
 def test_content_excluded_empty_content_not_dropped():
     assert _content_excluded("", {"some filter"}) is False
     assert _content_excluded("   ", {"some filter"}) is False
+    # The entry above is shorter than the prefix floor, so since bug-217 it matches
+    # only on equality and '' != 'some filter' with or without the empty-content
+    # guard. Only an entry at or above the floor takes the starts-with path, where
+    # every entry starts with '' -- that is where the guard is what keeps an empty
+    # row in the answer, and where it has to be pinned.
+    long_entry = "some filter long enough to be a truncated echo"
+    assert len(long_entry) >= utils.EXCLUDE_PREFIX_MIN_CHARS
+    for empty in ("", "   ", "\n\t "):
+        assert _content_excluded(empty, {long_entry}) is False
+        assert _content_excluded(empty, utils.ExcludeSet([long_entry, "short"])) is False
 
 
 def test_content_excluded_still_matches():

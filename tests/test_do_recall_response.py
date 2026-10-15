@@ -484,6 +484,26 @@ async def test_do_recall_negative_limit_still_clamps_to_zero(monkeypatch):
     await M.do_recall("agent.t", "x", limit=-5)
     assert seen["limit"] == 0
 
+    # What rsf receives above is the fusion depth, which _recall_depth floors on
+    # its own (max(limit, RECALL_DEPTH_FLOOR)), so it stays 0 even if the limit
+    # clamp stopped flooring. The cascade is handed the clamped limit itself, and
+    # binds it into its SQL LIMITs, where SQLite reads a negative value as "no
+    # limit" -- the full-corpus scan this guards against. Capture it there.
+    from cpersona.utils import _clamp_limit
+
+    assert _clamp_limit(-5, M.RECALL_LIBRARY_MAX_LIMIT) == 0
+    cascade_seen: dict = {}
+
+    async def _capture_cascade(db, agent_id, query, limit, *args, **kwargs):
+        cascade_seen["limit"] = limit
+        return []
+
+    monkeypatch.setattr(M, "RECALL_MODE", "cascade")
+    monkeypatch.setattr(M, "_recall_cascade", _capture_cascade)
+    result = await M.do_recall("agent.t", "x", limit=-5)
+    assert cascade_seen["limit"] == 0
+    assert result["messages"] == []
+
 
 def test_recall_tool_schemas_cap_limit_at_100():
     """The agent-facing 100 cap moved to the MCP boundary: both recall tools'
