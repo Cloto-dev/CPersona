@@ -851,6 +851,25 @@ def _demanded_whatever_the_scope(demands: Demands, arguments: dict, agent_patter
         return False
 
 
+#: Tools whose every response carries `result`, the one field their callers branch on.
+_RESULT_TOOLS = frozenset({"store", "declare_associations"})
+
+
+def _refusal(arguments: dict, tool: str, client_id: str, **kwargs) -> dict:
+    """A denial in the shape of the tool it stands in for.
+
+    store and declare_associations promise `result` on every response, and store
+    under lock:true promises `locked`; their own refusals carry both. A denial the
+    guard returns in their place is a refusal of that call, so it carries them too.
+    """
+    response = _denial(tool, client_id, **kwargs)
+    if tool in _RESULT_TOOLS:
+        response["result"] = "rejected"
+        if tool == "store" and arguments.get("lock") is True:
+            response["locked"] = False
+    return response
+
+
 def _denial(tool: str, client_id: str, *, agent_id: str = "", required: int = 0, detail: str = "") -> dict:
     response: dict = {"ok": False, "error": "permission_denied", "tool": tool}
     if agent_id:
@@ -879,11 +898,11 @@ def _wrap(name: str, handler):
                 "transport wiring regression; denying",
                 name,
             )
-            return _denial(name, "", detail="no principal resolved")
+            return _refusal(arguments, name, "", detail="no principal resolved")
         demands = ACL_CLASSIFICATION.get(name)
         if demands is None:
             logger.warning("ACL: unclassified tool %s denied (client=%s)", name, principal.client_id)
-            return _denial(
+            return _refusal(arguments, 
                 name,
                 principal.client_id,
                 detail="tool not classified for ACL enforcement",
@@ -910,7 +929,7 @@ def _wrap(name: str, handler):
                 principal.client_id,
                 name,
             )
-            return _denial(
+            return _refusal(arguments, 
                 name,
                 principal.client_id,
                 detail="per-subject client resolved with no subject",
@@ -933,7 +952,7 @@ def _wrap(name: str, handler):
                 # Includes the stdio principal and every static-token client:
                 # falling back to the client identity here would let "@me"
                 # quietly mean "my client", a different kind of identity.
-                return _denial(
+                return _refusal(arguments, 
                     name,
                     principal.client_id,
                     detail=(
@@ -951,7 +970,7 @@ def _wrap(name: str, handler):
                     principal.client_id,
                     SELF_SENTINEL,
                 )
-                return _denial(
+                return _refusal(arguments, 
                     name, principal.client_id, detail="alias ledger not active"
                 )
             try:
@@ -968,7 +987,7 @@ def _wrap(name: str, handler):
                     principal.client_id,
                     exc,
                 )
-                return _denial(
+                return _refusal(arguments, 
                     name,
                     principal.client_id,
                     detail="alias could not be recorded; see the server log",
@@ -1007,7 +1026,7 @@ def _wrap(name: str, handler):
                     agent_pattern,
                 )
                 detail = _per_subject_detail(demands, arguments, agent_pattern)
-                return _denial(
+                return _refusal(arguments, 
                     name,
                     principal.client_id,
                     agent_id=agent_pattern,
@@ -1080,7 +1099,7 @@ def _wrap(name: str, handler):
                         # correctly-scoped caller reading "agent_id": "*" with
                         # nothing naming the real cause.
                         detail = _intrinsic_sweep_detail(demands, arguments, grants)
-                return _denial(
+                return _refusal(arguments, 
                     name,
                     principal.client_id,
                     agent_id=agent_pattern,
@@ -1096,7 +1115,7 @@ def _wrap(name: str, handler):
                 name,
                 target,
             )
-            return _denial(
+            return _refusal(arguments, 
                 name,
                 principal.client_id,
                 agent_id=target,

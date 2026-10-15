@@ -238,11 +238,27 @@ while IFS=$'\x1f' read -r id severity file pattern expected status summary; do
     fi
 
     # Count grep matches (prefer -P for Perl regex, fall back to -E for environments
-    # where grep -P is unavailable, e.g. BSD grep on macOS or GNU grep 3.0 on MSYS2)
-    # Note: grep -c returns exit code 1 when count is 0, so we handle it explicitly
-    match_count=$(grep -cP "$pattern" "$full_path" 2>/dev/null) || \
-    match_count=$(grep -cE "$pattern" "$full_path" 2>/dev/null) || \
-    match_count=0
+    # where grep -P is unavailable, e.g. BSD grep on macOS or GNU grep 3.0 on MSYS2).
+    # grep exits 0 on a match, 1 on none and 2 or more on an error. Only 1 is a count
+    # of 0: an error (a pattern that does not compile, a file that cannot be read)
+    # used to read as 0 too, and turned an `absent` entry FIXED without checking it
+    # (bug-761). -E is tried only when -P could not run, so a -P "no match" stands.
+    # The pattern follows -e, so one that starts with "-" is not read as an option.
+    grep_status=0
+    match_count=$(grep -cP -e "$pattern" "$full_path" 2>/dev/null) || grep_status=$?
+    if (( grep_status >= 2 )); then
+        grep_status=0
+        match_count=$(grep -cE -e "$pattern" "$full_path" 2>/dev/null) || grep_status=$?
+    fi
+    if (( grep_status >= 2 )); then
+        echo -e "  ${RED}[INVALID]${NC} $id ($severity): $summary"
+        echo -e "           grep could not evaluate the pattern against $file (exit ${grep_status})"
+        errors=$((errors + 1))
+        continue
+    fi
+    if (( grep_status == 1 )); then
+        match_count=0
+    fi
 
     if [[ "$expected" == "present" ]]; then
         if [[ "$match_count" -gt 0 ]]; then

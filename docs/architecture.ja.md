@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:5982a938c5bf80af36fa6c3ced0382ec9a722b03 -->
+<!-- i18n-source: docs/architecture.md@blob:fbf432128e06430d0d384c5102992ae242a41262 -->
 
 # アーキテクチャ
 
@@ -178,7 +178,8 @@ flowchart LR
   50 以上の場合に**限って recall 応答へ付加されます (それ未満ではゲートが
   落とします)。プレビュー切り詰めの対象外で、かつ
   [スコアを持ちません](behavior-contracts.md#7-profile-rows-carry-no-score)。
-  そのため既定構成では末尾に並び、`limit` で切られることがあります。
+  そのため既定構成では末尾に並び、`limit` で切られることがあります (問いが空の一覧では
+  切られず、最後の 1 枠を保ちます)。
 
 ## 分離軸 { #isolation-axes }
 

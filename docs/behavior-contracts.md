@@ -20,6 +20,10 @@ it is stated next to it.
 **reverses** the slice. The response is ordered by ascending score — **the
 final element is the strongest match**.
 
+A recall with an empty query is a listing rather than a ranking: its memories
+run from the oldest of them to the newest, and the profile row, when it passes
+the gate ([section 7](#7-profile-rows-carry-no-score)), comes after them.
+
 This is deliberate. LLMs attend most strongly to the end of their context
 ("lost in the middle"), so the strongest memory is placed on the near side of
 the injection point.
@@ -278,6 +282,10 @@ second `update_profile` replaces the first rather than accumulating.
   confidence score and reliably surface near the top. Under the default
   `fusion` ordering (2.6.0a7 onward), confidence on behaves like confidence off
   here: the profile row sorts last.
+- In a recall with an empty query, a profile row above the threshold keeps the
+  last place of the listing instead of being cut, so the listing holds
+  `limit - 1` memories and the profile. Below the threshold it takes no place,
+  and the listing holds `limit` memories.
 
 Do not treat the profile as a guaranteed always-injected channel. For facts that *must always be present*, the
 correct mechanism is deterministic injection — your `CLAUDE.md` or system
@@ -352,12 +360,14 @@ response, and with nothing declared it changes no `reconstruct` response
 either: both are byte-identical to a store without the tables. Where
 `reconstruct` does read it:
 
-- **An alias adds a vote, not a pass.** When the query names a declared entity,
-  its other names are added to the keyword search only; the embedding search,
-  the scoring and the quality gate still see the query as written. A record
-  found only through the alias is judged against that query and stays below the
-  gate exactly as it would without the alias. What the alias does is lift a
-  record the other search already voted for.
+- **An alias adds a keyword vote.** When the query names a declared entity,
+  its other names are added to the keyword search only; the embedding search
+  still sees the query as written. A record the alias finds is fused and gated
+  like any other keyword match, so a record found only through the alias comes
+  back when that match clears the gate (under `rsf`, whose fused score is
+  relative to the query's own candidates, a lone keyword match can), and under a
+  `mode` it can take the keyword seat. Such a record names the declared entity,
+  which is what the alias is for.
 - **A relation between two records bundles them** into one item when both are
   candidates, and a role word as predicate labels the subject as that role. A
   shared entity never bundles.
@@ -365,7 +375,9 @@ either: both are byte-identical to a store without the tables. Where
   mention an entity reached from an item's candidates are added inside that
   item with `why: "relation:<predicate>"` and `hops`, fewest hops first. They do
   not become items, do not change which items are returned or their order, and
-  do not appear twice in one response.
+  do not appear twice in one response. Under a `mode` the walk is not followed,
+  so its evidence never takes the mode's token cap from the items; `traverse`
+  reads the same relations on request.
 
 Coverage is exactly what was declared: the server extracts nothing and infers
 nothing, and a wrong declaration stays until it is retracted. See the

@@ -225,8 +225,13 @@ with an exhaustiveness test.
 ```json
 { "ok": false, "error": "permission_denied",
   "tool": "store", "agent_id": "beta", "required": "read-write",
-  "client_id": "assistant-a" }
+  "client_id": "assistant-a", "result": "rejected" }
 ```
+
+A denial stands in for the tool's answer, so it keeps the fields that tool
+promises on every response: `store` and `declare_associations` carry
+`result: "rejected"`, and a `store` sent with `lock: true` also carries
+`locked: false`, as their own refusals do. Other tools' denials have neither.
 
 The shape above is the minimum, not the maximum. A `detail` string joins it
 whenever the guard can name a cause the fields do not already carry: an

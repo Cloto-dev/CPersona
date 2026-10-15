@@ -365,9 +365,34 @@ async def test_grants_allow_and_deny_with_the_documented_shape(tmp_path):
             "agent_id": "elsewhere",
             "required": "read-write",
             "client_id": "assistant-a",
+            # store answers `result` on every response, its denial included (bug-606).
+            "result": "rejected",
         }
     finally:
         acl.reset_principal(token)
+
+
+@pytest.mark.asyncio
+async def test_a_denied_store_or_declaration_answers_like_its_own_refusals(tmp_path):
+    """bug-606 / bug-791: store and declare_associations promise `result` on every
+    response, and store under lock:true promises `locked`. A denial stands in for
+    their answer, so it carries both; a tool with no such promise gets neither."""
+    acl.activate(_load(tmp_path))
+    token = acl.set_principal(acl.Principal("reader"))    # beta: read only
+    try:
+        stored = await acl._wrap("store", _stub_handler)({"agent_id": "alpha"})
+        locked = await acl._wrap("store", _stub_handler)({"agent_id": "alpha", "lock": True})
+        declared = await acl._wrap("declare_associations", _stub_handler)({"agent_id": "alpha"})
+        recalled = await acl._wrap("recall", _stub_handler)({"agent_id": "gamma"})
+    finally:
+        acl.reset_principal(token)
+
+    for denied in (stored, locked, declared, recalled):
+        assert denied["ok"] is False and denied["error"] == "permission_denied"
+    assert stored["result"] == "rejected" and "locked" not in stored
+    assert locked["result"] == "rejected" and locked["locked"] is False
+    assert declared["result"] == "rejected" and "locked" not in declared
+    assert "result" not in recalled and "locked" not in recalled
 
 
 @pytest.mark.asyncio
@@ -914,6 +939,7 @@ async def test_ungranted_agent_denial_stays_at_the_documented_shape(tmp_path):
         "agent_id": "beta",
         "required": "read-write",
         "client_id": "assistant-a",
+        "result": "rejected",
     }
 
 

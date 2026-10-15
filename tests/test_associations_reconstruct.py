@@ -324,6 +324,36 @@ async def test_entity_relations_leave_item_heads_and_order_unchanged():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["lite", "pro"])
+async def test_under_a_mode_entity_relations_add_no_evidence_and_keep_the_items(mode):
+    """bug-707: under a mode the walk's evidence counted against the token cap and
+    could shorten the prefix of items, where the walk is promised to change no item.
+    A mode now follows no walk; without one the walk still adds evidence."""
+    refs = await _seed_many_items()
+    before = await _reconstruct(count=6, max_hops=2, mode=mode)
+    heads_before = [item["head_ref"] for item in before["items"]]
+    assert len(heads_before) >= 3, "the fixture must produce several items"
+    for i, ref in enumerate(refs[:6]):
+        await _mention(ref, f"Service{i}")
+        await _mention(refs[6 + i], f"Owner{i}")
+        await _relate(f"Service{i}", "owned_by", f"Owner{i}")
+        # Enough records behind each owner that their evidence would not fit a cap.
+        for j in range(12):
+            extra = await _mem(f"handover log {i}-{j} for the night shift rota", 40 + j)
+            await _mention(extra, f"Owner{i}")
+
+    plain = await _reconstruct(count=6, max_hops=2)
+    assert any("hops" in c for item in plain["items"] for c in item["claims"]), (
+        "without a mode the graph added no evidence, so the comparison proves nothing"
+    )
+
+    after = await _reconstruct(count=6, max_hops=2, mode=mode)
+    assert [item["head_ref"] for item in after["items"]] == heads_before
+    walked = [c for item in after["items"] for c in item.get("claims", []) if "hops" in c]
+    assert walked == [], f"{mode} carried walked evidence: {walked[:2]}"
+
+
+@pytest.mark.asyncio
 async def test_a_record_relation_merges_items_without_reordering_the_rest():
     await _seed_many_items()
     before = await _reconstruct(count=6)

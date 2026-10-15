@@ -537,3 +537,51 @@ def test_a_schema_pointer_that_resolves_is_accepted(tmp_path) -> None:
     result = _run(root / "scripts" / "verify-issues.sh", root)
 
     assert result.returncode == 0, _strip_ansi(result.stdout + result.stderr)
+
+
+# ---------------------------------------------------------------------------
+# bug-761 — a grep error read as a count of zero.
+# ---------------------------------------------------------------------------
+#
+# The count fell back to 0 whatever grep's exit was, so a pattern that does not
+# compile, or one starting with "-" that grep took for an option, read as "no
+# match": an `absent` entry was reported FIXED without its pattern ever being
+# evaluated, and the run exited 0.
+
+
+def test_an_absent_row_whose_pattern_grep_cannot_evaluate_fails_the_gate(tmp_path) -> None:
+    root = _make_root(
+        tmp_path,
+        [_row(expected="absent", pattern="fts_query = build(query")],
+        {"src/thing.py": "fts_query = build(query)\n"},
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    out = _strip_ansi(result.stdout)
+
+    assert result.returncode != 0, "an entry whose pattern grep could not evaluate passed:\n" + out
+    assert "[FIXED] bug-999" not in out, "the unevaluated absent entry was reported fixed:\n" + out
+    assert "[INVALID] bug-999" in out, "the unevaluated entry left no verdict of its own:\n" + out
+
+
+def test_a_pattern_that_starts_with_a_dash_is_matched_as_text(tmp_path) -> None:
+    root = _make_root(tmp_path, [_row(pattern="-v flag")], {"src/thing.py": "run it with -v flag\n"})
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    out = _strip_ansi(result.stdout)
+
+    assert result.returncode == 0, "a pattern starting with '-' was read as an option:\n" + out
+    assert "[VERIFIED] bug-999" in out
+
+
+def test_a_pattern_that_matches_nothing_is_still_a_count_of_zero(tmp_path) -> None:
+    """The control: grep's own "no match" (exit 1) keeps meaning 0."""
+    root = _make_root(
+        tmp_path, [_row(expected="absent", pattern="nowhere")], {"src/thing.py": "needle\n"}
+    )
+
+    result = _run(root / "scripts" / "verify-issues.sh", root)
+    out = _strip_ansi(result.stdout)
+
+    assert result.returncode == 0, out
+    assert "[FIXED] bug-999" in out

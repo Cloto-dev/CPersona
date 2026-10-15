@@ -365,8 +365,8 @@ effective = min(base, max_count)
 - Fewer items than the window is a normal result and carries a reason: no
   relevant evidence, below the quality threshold, filtered by policy,
   insufficient provenance, payload budget exhausted, or system degraded. The
-  shortfall is never filled with duplicates, low-quality items or content the
-  evidence does not support.
+  shortfall is never filled by splitting a cluster, with low-quality items or
+  with content the evidence does not support.
 - With the block arm on, recall holds a fixed number of places for records only
   that arm reached ([block reach §5](BLOCK_REACH_DESIGN.md#5-admission-a-reservation-not-a-gate-change)),
   and reconstruct keeps them in the same shape. A cluster made only of such
@@ -483,8 +483,10 @@ effective_budget = min(budget_base, max_budget)
   passage with its head claim and the response's own fields exceeds answers
   `error: "cap_below_minimum"`, and its `detail` says whether the passage alone
   is over; the error still carries the notices the candidate recall delivered to
-  the session, which would otherwise be lost for it. A call that names no mode is
-  unchanged.
+  the session, which would otherwise be lost for it. The entity walk is not
+  followed under a mode: its evidence would count against the cap and could cut
+  items, so a mode carries none (`traverse` reads the same relations). A call
+  that names no mode is unchanged.
   - `mode: "lite"` is the preset 2.6.5a3 introduced as `lite=true`, which
     remains its other name (the two together are refused). The budget is 2,800
     characters unless the caller names one (an operator-forced budget still
@@ -507,7 +509,9 @@ effective_budget = min(budget_base, max_budget)
     found that the answer does not hold and that the quality gate either
     refused on its rrf score or admitted before the count cut. Under rrf such a
     row can never clear a calibrated gate, since one arm's reciprocal-rank vote
-    is at most 1/(K+1), so the refusal says nothing about the row. Of the
+    is at most 1/(K+1), so the refusal says nothing about the row. A row the
+    keyword arms found only through a declared alias is eligible like any
+    other. Of the
     eligible rows, the one whose text holds the most of the question's parts
     (the coverage ledger's) takes the seat, ties in the gate's order. In recall
     the seat displaces nothing; in the answer it is an item beside the window,
@@ -623,9 +627,11 @@ appear when declared relations do. A reader ignores a role it does not know.
    `vector_top_k`, `fts_limit`, `selected_evidence_limit` may be derived from
    `count`. The test: change `count` alone and the candidate id set is
    unchanged.
-8. No padding — a paraphrase, a fragment of one record, or several pieces of
-   evidence for one conclusion are not separate items; a conflict the keys
-   cannot fold is shown inside one item.
+8. No padding — one cluster is one item: a fragment of one record and the
+   records a cluster key joins are not separate items, and a conflict the keys
+   cannot fold is shown inside one item. Content sameness is not judged: two
+   records that say the same thing, even in the same words with a different
+   case or punctuation, are separate items unless a key joins them.
 9. Breadth before depth — the payload budget omits excerpts before it omits
    items, and the response is the longest prefix of a sequence the budget does
    not shape. The test: raise the budget alone and no item or excerpt
