@@ -11,7 +11,12 @@ import math
 import struct
 
 import aiosqlite
-from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient, redact_urls
+from cpersona._vendored_mcp_common.embedding_client import (
+    EmbeddingClient,
+    _safe_endpoint,
+    _sibling_route,
+    redact_urls,
+)
 from cpersona.isolation import IsolationFilter, isolation_where, source_id_where
 
 from cpersona import config
@@ -142,6 +147,40 @@ def stored_blob_is_finite(blob: object) -> bool:
 
 
 
+# Whether remote_route has said that the configured URL names no remote route.
+_remote_route_refusal_logged = False
+
+
+def remote_route(route: str) -> str | None:
+    """The remote index service's ``route`` beside the configured ``/embed`` URL, or None.
+
+    Derived by the embedding client's own rule for its sibling routes, so the
+    configured URL's query string, where an endpoint credential is carried, is kept
+    and a trailing slash is not read as a path segment. Cutting the whole URL at its
+    last ``/`` lost both: the query went with the cut, so the index pushes and the
+    searches went out without the credential the embed requests carried and were
+    refused, and ``.../embed/`` became ``.../embed/index``.
+
+    A URL that does not end in ``/embed`` names no route this process can derive, as
+    the client already answers for its capability route, so there is none: the
+    caller skips the remote call, as it gets past a failed one, and the reason is
+    logged once rather than on every write and search.
+    """
+    global _remote_route_refusal_logged
+    url = getattr(_embedding_client, "_http_url", None)
+    if not url:
+        return None
+    sibling = _sibling_route(url, route)
+    if sibling is None and not _remote_route_refusal_logged:
+        _remote_route_refusal_logged = True
+        logger.warning(
+            "Remote vector index calls are skipped: %s does not end in /embed, so the "
+            "index service's routes cannot be derived from it",
+            _safe_endpoint(url),
+        )
+    return sibling
+
+
 async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
     """Push memory items to an agent's remote vector index in bounded chunks.
 
@@ -155,8 +194,10 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
         or not _embedding_client._client
     ):
         return
+    index_url = remote_route("index")
+    if index_url is None:
+        return
 
-    base_url = _embedding_client._http_url.rsplit("/", 1)[0]
     # bug-304: non-fatal is not the same as unreported. Every chunk's exception
     # went to logger.debug -- off in any normal deployment -- and the response
     # status was never read at all, so a service that answered 500 to half the
@@ -175,7 +216,7 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
         total_chunks += 1
         try:
             response = await _embedding_client._client.post(
-                f"{base_url}/index",
+                index_url,
                 json={"namespace": f"cpersona:{agent_id}", "items": chunk},
                 # bug-330: the only remote call in the package that named no
                 # deadline, so each chunk inherited the embedding client's 30s
@@ -198,7 +239,8 @@ async def remote_index_upsert(agent_id: str, items: list[dict]) -> None:
         except Exception as e:
             failed_chunks += 1
             failed_items += len(chunk)
-            logger.debug("Remote index chunk failed (non-fatal): %s", e)
+            # The request URL carries the configured query, so it is redacted.
+            logger.debug("Remote index chunk failed (non-fatal): %s", redact_urls(str(e)))
     if failed_chunks:
         logger.warning(
             "Remote index partially synchronised for %s: %d of %d chunks did not land "
@@ -277,9 +319,19 @@ _global_calibration_authority: set[str] = set()
 # So the entries this process has CHANGED since its last successful sidecar write are
 # tracked separately. Only those are authoritative over the file; an owned entry that is
 # not pending here is refreshed from the file before the write instead of overwriting it.
-# Loading does not mark anything pending -- only measuring, overriding or removing does.
+# Loading does not mark anything pending -- only measuring or removing does. A precision
+# override is written to the sidecar in the same step it enters process memory, so it is
+# claimed without ever being pending.
 _calibration_pending: dict[str, set[str]] = {axis: set() for axis in _CALIBRATION_AGENT_AXES}
 _global_calibration_pending: set[str] = set()
+
+# How many times each agent's calibration has been purged in this process. A calibration
+# awaits for seconds to minutes between reading an agent's corpus and writing what it
+# measured, and a delete_agent_data that lands in between removes the agent's entries
+# once, at that instant. The calibration notes the count before its first await and
+# discards its result when the count moved, or it writes a threshold and gate measured
+# on a corpus that no longer exists back into memory and onto disk.
+_calibration_purges: dict[str, int] = {}
 
 
 def _claim_agent_calibration(agent_id: str, *axes: str) -> None:
@@ -294,17 +346,6 @@ def _claim_agent_calibration(agent_id: str, *axes: str) -> None:
         _calibration_authority[axis].add(agent_id)
 
 
-def _release_agent_calibration(agent_id: str, *axes: str) -> None:
-    """Give up ownership of *agent_id*'s entry on each named per-agent axis.
-
-    Used when a write is rolled back to a state this process never loaded: after
-    the rollback the dict's silence means "unknown" again, so the stored entry must
-    be carried rather than dropped.
-    """
-    for axis in axes:
-        _calibration_authority[axis].discard(agent_id)
-
-
 def _claim_global_calibration(*axes: str) -> None:
     """Record that this process owns the named global calibration axes."""
     for axis in axes:
@@ -316,7 +357,7 @@ def _claim_global_calibration(*axes: str) -> None:
 def _record_agent_calibration_change(agent_id: str, *axes: str) -> None:
     """Claim *agent_id*'s entry on each axis AND mark it changed since the last write.
 
-    The path for a measurement, an override or a removal; a restore only claims.
+    The path for a measurement or a removal; a restore only claims.
     """
     _claim_agent_calibration(agent_id, *axes)
     for axis in axes:
@@ -327,6 +368,16 @@ def _record_global_calibration_change(*axes: str) -> None:
     """The global-axis companion of ``_record_agent_calibration_change``."""
     _claim_global_calibration(*axes)
     _global_calibration_pending.update(axes)
+
+
+def _note_agent_calibration_purge(agent_id: str) -> None:
+    """Record that *agent_id*'s calibration was purged (see ``_calibration_purges``)."""
+    _calibration_purges[agent_id] = _calibration_purges.get(agent_id, 0) + 1
+
+
+def _agent_calibration_purges(agent_id: str) -> int:
+    """How many times *agent_id*'s calibration has been purged in this process."""
+    return _calibration_purges.get(agent_id, 0)
 
 
 def _clear_calibration_pending() -> None:
@@ -464,6 +515,21 @@ async def _drop_rejected_labels(db: aiosqlite.Connection, rows: list[dict]) -> l
     return [row for row in rows if row.get("_rid", ("mem", row["id"])) not in rejected]
 
 
+def _remote_score(value) -> float:
+    """A remote hit's score as the cosine the gates compare, or ValueError.
+
+    Checked here, inside the remote search's fallback `try`, because the value is
+    returned as `_cosine` and nothing compares it until the quality gate -- outside
+    any guard -- so a string from the service raised TypeError there and took the
+    whole recall down instead of falling back to the local scan. A bool is not a
+    score although Python counts it as an int, and a NaN or an infinity is not a
+    cosine: NaN fails every comparison and infinity passes every one.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"remote hit carries a non-numeric score: {value!r}")
+    return float(value)
+
+
 async def _search_vector_remote(
     db: aiosqlite.Connection,
     agent_id: str,
@@ -497,11 +563,13 @@ async def _search_vector_remote(
     """
     if not (VECTOR_SEARCH_MODE == "remote" and _embedding_client and _embedding_client._http_url):
         return None
+    search_url = remote_route("search")
+    if search_url is None:
+        return None
 
     try:
-        base_url = _embedding_client._http_url.rsplit("/", 1)[0]
         resp = await _embedding_client._client.post(
-            f"{base_url}/search",
+            search_url,
             json={
                 "namespace": f"cpersona:{agent_id}",
                 "query": query,
@@ -538,7 +606,7 @@ async def _search_vector_remote(
         ordered: list[tuple[str, int, float]] = []
         for hit in data["results"]:
             raw_id = hit["id"]
-            score = hit["score"]
+            score = _remote_score(hit["score"])
             if raw_id.startswith("mem:"):
                 ordered.append(("mem", int(raw_id[4:]), score))
             elif raw_id.startswith("ep:"):
@@ -606,8 +674,8 @@ async def _search_vector_remote(
                     )
         return results
     except Exception as e:
-        # httpx quotes the request URL in its exception text, and the base URL here
-        # is cut from the configured embedding URL, userinfo and all.
+        # httpx quotes the request URL in its exception text, and the route here is
+        # derived from the configured embedding URL, userinfo and query and all.
         logger.warning("Remote vector search failed, falling back to local: %s", redact_urls(str(e)))
         return None
 
@@ -2044,6 +2112,19 @@ async def _scan_episodes_local(
     return candidates
 
 
+async def _change_stamp(db: aiosqlite.Connection) -> tuple[int, int]:
+    """What changes when anything is written that a read of `db` could see.
+
+    `PRAGMA data_version` moves when another connection commits; `total_changes`
+    counts the rows this connection's own statements changed, which data_version
+    does not report. Equal stamps around two reads mean no row they could see was
+    written in between. A change to another table also moves it, and costs one
+    re-read.
+    """
+    row = await db.execute_fetchall("PRAGMA data_version")
+    return int(row[0][0]), db.total_changes
+
+
 async def _search_vector_far(
     db: aiosqlite.Connection,
     *,
@@ -2285,40 +2366,39 @@ async def _search_vector(
     # MAX_MEMORIES rows regardless of how many the caller asked to receive.
     scan_limit = MAX_MEMORIES
 
-    # Memories first, then episodes: nlargest is stable, so this order is what
-    # breaks a tie between a memory and an episode of equal similarity. The memory
-    # scan already returns at most `limit` candidates (bug-249) -- it applies this
-    # same cut, with this same tie-break, before paying to read their text.
-    candidates = await _scan_memories_local(
-        db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim,
-        agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
-    )
-    candidates += await _scan_episodes_local(
-        db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
-        limit=limit, agent_id=agent_id, project_id=project_id,
-    )
-
-    top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
-
     # The far list, and the one place "off" is decided on this path. Asked here
     # rather than only inside the call, so that at the default there is no call
     # at all: a far scan that ran and returned nothing would still cost a
     # statement, a matrix and a merge on every recall the server answers, and
     # this setting has to be a guard rather than an empty scan.
-    if far_out is not None and far_list_enabled():
-        # bug-334: the two windows are two statements on a shared autocommit
-        # connection, and scan position is defined over the live table — so an
-        # insert committed between them shifts every position by one and the row
-        # at the near window's last position reappears at the far window's first.
-        # Measured: that row then took two reciprocal-rank votes from a single
-        # retriever and sorted ahead of rows that outrank it, and the legacy
-        # quality gate rescales its threshold by a per-row maximum of three votes
-        # that a duplicate can exceed. Disjointness by position is the reason the
-        # far list needs no de-duplicating pass; when the premise does not hold,
-        # the invariant the fusion is owed still has to. `_rid` is the identity
-        # the fusion itself keys on, so this drops exactly what it would have
-        # double-counted and nothing else.
-        near_rids = {row["_rid"] for _score, row in top_k if "_rid" in row}
+    wants_far = far_out is not None and far_list_enabled()
+
+    # The near and far windows are two reads of a live table, cut by position. A
+    # delete committed between them moves the far window's first row into the near
+    # window's last place after the near window has been read, so neither list
+    # scans it (the bug-334 de-duplication below handles the insert direction, and
+    # nothing can restore a skipped row). So the pair is read again, once, when the
+    # database changed while it was being read; a second change in that window is
+    # left to the de-duplication and logged, rather than retried without bound.
+    for attempt in (1, 2):
+        stamp = await _change_stamp(db) if wants_far else None
+
+        # Memories first, then episodes: nlargest is stable, so this order is what
+        # breaks a tie between a memory and an episode of equal similarity. The memory
+        # scan already returns at most `limit` candidates (bug-249) -- it applies this
+        # same cut, with this same tie-break, before paying to read their text.
+        candidates = await _scan_memories_local(
+            db, iso, src_clause, src_params, scan_limit, limit, query_vec, query_dim, effective_min_sim,
+            agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
+        )
+        candidates += await _scan_episodes_local(
+            db, iso, scan_limit, query_vec, query_dim, effective_min_sim, src_like, channel,
+            limit=limit, agent_id=agent_id, project_id=project_id,
+        )
+
+        top_k = heapq.nlargest(limit, candidates, key=lambda x: x[0])
+        if not wants_far:
+            break
         far_rows = await _search_vector_far(
             db,
             iso=iso,
@@ -2334,6 +2414,28 @@ async def _search_vector(
             channel=channel,
             source_id=source_id,
         )
+        if await _change_stamp(db) == stamp:
+            break
+        if attempt == 2:
+            logger.warning(
+                "The database changed while the near and far scan windows were read, "
+                "twice; a row at the boundary between them may be in neither list"
+            )
+
+    if wants_far:
+        # bug-334: the two windows are two statements on a shared autocommit
+        # connection, and scan position is defined over the live table — so an
+        # insert committed between them shifts every position by one and the row
+        # at the near window's last position reappears at the far window's first.
+        # Measured: that row then took two reciprocal-rank votes from a single
+        # retriever and sorted ahead of rows that outrank it, and the legacy
+        # quality gate rescales its threshold by a per-row maximum of three votes
+        # that a duplicate can exceed. Disjointness by position is the reason the
+        # far list needs no de-duplicating pass; when the premise does not hold,
+        # the invariant the fusion is owed still has to. `_rid` is the identity
+        # the fusion itself keys on, so this drops exactly what it would have
+        # double-counted and nothing else.
+        near_rids = {row["_rid"] for _score, row in top_k if "_rid" in row}
         overlap = [row for row in far_rows if row.get("_rid") in near_rids]
         if overlap:
             logger.warning(

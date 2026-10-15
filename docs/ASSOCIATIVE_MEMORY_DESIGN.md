@@ -221,7 +221,9 @@ bounds both how many entities are returned and how many refs each lists; what
 it cut is counted. A relation is listed when both of its ends are returned. A
 record is listed only when the call could read it, under the project, channel
 and source filters recall applies. `max_hops` defaults to one and is capped at
-five; `limit` defaults to 20 and is capped at 100.
+five; `limit` defaults to 20 and is capped at 100. The neighbourhood it expands
+is bounded as the walk's is (§9, "Expansion is bounded"); past that
+bound, `entities_omitted` counts the entities found within it.
 
 ## 5. Invariants
 
@@ -333,6 +335,14 @@ has a test and a mutation that turns it red.
   records are read, lowest id first — the order the cut already uses within one
   relation. When an entity has more, the response names `max_evidence` in
   `bounds.reached`: the bound was met, and what lay beyond is not known.
+- **Expansion is bounded.** The hop bound caps depth, not breadth: on a
+  connected graph five hops reach nearly every entity, and one relation from a
+  hub reaches all of its spokes. So one walk or traverse expands at most 256
+  entities, its starts included, whatever the hop bound allows. Where that
+  binds, expansion stops at that hop and keeps the entities the most recently
+  declared relations reached, the order the cut already uses; the relations
+  past it are left unfollowed and reported as `max_hops` is in
+  `bounds.omitted`. Below it nothing changes.
 - **`why` and independence.** A row a declared relation bundled carries
   `why: "relation:<predicate>"` and no `hops`; a row the walk reached carries
   the same with `hops`. A cluster a relation formed has

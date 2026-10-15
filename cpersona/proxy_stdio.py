@@ -132,22 +132,66 @@ async def _stdout_writer(out_queue: asyncio.Queue):
             logger.exception("Failed to emit a response; dropping it and continuing")
 
 
+class _NotJsonRpc(ValueError):
+    """A successful remote response whose body is not a JSON-RPC message."""
+
+
+def _json_rpc_payload(text: str):
+    """``text`` parsed as a JSON-RPC message (an object) or batch (an array), else None."""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
+
+
 def _response_messages(response: httpx.Response) -> list[str]:
-    """Extract the JSON-RPC messages carried by a successful remote response."""
+    """Extract the JSON-RPC messages carried by a successful remote response.
+
+    Raises ``_NotJsonRpc`` when the body carries data but no JSON-RPC message.
+    A 2xx status says nothing about the body: an SSO proxy's sign-in page, a
+    web root's fallback page or a mistyped CPERSONA_REMOTE_URL all answer 200
+    with HTML, and writing that to stdout is the stream corruption the status
+    guard in _forward exists to prevent -- non-JSON lines for the client's
+    reader, and no reply for the request that is waiting.
+    """
     content_type = response.headers.get("content-type", "")
     messages: list[str] = []
     if "text/event-stream" in content_type:
         # SSE: extract data lines
+        rejected: list[str] = []
         for sse_line in response.text.split("\n"):
             # bug-135: SSE permits data fields with or without a space.
             if sse_line.startswith("data:"):
                 data = sse_line[len("data:") :].strip()
-                if data:
+                if not data:
+                    continue
+                if _json_rpc_payload(data) is None:
+                    rejected.append(data)
+                else:
                     messages.append(data)
+        if rejected:
+            if not messages:
+                raise _NotJsonRpc(rejected[0])
+            # The messages that did arrive are still owed to the client; only
+            # the lines its reader could not parse are held back.
+            logger.warning(
+                "Dropped %d SSE data line(s) that are not JSON-RPC messages: %r",
+                len(rejected),
+                rejected[0][:200],
+            )
     else:
         # JSON response
         text = response.text.strip()
         if text:
+            parsed = _json_rpc_payload(text)
+            if parsed is None:
+                raise _NotJsonRpc(text)
+            if "\n" in text or "\r" in text:
+                # One message is one line on stdout. A line break in valid JSON
+                # sits between tokens (inside a string it is escaped), so the
+                # compact form carries the same message in a single frame.
+                text = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
             messages.append(text)
     return messages
 
@@ -219,7 +263,19 @@ async def _forward(
             )
             return
 
-        out_queue.put_nowait(_response_messages(response))
+        try:
+            messages = _response_messages(response)
+        except _NotJsonRpc:
+            content_type = response.headers.get("content-type", "") or "no content-type"
+            out_queue.put_nowait(
+                _ErrorFor(
+                    line,
+                    f"Remote returned HTTP {response.status_code} with a body that is not "
+                    f"a JSON-RPC message ({content_type}): {response.text.strip()[:200]}",
+                )
+            )
+            return
+        out_queue.put_nowait(messages)
     except Exception as e:  # noqa: BLE001 - a forward must never take the bridge down
         logger.exception("Unhandled error while forwarding a message")
         out_queue.put_nowait(_ErrorFor(line, f"Proxy error: {type(e).__name__}: {e}"))

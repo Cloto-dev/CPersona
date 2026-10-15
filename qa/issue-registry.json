@@ -5484,7 +5484,7 @@
       "version": "2.5.12b1",
       "fixed_in": "2.5.12b3",
       "file": "cpersona/oauth.py",
-      "pattern": "last = entry\\.logged_at if entry is not None else self\\._outage_logged_at",
+      "pattern": "windows = entry\\.logged_at if entry is not None else self\\._outage_logged_at",
       "expected": "present",
       "status": "fixed",
       "category": "observability",
@@ -8866,12 +8866,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": ".github/workflows/ci.yml",
-      "pattern": "group: ci-\\$\\{\\{ github\\.ref \\}\\}",
+      "pattern": "group: ci-\\$\\{\\{ github\\.event_name \\}\\}-\\$\\{\\{ github\\.ref \\}\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Put `github.event_name` into the concurrency group key so scheduled and push runs never share a group, or cancel in progress only for pull_request runs.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the workflow, not reproduced. Related to bug-510, which covers the publish workflow's missing CI gate."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the workflow, not reproduced. Related to bug-510, which covers the publish workflow's missing CI gate.",
+      "fix_note": "The CI concurrency group includes github.event_name, so the weekly scheduled run on master can no longer cancel a push run's gates. Reverting the group to ci-${{ github.ref }} turns tests/test_2611a2_x16.py::test_scheduled_ci_run_does_not_share_the_push_concurrency_group red."
     },
     {
       "id": "bug-595",
@@ -8880,12 +8881,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": ".github/workflows/ci.yml",
-      "pattern": "run: uv sync --dev --python \\$\\{\\{ matrix\\.python-version \\}\\}",
+      "pattern": "run: uv sync --locked --dev --python \\$\\{\\{ matrix\\.python-version \\}\\}",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Pass `--locked` to the CI sync steps (or add one `uv lock --check` step that the other jobs depend on), so a lock that disagrees with pyproject fails the build instead of being re-resolved silently.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the workflow, not reproduced against this tree. The other affected sync steps are ci.yml:135, :165, :253 and :289."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the workflow, not reproduced against this tree. The other affected sync steps are ci.yml:135, :165, :253 and :289.",
+      "fix_note": "Every uv sync in ci.yml passes --locked, so a stale uv.lock fails CI instead of being re-resolved in the runner. Removing --locked turns tests/test_2611a2_x16.py::test_every_ci_dependency_sync_refuses_a_stale_lock red."
     },
     {
       "id": "bug-596",
@@ -8893,13 +8895,14 @@
       "severity": "LOW",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "mkdocs.yml",
-      "pattern": "^  - scripts/docs_by_language\\.py$",
+      "file": ".github/workflows/docs.yml",
+      "pattern": "# mkdocs\\.yml runs these as build hooks, so they are part of every build",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Add `scripts/docs_search_rank.py`, `scripts/docs_ja_lines.py` and `scripts/docs_by_language.py` to both path lists in docs.yml, and consider a test that fails when a hook registered in mkdocs.yml is missing from either list.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading, not reproduced. The anchor is the registration of one uncovered hook because the omission itself has no line in docs.yml; the fix lands in docs.yml, so re-anchor there when it is fixed."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading, not reproduced. The anchor is the registration of one uncovered hook because the omission itself has no line in docs.yml; the fix lands in docs.yml, so re-anchor there when it is fixed.",
+      "fix_note": "docs.yml's push and pull_request path filters list all four mkdocs build hooks. Each hook line appears twice (once per list), so the anchor is the push list's unique comment above the added entries. Removing the entries turns tests/test_2611a2_x16.py::test_every_mkdocs_hook_is_on_the_docs_trigger red (the test reads mkdocs.yml's hooks: list)."
     },
     {
       "id": "bug-597",
@@ -9006,12 +9009,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/acl.py",
-      "pattern": "mode = os\\.stat\\(path\\)\\.st_mode",
+      "pattern": "if fileperms\\.mode_bits_are_enforced\\(\\) and mode & \\(stat\\.S_IRWXG",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "compatibility",
       "fix_sketch": "Skip the mode-bit check when `fileperms.mode_bits_are_enforced()` is false, as the corpus-readability warning and the health check already do.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-296."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-296.",
+      "fix_note": "load_config judges the ACL file's group/other bits only where fileperms.mode_bits_are_enforced() says they are the access control, the gate the database warning and the permissions check already use; on Windows os.stat synthesises 0o666 and the warning fired on every start advising a chmod that changes nothing. Reverting the gate turns tests/test_2611a2_x14.py::test_the_acl_file_mode_is_not_judged_where_mode_bits_are_not_the_access_control red."
     },
     {
       "id": "bug-605",
@@ -9048,12 +9052,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/acl.py",
-      "pattern": "\"\\(per_subject\\), and this call demands every agent at \"",
+      "pattern": "detail = _per_subject_detail\\(demands, arguments, agent_pattern\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "On the per-subject boundary, when the demand is intrinsically all-agents (the process-wide tools and check_update), say that the tool is not available to a per-subject client instead of advising `@me`, reusing the reason the demand already carries.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Same class as bug-264 (advice that cannot work for an intrinsic sweep), recurring on the per-subject branch."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Same class as bug-264 (advice that cannot work for an intrinsic sweep), recurring on the per-subject branch.",
+      "fix_note": "The per-subject boundary asks the same counterfactuals the grant path asks (_widened_by_omission for a sweep, _demanded_whatever_the_scope for a named agent) before advising \"@me\"; an intrinsic sweep is told its stated cause and that no agent_id narrows it, and an agent named by an export-directory file is named as such. Restoring the constant details turns tests/test_2611a2_x14.py::test_a_per_subject_sweep_no_scope_narrows_is_not_advised_at_me and ::test_a_foreign_agent_the_file_names_is_not_advised_at_me red."
     },
     {
       "id": "bug-608",
@@ -9062,12 +9067,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "response = await vector\\._embedding_client\\._client\\.post\\(path, json=payload\\)",
+      "pattern": "path, json=payload, timeout=REMOTE_INDEX_TIMEOUT_SECS",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Pass `timeout=REMOTE_INDEX_TIMEOUT_SECS` on the post. For the move de-index, stop after the first timed-out chunk or share one overall deadline across chunks so a hung service cannot multiply the wait.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced against a hung endpoint. Related: bug-330, bug-323, bug-159, bug-346."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced against a hung endpoint. Related: bug-330, bug-323, bug-159, bug-346.",
+      "fix_note": "_post_remote_side_effect passes timeout=REMOTE_INDEX_TIMEOUT_SECS and reports a timeout to its caller. _remove_moved_source_vectors stops after a timed-out chunk. Reverting the timeout turns test_every_side_effect_post_states_the_index_deadline[*] and test_side_effect_post_against_a_hung_service_returns_at_the_index_deadline red. Removing the break turns test_move_de_index_stops_after_a_timed_out_chunk red."
     },
     {
       "id": "bug-609",
@@ -9076,12 +9082,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "UPDATE memories SET content = \\?, embedding = \\?, embedding_model = \\? WHERE id = \\? AND locked = 0",
+      "pattern": "^        except sqlite3\\.IntegrityError:$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Probe for a same-bucket row with identical content before the UPDATE, or catch sqlite3.IntegrityError around it. Return error_response naming the existing duplicate (for example `duplicate_of`), and mention the refusal in the update_memory tool description.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related: bug-113 and bug-127 (the same collision guarded on the health-fix path), and bug-161 (error_response as the single failure constructor)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related: bug-113 and bug-127 (the same collision guarded on the health-fix path), and bug-161 (error_response as the single failure constructor).",
+      "fix_note": "do_update_memory looks for a same-bucket row holding the new text before it embeds (_same_bucket_holder). It also catches sqlite3.IntegrityError around the UPDATE, for a copy that lands during the embedding await, and in both cases answers error_response naming the holder. Reverting the catch turns test_update_racing_a_store_of_the_same_text_is_refused_not_raised red. Reverting the pre-probe turns test_update_into_same_bucket_text_is_refused_and_names_the_holder red."
     },
     {
       "id": "bug-610",
@@ -9090,12 +9097,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "return error_response\\(f\"Memory \\{memory_id\\} is locked and cannot be edited\"\\)",
+      "pattern": "^        if still_there and still_there\\[0\\]\\[0\\]:$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "When the UPDATE changes no row, re-read the row inside the same transaction. Answer through the same `_by_id_refusal` path as the pre-check: not found (uniform for a scoped caller) if the row is gone or owned by someone else, and locked only if it is actually locked.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-367 (the uniform by-id refusal for scoped callers)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-367 (the uniform by-id refusal for scoped callers).",
+      "fix_note": "After a no-match UPDATE, do_update_memory re-reads the row inside the same transaction. It reports 'locked' only when the row still exists and is locked, and otherwise answers not-found through _by_id_refusal (ambiguous for a scoped caller). Reverting turns test_update_of_a_row_deleted_meanwhile_says_not_found_not_locked, the scoped variant and the merge-move variant red."
     },
     {
       "id": "bug-611",
@@ -9104,12 +9112,12 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "\"calibrated_at\": datetime\\.now\\(timezone\\.utc\\)\\.isoformat\\(\\),",
+      "pattern": "calibrated_at: str \\| None \\| object = _LIVE,",
       "expected": "present",
       "status": "open",
       "category": "timestamp-correctness",
       "fix_sketch": "Let `_save_calibration_state` take a `calibrated_at` and have rewrites that measure nothing (the purge) pass the stored value through. Consider recording the time per agent, so calibrating one agent does not reset the age of the others.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-184 (the same laundering, closed for scoring_version)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-184 (the same laundering, closed for scoring_version). Partly fixed in 2.6.11a2: _purge_agent_calibration passes the stored calibrated_at through the new calibrated_at parameter of _save_calibration_state, so dropping a deleted or moved-out agent keeps the stored time. Reverting it turns tests/test_2611a2_x02.py::test_dropping_an_agent_keeps_the_stored_calibration_time and ::test_a_move_that_empties_its_source_keeps_the_stored_calibration_time red. Remaining half (one stamp for all agents, restamped by a per-agent calibration) is not fixed. The open anchor now names the remaining half."
     },
     {
       "id": "bug-612",
@@ -9118,12 +9126,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "vector\\._agent_thresholds\\[agent_id\\] = new_threshold",
+      "pattern": "^    if agent_id and vector\\._agent_calibration_purges\\(agent_id\\) != purges_at_start:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Have the purge bump a per-agent generation (or record a tombstone) that calibration captures before its first await and rechecks before each write to the process dicts and the sidecar, discarding its result for a purged agent. Apply the same recheck to the startup restore.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-036 (the sequential case this race reopens)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-036 (the sequential case this race reopens).",
+      "fix_note": "do_calibrate_threshold notes vector._agent_calibration_purges(agent_id) before its first await. _purge_agent_calibration bumps that count. The calibration rechecks it before the threshold write and again after the last await (this line), and discards a measurement whose agent was purged. The startup guard reads the sidecar after its await, and its restore skips pending entries. Removing this line turns tests/test_2611a2_x02.py::test_a_delete_during_the_gate_measurement_is_not_undone_by_the_calibration red."
     },
     {
       "id": "bug-613",
@@ -9132,12 +9141,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "vector\\._agent_betas\\[agent_id\\] = resolved_beta",
+      "pattern": "precision_override=None if clear else resolved_beta,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Keep the tentative beta out of the shared dict until calibration succeeds (pass it to the calibration explicitly), or have sidecar saves exclude entries that are mid-transaction. The rollback path should also repair the sidecar if a concurrent save already wrote the tentative value.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not yet reproduced. Residual of the bug-096 and bug-149 rollback work, which protects process memory but not a sidecar write another coroutine already made."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not yet reproduced. Residual of the bug-096 and bug-149 rollback work, which protects process memory but not a sidecar write another coroutine already made.",
+      "fix_note": "set_recall_precision hands the new beta to do_calibrate_threshold (precision_override) instead of writing it into vector._agent_betas first. The calibration writes it to the sidecar with the gate measured at it, and set_recall_precision adopts it only after that write succeeds, so no tentative beta exists for another agent's calibration to persist. Re-adding the tentative write turns tests/test_2611a2_x02.py::test_a_failed_precision_change_is_not_persisted_by_another_agents_calibration red."
     },
     {
       "id": "bug-614",
@@ -9146,12 +9156,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "\"source\": _try_parse_json\\(row\\[4\\]\\) if row\\[4\\] else \\{\\},",
+      "pattern": "return \\{\\}, text if isinstance\\(text, str\\) else None",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "data-integrity",
       "fix_sketch": "Export a value that is not valid JSON verbatim (for example as a raw string field with a marker) and have import write it back unchanged, or at least record a per-line note in the export and import responses when a value was replaced.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not yet reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not yet reproduced.",
+      "fix_note": "Export writes non-JSON source/metadata text verbatim as source_text/metadata_text beside {}, and import stores it back as it was; reverting either half turns test_export_carries_non_json_source_and_metadata_through_a_restore red."
     },
     {
       "id": "bug-615",
@@ -9160,12 +9171,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "st = os\\.stat\\(confined\\)",
+      "pattern": "if not path or \"\\\\x00\" in path:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Reject a path containing a NUL in _confine_io_path (or catch ValueError alongside OSError at the stat, mkstemp and open sites) and return an error_response with ok:false.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not yet reproduced. Same contract class as bug-242, which was fixed only for UnicodeDecodeError."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not yet reproduced. Same contract class as bug-242, which was fixed only for UnicodeDecodeError.",
+      "fix_note": "_confine_io_path refuses a path holding NUL before any filesystem call, so export, import and the ACL guard readers answer in the error-response shape; reverting turns test_nul_byte_in_export_and_import_paths_is_an_error_response red."
     },
     {
       "id": "bug-616",
@@ -9174,12 +9186,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/utils.py",
-      "pattern": "content = _MEMORY_ANNOTATION_PATTERN\\.sub\\(\"\", content\\)",
+      "pattern": "content = _strip_annotations\\(content\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Make the annotation strip idempotent (repeat the substitution until the text stops changing) so store and import agree, and move the truncation note after the msg_id duplicate check.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, with the sanitiser's non-idempotence checked directly; the import duplication was not reproduced. Related to bug-221."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, with the sanitiser's non-idempotence checked directly; the import duplication was not reproduced. Related to bug-221.",
+      "fix_note": "The sanitiser strips annotations to a fixed point with a linear scan and trims after the cut, so sanitising twice equals once; reverting to the single sub turns test_sanitiser_is_idempotent_on_an_annotation_assembled_by_its_own_removal and test_a_round_trip_of_a_nested_annotation_neither_mutates_nor_duplicates red."
     },
     {
       "id": "bug-617",
@@ -9188,12 +9201,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "^    pid = _null_as_empty\\(record, \"project_id\"\\)$",
+      "pattern": "if \\(tally\\.axisless_memories or tally\\.axisless_episodes\\) and _is_export_header\\(tally\\.file_header\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "When a memory or episode record has no `project_id` key at all, add a line to `errors` saying the row went to the global pool. The current exporter always writes the key, even when its value is ''. Document in docs/tools.md and docs/operations.md that pre-bug-016 exports do not carry the project and channel axes, and bump the header version string with any future format change.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced: a legacy-format import reported ok:true with no errors, and the row appeared in another project's listing. Related to bug-016, the exporter fix that began writing these axes."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced: a legacy-format import reported ok:true with no errors, and the row appeared in another project's listing. Related to bug-016, the exporter fix that began writing these axes.",
+      "fix_note": "An export whose memory/episode records lack project_id is restored with an errors note saying how many rows went to the global pool; reverting turns test_records_without_the_project_axis_are_reported red."
     },
     {
       "id": "bug-618",
@@ -9202,12 +9216,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "int\\(record\\.get\\(\"recall_count\"\\) or 0\\),",
+      "pattern": "raise _FieldRefused\\(f\"\\{key\\} is not a string\"\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Validate and coerce `recall_count`, the memory timestamps and the episode time fields on both arms before the dry_run split, as bug-094 does for keywords. Report a value that cannot be coerced as a per-line error that skips that record, not as an exception that aborts the file.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Extends bug-094; the null gamma-axis variant is bug-527."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Extends bug-094; the null gamma-axis variant is bug-527.",
+      "fix_note": "Every imported value is checked before the dry-run split and an unbindable one refuses its own line instead of aborting the restore; reverting the check turns test_a_bad_field_refuses_its_line_not_the_restore red."
     },
     {
       "id": "bug-619",
@@ -9216,12 +9231,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "^        \\(aid, ep_pid, ep_chan, summary\\),$",
+      "pattern": "existing = await tally\\.episode_keys\\.find\\(db, target_agent_id, ep_project_id, ep_channel, summary\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Give the probe an index it can seek, for example on (agent_id, project_id, channel, summary) or on a summary hash column. Alternatively, preload the target bucket's summaries into a set once per run, then check each record against the set and add it after insert. Apply the same change to the merge path.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. The probe was introduced by bug-220 and bug-076."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. The probe was introduced by bug-220 and bug-076.",
+      "fix_note": "The episode dedup gate reads each agent's episodes once into a digest map (_EpisodeSummaryIndex) instead of issuing a bucket-scanning summary probe per incoming row, at both the merge and import sites; a digest hit is confirmed by primary key. Reverting either site to the per-row probe turns test_merge/import_episode_dedup_does_not_scan_the_bucket_per_row and test_merge_episode_dedup_is_linear_in_the_rows_read red."
     },
     {
       "id": "bug-620",
@@ -9230,12 +9246,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "\" ON CONFLICT\\(agent_id, user_id\\) DO UPDATE SET\"",
+      "pattern": "first = tally\\.profile_lines\\.get\\(\\(aid, user_id\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "When a target agent is set and a second profile for the same `user_id` arrives in the same run, skip it, or merge it as merge_memories does, and report the collision in the response instead of overwriting silently.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Shares its upsert site with bug-528."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Shares its upsert site with bug-528.",
+      "fix_note": "Import keeps the first profile it restores to a target (agent_id, user_id) key and reports each later one instead of letting it overwrite; reverting turns test_profiles_colliding_on_one_target_keep_the_first_and_report_the_rest red."
     },
     {
       "id": "bug-621",
@@ -9286,12 +9303,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "^ {12}\"SELECT 1 FROM memories WHERE agent_id = \\? AND project_id = \\? AND channel = \\? AND content = \\? LIMIT 1\",",
+      "pattern": "tally\\.seen_content\\.add\\(\\(project_id, channel, content\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Track within-batch (target, project, channel, content) keys for memories in dry_run, as the import path's `seen_content` and the episode merge's `seen_summary` already do, and correct the comment that says memories cannot collide within a batch.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Same class as bug-071 (episodes) and bug-070 (import); the trigger state is the one bug-349 documents."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Same class as bug-071 (episodes) and bug-070 (import); the trigger state is the one bug-349 documents.",
+      "fix_note": "The merge preview remembers the message ids and content it previewed (seen_msgid / seen_content on _MergeTally), so duplicate source rows on a database without the dedup indexes are counted as the real merge counts them. Reverting turns test_merge_preview_matches_the_real_run_on_duplicate_source_content and ..._msg_id red."
     },
     {
       "id": "bug-625",
@@ -9300,12 +9318,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "tally\\.queue_remote\\(f\"mem:\\{cur\\.lastrowid\\}\", content\\)",
+      "pattern": "await _queue_derived_builds\\(target_agent_id, tally\\.remote_items, key\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-degradation",
       "fix_sketch": "After the merge (and import) transaction commits, queue block and node builds for every inserted memory and episode id, the same way the store path does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The import path is a sibling site with the same omission."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The import path is a sibling site with the same omission.",
+      "fix_note": "After the merge commits, _queue_derived_builds queues block construction for every record the merge inserted and node construction for those past the token window (batched token report via nodes.overflowing), as store does; failures are logged, never raised. Reverting turns test_merge_queues_block_and_node_builds_for_written_records red."
     },
     {
       "id": "bug-626",
@@ -9328,12 +9347,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "VALUES \\(\\?, \\?, \\?, \\?, datetime\\('now'\\)\\)",
+      "pattern": "\\(target_agent_id, prof_project_id, user_id, content, updated_at\\),",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Select the source profile's `updated_at` and insert it with `COALESCE(?, datetime('now'))`, matching the import path.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Sibling of bug-223 (import) at the merge site; bug-219 and bug-131 fixed the same class for merged episodes and memories."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Sibling of bug-223 (import) at the merge site; bug-219 and bug-131 fixed the same class for merged episodes and memories.",
+      "fix_note": "_merge_profile_rows selects the source's updated_at and inserts it with COALESCE(?, datetime('now')) instead of stamping the merge time. Reverting turns test_merge_keeps_the_copied_profile_updated_at red."
     },
     {
       "id": "bug-628",
@@ -9370,12 +9390,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/aliases.py",
-      "pattern": "os\\.replace\\(tmp_path, self\\._path\\)",
+      "pattern": "with self\\._locked\\(\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Hold an exclusive advisory lock on a sidecar lockfile across re-read, merge, mint and os.replace; alternatively re-check the file's fingerprint just before the replace and retry the merge if it changed.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced by a probe with an injected interleaving. Incomplete fix of bug-351; related to bug-531."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced by a probe with an injected interleaving. Incomplete fix of bug-351; related to bug-531.",
+      "fix_note": "resolve_or_issue runs the strict re-read, the mint and the os.replace under an exclusive advisory lock on <ledger>.lock that every server process takes, so a second process's issuance can no longer land between this process's re-read and rename and be erased by it. Reverting the lock turns tests/test_2611a2_x14.py::test_a_second_process_issuing_inside_the_window_keeps_its_row red."
     },
     {
       "id": "bug-631",
@@ -9413,13 +9434,14 @@
       "severity": "LOW",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "content, truncated = sanitize_content_with_flag\\(raw_content\\)",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "return error_response\\(surrogate, items=\\[\\], returned_count=0\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Refuse or replace lone surrogates during content sanitization, so such a store returns `result: 'rejected'` (or stores the repaired text) instead of raising from the dedup query; apply the same treatment to query strings before `query_terms` binds them.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; the store contract violation was confirmed by running it over the in-memory transport, while the recall/reconstruct asymmetry in the original report did not hold."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; the store contract violation was confirmed by running it over the in-memory transport, while the recall/reconstruct asymmetry in the original report did not hold.",
+      "fix_note": "reconstruct (and store, recall, recall_with_context, get_contents, archive_episode) check their text arguments with utils.lone_surrogate_issue before anything binds them and refuse in the tool's own failure shape; reverting reconstruct's check turns tests/test_2611a2_x05.py::test_reconstruct_refuses_a_lone_surrogate_with_its_collections red (UnicodeEncodeError), and reverting store's turns ::test_store_refuses_a_lone_surrogate_with_a_result red."
     },
     {
       "id": "bug-634",
@@ -9442,12 +9464,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/associations.py",
-      "pattern": "source_id=source_id, excluded=excluded, limit=per_entity \\+ 1,",
+      "pattern": "if len\\(nxt\\) > room:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Read records lazily in the walk's own order (hops, recency, id) and stop once an item has `max_evidence`; cap the number of entities the neighbourhood expands and report the cut in `bounds` as `max_hops` is reported. Bound traverse's `_neighbourhood` work by `limit`, not only its output.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced at up to 1,024 entities (larger-graph timings in the reports were not re-run). Related: bug-459 (whose hop cap does not bound this work), bug-534."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced at up to 1,024 entities (larger-graph timings in the reports were not re-run). Related: bug-459 (whose hop cap does not bound this work), bug-534.",
+      "fix_note": "_neighbourhood stops expanding at NEIGHBOURHOOD_MAX_ENTITIES, keeping the entities reached by the most recent relations. walk() reports a step onto an unexpanded entity as max_hops. Reverting the cap turns tests/test_2611a2_x15.py::test_the_walk_reads_no_more_entities_than_the_bound_and_says_it_cut and ::test_traverse_expands_no_more_entities_than_the_bound red."
     },
     {
       "id": "bug-636",
@@ -9456,12 +9479,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/block_index.py",
-      "pattern": "columns: dict\\[str, list\\] = \\{name: \\[\\] for name in \\(\"parent_id\"",
+      "pattern": "\"parent_id\": array\\(\"q\"\\),",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Write the metadata columns as fixed-width arrays during the scan (preallocated numpy arrays or `array.array`, or per-column temp files like the bits), instead of accumulating Python int lists and converting at the end.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced against a live build. Related: bug-535 (the same build function)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced against a live build. Related: bug-535 (the same build function).",
+      "fix_note": "_write_rows holds its eight per-row columns in typed array.array buffers instead of lists of Python ints, about 57 instead of 125 bytes a row measured over the whole build. Reverting turns tests/test_2611a2_x15.py::test_the_index_build_holds_its_columns_compactly red."
     },
     {
       "id": "bug-637",
@@ -9484,12 +9508,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "SELECT MAX\\(id\\) FROM memories",
+      "pattern": "SELECT COALESCE\\(MAX\\(CASE WHEN locked != 0 THEN id END\\), MAX\\(id\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Choose the survivor per collision group by preferring a locked row (for example order by locked DESC, id DESC) and blank only the unlocked non-survivors; report fix_error only when two or more colliders in one group are locked. Apply the same rule to the v12 migration.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-145 (the repair this refines), bug-098 (locked rows are never altered), bug-639 (missing test for the locked guard)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-145 (the repair this refines), bug-098 (locked rows are never altered), bug-639 (missing test for the locked guard).",
+      "fix_note": "The msg_id collision repair keeps a locked row's msg_id when its group has one (else the newest) and blanks the unlocked rest, so an older locked collider no longer blocks the index forever. Reverting the survivor to MAX(id) turns tests/test_2611a2_x08.py::test_msg_id_repair_keeps_the_locked_collider_and_blanks_the_newer_one red."
     },
     {
       "id": "bug-639",
@@ -9512,12 +9537,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "aiosqlite\\.connect\\(f\"file:\\{path\\}\\?mode=ro\", uri=True\\)",
+      "pattern": "uri = pathlib\\.Path\\(os\\.path\\.abspath\\(path\\)\\)\\.as_uri\\(\\) \\+ \"\\?mode=ro\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Percent-encode the path before building the URI (for example urllib.parse.quote on the absolute path) or build it with pathlib's as_uri, so '%', '?' and '#' reach SQLite as literal path characters and mode=ro always applies.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code plus a standalone SQLite URI experiment, not reproduced through check_health. Related: bug-439 (the confirmation step this affects)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code plus a standalone SQLite URI experiment, not reproduced through check_health. Related: bug-439 (the confirmation step this affects).",
+      "fix_note": "The fresh-connection quick_check builds its read-only URI with Path.as_uri(), which percent-encodes '%', '?' and '#', so the confirmation opens the server's own file. Reverting to the interpolated f-string turns tests/test_2611a2_x08.py::test_quick_check_confirmation_opens_a_path_that_needs_escaping red."
     },
     {
       "id": "bug-641",
@@ -9526,12 +9552,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "^        bad = \\($",
+      "pattern": "^    bad = \\($",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Drop the blanket except in both checks so a query failure reaches the runner and becomes a check_crashed finding, as bug-380 did for check_invalid_json.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The anchor is the guarded invalid-source count; the anonymous_source site is the `anon = (` block in the same file. Related: bug-380, bug-354, bug-355 (the same pattern removed from sibling checks), bug-144."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The anchor is the guarded invalid-source count; the anonymous_source site is the `anon = (` block in the same file. Related: bug-380, bug-354, bug-355 (the same pattern removed from sibling checks), bug-144.",
+      "fix_note": "check_invalid_source_type's count is no longer wrapped in except Exception: return [] (the same for both anonymous_source counts), so a failed query reaches the runner as check_crashed. Restoring the swallow turns tests/test_2611a2_x08.py::test_a_failed_count_is_reported_as_a_crashed_check red."
     },
     {
       "id": "bug-642",
@@ -9540,12 +9567,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "rows_read_exactly\\(db, index, \"memories\", all_axes, changed\\)",
+      "pattern": "rows_read_exactly\\(db, index, \"memories\", iso, changed\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "isolation",
       "fix_sketch": "Compute the live and tail counts with the caller's isolation scope (as check_vector_index's tail already does), or withhold the store-wide figures from agent-scoped callers and report them only on the global sweep. index.count is inherently store-wide, so it should be omitted for scoped callers.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-058 and bug-062 (agent-scoped counts), bug-549 (the same count is also miscomputed). Re-anchored with bug-514, which removed rows_still_present (and the counts behind it) from both findings; coarse_index_tail_grown still reports indexed_rows and rows_read_exactly over every agent."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-058 and bug-062 (agent-scoped counts), bug-549 (the same count is also miscomputed). Re-anchored with bug-514, which removed rows_still_present (and the counts behind it) from both findings; coarse_index_tail_grown still reports indexed_rows and rows_read_exactly over every agent.",
+      "fix_note": "check_coarse_index counts the rows read exactly in the checked scope, and both index checks report indexed_rows through _indexed_rows_in_scope (the agent's rows in the file). Reverting either to the store-wide figure turns tests/test_2611a2_x08.py::test_agent_scoped_coarse_index_finding_counts_that_agents_rows (or the vector twin) red."
     },
     {
       "id": "bug-643",
@@ -9597,12 +9625,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/blocks.py",
-      "pattern": "if len\\(segment\\(text, node_bounds=node_bounds\\)\\) > 1:",
+      "pattern": "out\\.extend\\(await asyncio\\.to_thread\\(_divisible, kind, records, sets, bounds, keys\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Page the scan and yield to the event loop between pages (or run the division off the loop), and avoid re-dividing records already known to be single-block, the way the bounded backfill sweep does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading. The blocks counterpart of bug-500, which covers the token-count requests of missing_nodes but not this CPU stall."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading. The blocks counterpart of bug-500, which covers the token-count requests of missing_nodes but not this CPU stall.",
+      "fix_note": "records_without_current_blocks runs the currency test and the pure-Python divider in a worker thread (asyncio.to_thread), so check_health and the checkup CLI no longer hold the event loop for the whole pass. Reverting turns tests/test_2611a2_x15.py::test_the_missing_blocks_scan_divides_records_off_the_event_loop red."
     },
     {
       "id": "bug-647",
@@ -9625,12 +9654,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "_USERNAME_PREFIX_PATTERN = re\\.compile",
+      "pattern": "name = _speaker_from_prefix\\(content\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Narrow the recovery to the annotation format CPersona itself writes (for example `[Memory from <name>]`) or reject tokens that look like checkboxes, dates or log levels, and leave the rest reported as unrecoverable.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading.",
+      "fix_note": "deep_anonymous_source recovers a speaker only through _speaker_from_prefix, which rejects checkboxes, dates and times, log levels, CPersona's own labels and admonitions. Reverting to the bare ^\\[(.+?)\\]\\s match turns tests/test_2611a2_x08.py::test_deep_anonymous_source_recovers_names_but_not_other_brackets red."
     },
     {
       "id": "bug-649",
@@ -9669,12 +9699,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/checks.py",
-      "pattern": "\"complete\": all\\(n < NORMALIZATION_SCAN_CAP for n in scanned\\.values\\(\\)\\)",
+      "pattern": "complete\\[table\\] = len\\(rows\\) <= NORMALIZATION_SCAN_CAP",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Read CAP+1 rows in both scans, cap the processed rows at CAP, and set `complete` from whether the extra row exists, as `check_invalid_source_type` does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. The second site is checks.py:4185 (`_NORM_SAMPLE_ROWS`). Related: bug-376."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. The second site is checks.py:4185 (`_NORM_SAMPLE_ROWS`). Related: bug-376.",
+      "fix_note": "deep_unnormalized_content (and deep_embedding_norm the same way) reads one row past the cap and calls a scan complete when no extra row came back, so exactly the cap is complete. Reverting to `n < CAP` turns tests/test_2611a2_x08.py::test_a_scan_of_exactly_the_cap_is_complete red."
     },
     {
       "id": "bug-652",
@@ -9711,12 +9742,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/config.py",
-      "pattern": "^MAX_MEMORIES = _parse_int\\(\"CPERSONA_MAX_MEMORIES\", 10000\\)",
+      "pattern": "^if MAX_MEMORIES < 1:$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Clamp `MAX_MEMORIES` at parse time, for example `max(1, ...)` with the usual malformed-value warning, as the neighbouring scan settings do, or refuse a negative value at startup.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced; the report claimed MEDIUM and the severity was lowered to LOW."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced; the report claimed MEDIUM and the severity was lowered to LOW.",
+      "fix_note": "A scan window below one row falls back to the default 10000 with a warning, so a negative value can no longer reach the coarse supplier as a scan position or switch the far list on. Reverting turns tests/test_2611a2_x12.py::test_a_scan_window_below_one_row_falls_back_and_says_so red."
     },
     {
       "id": "bug-655",
@@ -9725,12 +9757,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/config.py",
-      "pattern": "^RECONSTRUCT_DEFAULT_BUDGET = _parse_int\\(\"CPERSONA_RECONSTRUCT_DEFAULT_BUDGET\", 4000\\)",
+      "pattern": "\"CPERSONA_RECONSTRUCT_DEFAULT_BUDGET\", min\\(max\\(4000, _BUDGET_FLOOR\\), RECONSTRUCT_MAX_BUDGET\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "configuration",
       "fix_sketch": "When unset, derive the defaults the way the default count is derived: default budget = min(max(4000, preview floor), max budget) and tail quote = min(400, quote chars). Keep the refusal for explicitly set values, and document the coupling in docs/configuration.md and the upgrade notes.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced; the reports claimed up to MEDIUM and the severity was lowered to LOW. Related to bug-457, whose fix aimed to keep every configuration that starts today starting."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced; the reports claimed up to MEDIUM and the severity was lowered to LOW. Related to bug-457, whose fix aimed to keep every configuration that starts today starting.",
+      "fix_note": "Unset reconstruct budget defaults follow the preview tier up and the maximum down, and the unset tail follows the quote size down, so changing one neighbour no longer refuses startup over a default nobody set. Reverting turns tests/test_2611a2_x12.py::test_raising_only_the_preview_tier_still_starts (and the four sibling tests) red."
     },
     {
       "id": "bug-656",
@@ -9739,12 +9772,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/config.py",
-      "pattern": "^FTS_ENABLED = os\\.environ\\.get\\(\"CPERSONA_FTS_ENABLED\", \"true\"\\)\\.lower\\(\\) == \"true\"",
+      "pattern": "^FTS_ENABLED = _parse_bool\\(\"CPERSONA_FTS_ENABLED\", True\\)$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "configuration",
       "fix_sketch": "Parse the flags through one boolean helper that accepts the usual true and false spellings and falls back to the documented default with a warning for anything else, as `_parse_choice` does for word-valued settings.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading, not reproduced. Related to bug-133 and bug-321 (malformed-value fallback rule)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading, not reproduced. Related to bug-133 and bug-321 (malformed-value fallback rule).",
+      "fix_note": "Boolean flags are read through _parse_bool, which accepts the usual spellings of true and false and warns and keeps the default on anything else, so CPERSONA_FTS_ENABLED=1 no longer turns the keyword channel off. Reverting turns tests/test_2611a2_x12.py::test_the_usual_spellings_of_true_are_true red."
     },
     {
       "id": "bug-657",
@@ -9811,12 +9845,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/fileperms.py",
-      "pattern": "OwnedPath\\(vector_index\\.index_path\\(table\\), \"file\"",
+      "pattern": "OwnedPath\\(block_index\\.index_path\\(\\), \"file\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Add `coarse_index.index_path(table)` for both tables and `block_index.index_path()` to owned_paths(), and add a test that every module that writes through fileperms.open_private has its path in the list.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The list was introduced by bug-296 before the coarse and block indexes existed."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The list was introduced by bug-296 before the coarse and block indexes existed.",
+      "fix_note": "owned_paths lists the coarse index files for memories and episodes and the block index file, so a readable copy is reported and narrowed by the file_permissions check. Reverting turns tests/test_2611a2_x12.py::test_owned_paths_names_the_coarse_and_block_index_files red."
     },
     {
       "id": "bug-662",
@@ -9825,12 +9860,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/findings.py",
-      "pattern": "\"embedding_backend_unreachable\": \"warn\",",
+      "pattern": "^    \"embedding_backend_misconfigured\": \"warn\",$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Add `\"embedding_backend_misconfigured\": \"warn\"` to `_TIER_KINDS`, and add a test that every kind `finding_kind` can return for a tiered check has an explicit FINDING_SEVERITY entry.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. A residual of bug-372, which added the kind without its severity."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. A residual of bug-372, which added the kind without its severity.",
+      "fix_note": "The misconfigured embedding backend kind has a static warn severity like its unreachable twin, so it is no longer delivered at the info fallback. Reverting turns tests/test_2611a2_x12.py::test_a_misconfigured_backend_is_delivered_as_warn_like_its_twin red."
     },
     {
       "id": "bug-663",
@@ -9880,13 +9916,14 @@
       "severity": "LOW",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "timestamp = message\\.get\\(\"timestamp\", datetime\\.now",
+      "file": "cpersona/server.py",
+      "pattern": "if message and message\\.get\\(\"timestamp\"\\) == \"\":",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Treat an empty or missing `message.timestamp` the same way the flat form does and substitute the current time, so both forms agree. Optionally let the `invalid_timestamp` check report rows whose timestamp is '' so existing rows can be repaired from `created_at`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. The broader lack of bounds and format validation on the timestamp field is bug-570."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. The broader lack of bounds and format validation on the timestamp field is bug-570.",
+      "fix_note": "do_store_boundary drops an empty timestamp from the legacy message form so it reads as omitted, matching _flat_message; reverting it turns tests/test_2611a2_x05.py::test_an_empty_legacy_timestamp_means_now_as_in_the_flat_form red."
     },
     {
       "id": "bug-667",
@@ -9895,12 +9932,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "f\" AND project_id IN \\(\\{proj_in\\}\\) AND channel IN \\(\\{chan_in\\}\\) AND content = \\?\",",
+      "pattern": "db, agent_id, project_id, channel, msg_id, content, own_source_id, beyond_bucket=True",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Repeat the project-visible dedup probe inside the write transaction immediately before the INSERT (the write lock serialises it against other stores), keeping the earlier probe only as a fast path before the embedding call.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. Related to bug-106 (project-visible dedup) and bug-010 (the exact-bucket race backstop)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. Related to bug-106 (project-visible dedup) and bug-010 (the exact-bucket race backstop).",
+      "fix_note": "do_store re-runs the dedup probe inside its write transaction for the part of the γ-visible scope the exact-bucket unique indexes cannot see (the global project and unscoped channel), so a global copy committed after the first probe answers the bucket write; reverting it turns tests/test_2611a2_x05.py::test_a_global_copy_landing_mid_store_answers_a_bucket_write and ::test_concurrent_bucket_and_global_stores_never_insert_after_the_global_copy red."
     },
     {
       "id": "bug-668",
@@ -9909,12 +9947,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "return _store_skipped\\(\"duplicate \\(unique index\\)\"\\)",
+      "pattern": "^    if timestamp is None:$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Coerce or refuse null `channel` and `timestamp` in `do_store` before the INSERT (a `rejected` result for an unusable value), so the OR IGNORE branch can only be reached by a real UNIQUE collision; optionally confirm the collision with a probe before reporting it as a duplicate.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. Related to bug-010, which introduced the OR IGNORE."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. Related to bug-010, which introduced the OR IGNORE.",
+      "fix_note": "do_store settles every value bound into a NOT NULL column before its INSERT OR IGNORE (timestamp None -> now, id None -> '', channel coerced like project_id, agent_id None refused), so IGNORE can only absorb a uniqueness conflict; reverting turns tests/test_2611a2_x05.py::test_a_none_timestamp_is_an_omitted_timestamp and ::test_a_none_channel_is_the_default_channel red."
     },
     {
       "id": "bug-669",
@@ -9922,13 +9961,14 @@
       "severity": "LOW",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "base_url = vector\\._embedding_client\\._http_url\\.rsplit\\(\"/\", 1\\)\\[0\\]",
+      "file": "cpersona/vector.py",
+      "pattern": "sibling = _sibling_route\\(url, route\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Derive every remote sibling route (`/index`, `/search` and the admin sites) with the vendored `_sibling_route` helper so the query string is kept and a trailing slash is handled. Refuse, or warn once, when the configured URL does not end in `/embed`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-425, which treats credentials in the embedding URL's query string as a supported configuration."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-425, which treats credentials in the embedding URL's query string as a supported configuration.",
+      "fix_note": "Every remote index-service URL (index, search, remove, purge) is derived by vector.remote_route through the embedding client's _sibling_route, keeping the configured query string and handling a trailing slash; a URL not ending in /embed yields no route, no remote call and one warning. Reverting to the last-slash cut turns tests/test_2611a2_x07.py::test_store_and_search_reach_the_service_with_the_configured_query and ::test_every_remote_side_effect_keeps_the_configured_query red with requests that lost api_key."
     },
     {
       "id": "bug-670",
@@ -9965,12 +10005,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "WHERE agent_id = \\? AND id IN \\(\\{marks\\}\\)",
+      "pattern": "f\"SELECT id, embedding FROM \\{table\\} WHERE id IN \\(\\{\\{ph\\}\\}\\) AND agent_id = \\?\",",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Split the id list at `vector._ID_FETCH_CHUNK` as the other id reads on this path do, or cap the candidate list fed to the blob fetch; on failure skip the seat rather than failing the recall.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Same class as bug-301 and bug-318."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Same class as bug-301 and bug-318.",
+      "fix_note": "The propagation seat reads the anchor's and candidates' vectors through vector._fetch_rows_by_id, split at vector._ID_FETCH_CHUNK like every other id read on the recall, so a deep ranking no longer passes SQLite's variable limit and fails the whole recall. Reverting turns tests/test_2611a2_x07.py::test_the_propagation_seat_reads_its_vectors_under_the_variable_ceiling red with 'too many SQL variables'."
     },
     {
       "id": "bug-673",
@@ -10021,7 +10062,7 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "exclude_set = \\{c\\.strip\\(\\)\\.lower\\(\\) for c in exclude_contents",
+      "pattern": "exclude_set = ExcludeSet\\(c\\.strip\\(\\)\\.lower\\(\\) for c in exclude_contents",
       "expected": "present",
       "status": "open",
       "category": "test-coverage",
@@ -10105,12 +10146,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "placeholders = \",\"\\.join\\(\"\\?\" \\* len\\(returned_ids\\)\\)",
+      "pattern": "for start in range\\(0, len\\(unique_ids\\), vector\\._ID_FETCH_CHUNK\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Run the UPDATE in chunks of the shared id-fetch bound inside the same transaction, as the read twin does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-318, which chunked the read side only."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Related: bug-318, which chunked the read side only.",
+      "fix_note": "The recall_count/last_recalled_at UPDATE is chunked at vector._ID_FETCH_CHUNK inside the one transaction (ids deduplicated first). Reverting to a single IN turns test_a_recall_deeper_than_the_variable_ceiling_still_credits_every_row red."
     },
     {
       "id": "bug-683",
@@ -10161,12 +10203,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "for term in sorted\\(set\\(candidates\\.values\\(\\)\\)\\):",
+      "pattern": "len\\(set\\(candidates\\.values\\(\\)\\)\\) > COMMON_PHRASE_MAX_COUNTS",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Bound the shortcut: skip `_common_phrases` when the candidate count exceeds a small limit, or count every candidate phrase in one statement. A query-length cap at the tool boundary is a reasonable second line.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The same counting loop is where bug-687 reads its two non-atomic counts."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The same counting loop is where bug-687 reads its two non-atomic counts.",
+      "fix_note": "_common_phrases leaves a query with more than COMMON_PHRASE_MAX_COUNTS (64) distinct trigram candidates unclassified, so it issues no per-trigram count statements and the arm ranks on the whole expression. Reverting turns test_a_long_query_issues_a_bounded_number_of_phrase_counts red."
     },
     {
       "id": "bug-687",
@@ -10175,12 +10218,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "if math\\.log\\(\\(n_rows - held\\.get\\(term, 0\\) \\+ 0\\.5\\)",
+      "pattern": "held\\[term\\] = min\\(n_rows, ",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Clamp each count to at most `n_rows` (or read all counts in one read transaction, or take `n_rows` after the per-phrase counts). Also let the rare-phrase shortcut fall back to the whole expression on any exception, not only OperationalError.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Same code path as bug-686."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Same code path as bug-686.",
+      "fix_note": "Each phrase count is capped at the row count read before it, so rows committed by any agent between the two statements can no longer make the idf take the log of a negative ratio; the rare-phrase shortcut's except also widens to Exception so any failure of the optimisation ranks on the whole expression. Reverting the clamp turns tests/test_2611a2_x07.py::test_a_phrase_counted_in_more_rows_than_the_row_count_is_common red with 'math domain error'; narrowing the except turns ...::test_the_shortcut_failing_in_any_way_ranks_on_the_whole_expression red."
     },
     {
       "id": "bug-688",
@@ -10189,12 +10233,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "WHERE episodes_fts MATCH \\?",
+      "pattern": "Episode FTS search unavailable, searching no episodes by keyword",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Give `_search_episodes_fts` the same OperationalError guard as the memory keyword arm, logging and returning no episodes so the recall degrades. Optionally strip or reject U+0000 in queries at the tool boundary.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. It is the episode-side gap left by bug-326, whose regression test exercises only the memory keyword path."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. It is the episode-side gap left by bug-326, whose regression test exercises only the memory keyword path.",
+      "fix_note": "_search_episodes_fts catches sqlite3.OperationalError around its MATCH, logs a warning and answers no episodes, as the memory keyword arm degrades (bug-326) and as the arm does with FTS disabled; an absent episodes_fts or a NUL inside a query token no longer fails the whole recall. Reverting turns tests/test_2611a2_x07.py::test_a_nul_in_the_query_does_not_fail_the_episode_search and ::test_recall_degrades_when_the_episode_index_is_absent red."
     },
     {
       "id": "bug-689",
@@ -10203,12 +10248,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "patterns = \\[_like_escape_contains\\(query\\)\\]",
+      "pattern": "patterns = \\[p for p in patterns if len\\(p\\.encode\\(\"utf-8\"\\)\\) <= _LIKE_PATTERN_MAX_BYTES\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "In the LIKE fallback, leave out or cut short any contains-pattern whose UTF-8 length plus the two % signs exceeds SQLite's pattern limit, and catch OperationalError there as the FTS branch does, so the recall comes back empty with a shortfall reason. A maxLength on the query in the recall, reconstruct and recall_with_context schemas could be added as defence in depth.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-326, whose LIKE fallback is the path that raises here."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. Related to bug-326, whose LIKE fallback is the path that raises here.",
+      "fix_note": "The LIKE fallback leaves out any pattern over 50,000 UTF-8 bytes (SQLite's default SQLITE_MAX_LIKE_PATTERN_LENGTH) and catches OperationalError as an empty arm. Removing the filter turns test_a_short_extra_term_still_matches_beside_a_long_query red; removing both layers turns the long-query recall/reconstruct tests red."
     },
     {
       "id": "bug-690",
@@ -10217,12 +10263,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "timestamps = \\[stamp for msg in history if \\(stamp := _ctx_string\\(msg, \"timestamp\"\\)\\)\\]",
+      "pattern": "archive_episode: history timestamp %r is",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Apply `future_timestamp_issue` to the episode span ends under the same mode (warn, reject or off) the store seam uses, or state in docs/configuration.md that episodes are outside the setting.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced.",
+      "fix_note": "do_archive_episode applies the store's future-timestamp verdict to the history stamps it will store (warn reports timestamp_ahead_of_clock, reject refuses before the embed); reverting it turns tests/test_2611a2_x05.py::test_reject_refuses_an_episode_stamped_ahead_of_the_clock and ::test_warn_stores_the_episode_and_reports_the_stamp red."
     },
     {
       "id": "bug-691",
@@ -10231,12 +10278,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/oauth.py",
-      "pattern": "if getattr\\(key, \"key_id\", None\\) and \\(key\\.public_key_use in \\(None, \"sig\"\\)\\):",
+      "pattern": "keys\\[\"\"\\] = signing\\[0\\]\\.key",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "compatibility",
       "fix_sketch": "Keep kid-less signing keys under a synthetic key and let the cache lookup serve the sole key when the token has no kid; a set with several kid-less keys should still be refused rather than guessed.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced.",
+      "fix_note": "_refresh keeps a sole kid-less signing key under \"\" (RFC 7517 section 4.5 makes kid optional), served through _from_cache's existing sole-key branch to a token without a kid; several kid-less keys are still refused and logged as such. Reverting it turns tests/test_2611a2_x14.py::test_a_single_signing_key_without_a_kid_verifies_a_token_without_one red."
     },
     {
       "id": "bug-692",
@@ -10259,12 +10307,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/oauth.py",
-      "pattern": "last = entry\\.logged_at if entry is not None else self\\._outage_logged_at",
+      "pattern": "last = windows\\.get\\(message, -math\\.inf\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Rate-limit per issuer and message kind, or collect the walk's diagnostics and log the final verdict (the refusal reason) rather than whichever message came first.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related to bug-373."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related to bug-373.",
+      "fix_note": "_log_outage keeps one window per issuer and per message template (a fixed string, so the map stays bounded), so the RFC 8414 jwks_uri note no longer suppresses the pairwise-subject refusal that follows it in the same discovery walk on every walk. Reverting to one stamp per issuer turns tests/test_2611a2_x14.py::test_an_earlier_diagnostic_does_not_suppress_the_pairwise_refusal red."
     },
     {
       "id": "bug-694",
@@ -10273,12 +10322,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/proxy_stdio.py",
-      "pattern": "out_queue\\.put_nowait\\(_response_messages\\(response\\)\\)",
+      "pattern": "raise _NotJsonRpc\\(text\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Before forwarding a 2xx body, check that it is SSE or parses as JSON (or carries a JSON content type); otherwise queue a JSON-RPC error for the request, as the non-2xx branch does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. The 2xx counterpart of bug-063 and bug-082."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. The 2xx counterpart of bug-063 and bug-082.",
+      "fix_note": "_response_messages raises _NotJsonRpc for a 2xx non-SSE body that is not a JSON object or array, and _forward answers the request with a JSON-RPC error instead of writing the body to stdout; multi-line JSON is compacted to one frame and non-JSON SSE data lines are dropped. Reverting the check turns tests/test_2611a2_x14.py::test_a_2xx_html_page_is_answered_as_an_error_not_written_to_stdout red."
     },
     {
       "id": "bug-695",
@@ -10356,13 +10406,13 @@
       "severity": "LOW",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/reconstruct.py",
-      "pattern": "node_keys = generation\\.node_keys\\(\\)",
+      "file": "cpersona/blocks.py",
+      "pattern": "measured = await _measured_from_file\\(db, keys, axes, query_bits\\)",
       "expected": "present",
       "status": "open",
       "category": "correctness",
       "fix_sketch": "Call `generation.refresh()` (or a cheap rate-limited variant) at the start of the async read paths that judge currency, `_current_sets` and `blocks.search`, as the build side already does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-461."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-461. Partly fixed in 2.6.11a2: _current_sets asks the backend for its identity (bounded by the refresh interval) before judging node/block currency, so sets stamped by a model the backend no longer runs are not quoted as current; removing it turns test_a_node_set_from_before_a_redeploy_is_not_current_to_the_quotation_reader and test_a_block_set_from_before_a_redeploy_is_not_current_to_the_quotation_reader red. blocks.search (block arm) is still open, pinned by the strict xfail test_the_block_arm_does_not_examine_blocks_from_before_a_redeploy. The open anchor now names the remaining half."
     },
     {
       "id": "bug-701",
@@ -10371,12 +10421,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "SELECT parent_id, node_index, start_char, end_char, embedding, embedding_model",
+      "pattern": "ends_only = \\[i for i in batch if i in block_ids and i not in node_ids\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Select `embedding` only for ids in `node_ids` (a separate ends-only query for block-only ids), and give the regression test a fixture that builds record nodes so the read is observable.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-495."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-495.",
+      "fix_note": "_current_sets reads node embeddings only for records a claim quotes from nodes; a record read only for its block set reads its node ends (end_char) alone. Reverting makes test_a_block_quoted_head_reads_no_node_embeddings red (bytes of node embeddings read for a block-quoted head)."
     },
     {
       "id": "bug-702",
@@ -10427,12 +10478,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "start, end, _ = blocks\\.context_range\\(text, spans, row\\[0\\]\\)",
+      "pattern": "before = bisect\\.bisect_left\\(governed, \\(row\\[2\\],\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Before calling `context_range`, skip a block whose own span already lies inside a governed range; the overlap check after it then only handles partial overlaps.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, with a direct timing of `record_passages`; not reproduced end to end. Related: bug-579, which covers the superlinear cost of the same loop on per-character blocks."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, with a direct timing of `record_passages`; not reproduced end to end. Related: bug-579, which covers the superlinear cost of the same loop on per-character blocks.",
+      "fix_note": "record_passages skips a block whose own span already lies in a taken range before computing its governing range (that range always contains the block, so it would overlap and be discarded). Reverting makes test_record_passages_skips_blocks_inside_a_taken_range red (block N lies inside a taken range)."
     },
     {
       "id": "bug-706",
@@ -10441,12 +10493,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "budget = LITE_BUDGET",
+      "pattern": "mode_budget = LITE_BUDGET if mode == MODE_LITE else None",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Resolve the lite default inside `resolve_budget` as a server default (its own source and reason) rather than substituting it for the caller's value, and report `requested_budget` only when the caller sent one.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code; not reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code; not reproduced.",
+      "fix_note": "Lite's 2,800-character budget is passed to resolve_budget as the mode's server default instead of being written into the caller's budget, so requested_budget/budget_policy no longer attribute it to the caller. Reverting makes test_lite_does_not_report_a_budget_the_caller_never_sent red (2800 is None)."
     },
     {
       "id": "bug-707",
@@ -10483,12 +10536,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "return error_response\\($",
+      "pattern": "\\*\\*\\{key: response\\[key\\] for key in _NOTICES if key in response\\},",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Copy the forwarded notices (advisory, update, suggestion, time_cue) onto the cap_below_minimum error response as the success path does, or build the error from the response that already holds them.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. A recurrence of the bug-436 class at another exit; the refusal itself is bug-582."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. A recurrence of the bug-436 class at another exit; the refusal itself is bug-582.",
+      "fix_note": "The cap_below_minimum refusal carries the per-session notices the candidate recall already marked as told. Reverting makes test_a_cap_refusal_delivers_the_notice_the_session_was_marked_told red (the refusal dropped the update notice)."
     },
     {
       "id": "bug-710",
@@ -10497,12 +10551,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/scope_stats.py",
-      "pattern": "f\"WHERE timestamp != '' AND datetime\\(timestamp\\) IS NOT NULL\\{iso.and_clause\\}\"$",
+      "pattern": "while text is not None and not _readable\\(text\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Require a date-shaped stamp in the span filter, for example `timestamp GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'`, matching what the Python parser accepts. Alternatively reject or normalize non-ISO stamps at the write seam and have the invalid-timestamp check flag them.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. An incomplete fix of bug-237, affecting the bug-207 anchor."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. An incomplete fix of bug-237, affecting the bug-207 anchor.",
+      "fix_note": "Already fixed by 916dc1e (bug-587): get_span steps past a span end its caller's parser cannot read, both at the seek and in the settling window. Removing the _readable_end step turns tests/test_2611a2_x15.py::test_a_bare_number_stored_through_store_is_not_the_span_s_oldest_end red."
     },
     {
       "id": "bug-711",
@@ -10511,12 +10566,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "return \\{\\*\\*_oc_reject\\(error\\), \"result\": \"rejected\", \"reason\": error\\}",
+      "pattern": "refused\\[\"locked\"\\] = False",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Add `locked: false` to every store refusal when `lock` was requested (for example by passing `lock` into `_store_refused` and the gate refusal), so the documented field is total over lock:true responses.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. The bug-169 / bug-232 response-shape class."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. The bug-169 / bug-232 response-shape class.",
+      "fix_note": "_store_refused takes the call's lock flag and adds locked:false, and all three boundary refusals (mixed forms, missing agent_id, operating-context gate) build their response through it. Reverting turns tests/test_2611a2_x10.py::test_a_refused_store_under_lock_says_it_locked_nothing red."
     },
     {
       "id": "bug-712",
@@ -10539,12 +10595,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "return \\{\\*\\*_oc_reject\\(error\\), \"entities\": \\[\\], \"mentions\": 0",
+      "pattern": "^            \"result\": \"rejected\",$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Add `result: 'rejected'` (and a `reason`) to the declare_associations operating-context refusal, matching store's gate refusal.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. The bug-169 / bug-232 response-shape class."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. The bug-169 / bug-232 response-shape class.",
+      "fix_note": "The declare_associations operating-context refusal carries result:'rejected', as every other response of the tool carries result. Reverting turns tests/test_2611a2_x10.py::test_declare_associations_gate_refusal_carries_result red."
     },
     {
       "id": "bug-714",
@@ -10553,12 +10610,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "result\\[\"full_content_budget_chars\"\\] = RECALL_FULL_CONTENT_MAX_CHARS",
+      "pattern": "m\\[\"excerpt\"\\] = found\\[m\\[\"ref\"\\]\\]\\[\"excerpt\"\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Compute excerpts for full_content calls too (or at least for the rows the budget cuts), so a row that falls back to the preview carries `excerpt` as the description promises; otherwise narrow the description.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. Related to bug-211."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not yet reproduced. Related to bug-211.",
+      "fix_note": "_apply_full_content_budget reports the rows it cut (ref -> whole text). _full_content_with_budget gives those rows only their excerpt, through excerpts.for_refs, using the query vector the recall embedded (handed back via query_vec_out). Reverting turns tests/test_2611a2_x10.py::test_recall_full_content_row_cut_by_the_budget_carries_its_excerpt and its recall_with_context twin red."
     },
     {
       "id": "bug-715",
@@ -10707,12 +10765,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "await generation\\.refresh\\(vector\\._embedding_client\\)",
+      "pattern": "generation\\.refresh\\(vector\\._embedding_client\\), STARTUP_IDENTITY_PROBE_SECONDS",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Bound the startup identity probe with a short timeout, or move it to a background task as the startup calibration was, so the database and transport open without waiting on an optional probe.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced in this verification (an earlier measurement with a 5 s timeout matched the code path). Related: bug-258, which moved the startup calibration off the startup path for the same reason."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced in this verification (an earlier measurement with a 5 s timeout matched the code path). Related: bug-258, which moved the startup calibration off the startup path for the same reason.",
+      "fix_note": "main() wraps the startup identity probe in asyncio.wait_for(..., STARTUP_IDENTITY_PROBE_SECONDS=3.0). An unanswered probe no longer holds the database and transport closed for the full embedding timeout. Reverting turns tests/test_2611a2_x10.py::test_a_backend_that_does_not_answer_does_not_hold_startup red."
     },
     {
       "id": "bug-726",
@@ -10721,12 +10780,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "vector\\._agent_fused_gates\\[agent_id\\] = fused_stats\\[\"threshold\"\\]",
+      "pattern": "and vector\\._get_precision_beta\\(agent_id\\) != gate_beta",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Serialise calibrations per agent, for example with a per-agent asyncio.Lock taken by do_calibrate_threshold, or re-read the agent's beta before applying and persisting and discard the fused-gate result when it changed during the measurement. The startup loop could also skip an agent whose beta was set by set_recall_precision after the loop started.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced with a forced finish order. Related: bug-149 (its compare-and-restore covers only the failure rollback) and bug-258 (which moved the startup calibration beside serving)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced with a forced finish order. Related: bug-149 (its compare-and-restore covers only the failure rollback) and bug-258 (which moved the startup calibration beside serving).",
+      "fix_note": "do_calibrate_threshold records the beta it measured the gate at (gate_beta). Just before the sidecar save, with no await between, it discards the gate when the agent's beta changed during the measurement, and it writes the gate there rather than where it was measured. Reverting the comparison turns tests/test_2611a2_x02.py::test_a_gate_measured_at_the_old_beta_does_not_replace_the_one_precision_applied red."
     },
     {
       "id": "bug-727",
@@ -10735,12 +10795,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "if config\\.transport\\(\\) != \"streamable-http\":",
+      "pattern": "^    config\\.validate_transport\\(\\)$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Reject an unknown transport name in the preflight, before `init_db()`, alongside the existing HTTP auth checks. For example, validate it against the set {`stdio`, `streamable-http`} at the top of `main()` or in `config.transport()`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Related: bug-203, which fixed the same ordering for the HTTP auth preflight."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Related: bug-203, which fixed the same ordering for the HTTP auth preflight.",
+      "fix_note": "main() calls config.validate_transport() together with the other configuration checks, so an unknown CPERSONA_TRANSPORT is refused before the database, calibration, update check, queue and block index start. Reverting turns tests/test_2611a2_x10.py::test_an_unknown_transport_is_refused_before_startup red."
     },
     {
       "id": "bug-728",
@@ -10763,12 +10824,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/tasks.py",
-      "pattern": "if session\\.is_paused_for\\(task_session_key\\):",
+      "pattern": "if task_type not in derived and session\\.is_paused_for\\(task_session_key\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "isolation",
       "fix_sketch": "Attribute server-originated work (the backfill sweep and its continuations, and `block_index_build`) to a reserved system key that no caller can pause, or exempt those task types from the pause gate. Optionally, let the derived builds of already-committed records survive a pause.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced, with a declared-session control. Related: bug-151."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced, with a declared-session control. Related: bug-151.",
+      "fix_note": "The drain exempts derived task types (node/block builds, the backfill sweep, the block index build) from the pause gate, so a keyless or session pause no longer deletes them. Reverting turns tests/test_2611a2_x15.py::test_a_keyless_pause_does_not_delete_the_servers_own_derived_work and ::test_a_pause_does_not_drop_the_build_of_a_record_already_stored red."
     },
     {
       "id": "bug-730",
@@ -10805,12 +10867,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/tasks.py",
-      "pattern": "f\"SELECT MAX\\(id\\) FROM pending_memory_tasks\\{iso_all\\.where\\}\"",
+      "pattern": "if moved and key is not None and new_id is not None:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Check the UPDATE's rowcount, or use `RETURNING id`, in `_requeue_at_tail`. When no row matched, drop the attribution and do not re-attribute. Never read `MAX(id)` as the moved row's id.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced, with a control in which the row was not deleted. Related: bug-463."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced, with a control in which the row was not deleted. Related: bug-463.",
+      "fix_note": "_requeue_at_tail reads the UPDATE's rowcount and re-attributes only when the row actually moved. When the row vanished it drops the attribution instead of writing it onto MAX(id). Reverting turns tests/test_2611a2_x15.py::test_requeueing_a_vanished_row_does_not_reattribute_another_sessions_task red."
     },
     {
       "id": "bug-733",
@@ -10819,12 +10882,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/update_check.py",
-      "pattern": "return _store\\(_verdict_dict\\(STATE_UNKNOWN, __version__, None, None, None\\), _checked_at\\)",
+      "pattern": "if verdict is None or verdict\\[\"state\"\\] == STATE_UNKNOWN:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "On the failure branch, do not replace a standing verdict. Either return the current verdict, with the failure reported separately in the call's own answer, or pass the call's own `fetched_at`, so `_superseded_by` orders it against a fresher answer. Keep `checked_at` consistent with the documented meaning of `unknown`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Related: bug-375, whose fix covers only the success branch."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced. Related: bug-375, whose fix covers only the success branch.",
+      "fix_note": "A failed fetch or an unreadable index no longer stores state=unknown over a known verdict (and is not cached); refresh() returns the standing verdict and only stores unknown, unstamped, when nothing is known. Reverting it turns tests/test_2611a2_x11.py::test_a_failed_refresh_keeps_a_known_yanked_verdict and ::test_a_slow_failing_fetch_does_not_overwrite_a_fresher_verdict red."
     },
     {
       "id": "bug-734",
@@ -10833,12 +10897,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/update_check.py",
-      "pattern": "\\[\"git\", \"-C\", repo_dir, \"pull\"\\],",
+      "pattern": "\"command\": detached_command if _head_is_detached\\(repo_dir\\) else pull_command,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Show the right command without spawning a subprocess on the notice path, for example by reading `.git/HEAD` to tell whether the tree is on a branch, or by showing both forms in the notice, the hint and `install.command`.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code, not reproduced.",
+      "fix_note": "detect_install reads the checkout's HEAD file (no subprocess; follows a `gitdir:` .git file) and shows the fetch --tags/checkout-tag command for a detached tree on every surface. Reverting it turns tests/test_2611a2_x11.py::test_a_detached_checkout_is_given_the_tag_command_everywhere red."
     },
     {
       "id": "bug-735",
@@ -10847,12 +10912,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/update_check.py",
-      "pattern": "for step in install\\[\"argv_steps\"\\]:",
+      "pattern": "if _apply_task is not None and not _apply_task\\.done\\(\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Make apply single-flight within the process: refuse (or join) a second apply while one is in progress, and on cancellation either terminate and reap the child or keep the in-progress mark until the child exits so a retry cannot overlap it.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced.",
+      "fix_note": "apply runs its steps in a module-held task awaited through asyncio.shield, refuses a second apply until that task ends (so a cancelled call keeps the slot until its child exits), and a cancelled call starts no further step. Reverting the guard turns tests/test_2611a2_x11.py::test_a_second_apply_is_refused_while_a_cancelled_one_still_installs and ::test_two_concurrent_applies_run_one_installer red."
     },
     {
       "id": "bug-736",
@@ -10861,12 +10927,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/update_check.py",
-      "pattern": "process = await asyncio\\.create_subprocess_exec\\(",
+      "pattern": "stdin=asyncio\\.subprocess\\.DEVNULL,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "isolation",
       "fix_sketch": "Start installer steps with `stdin=asyncio.subprocess.DEVNULL`, and pass `--no-input` (or set `PIP_NO_INPUT=1` in the child environment) for pip so an authentication prompt fails fast with a readable error instead of reading the protocol stream.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code and pip's prompt path, not reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code and pip's prompt path, not reproduced.",
+      "fix_note": "_run_step gives every child an empty stdin so a prompting installer cannot read the stdio transport's JSON-RPC stream. Reverting it turns tests/test_2611a2_x11.py::test_an_apply_step_cannot_read_the_servers_stdin red."
     },
     {
       "id": "bug-737",
@@ -10903,12 +10970,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/utils.py",
-      "pattern": "for excl in exclude_set:",
+      "pattern": "index = exclude_set if isinstance\\(exclude_set, ExcludeSet\\) else ExcludeSet\\(exclude_set\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Bound the exclusion list (schema `maxItems` and a handler-side cap), answer entries below the prefix floor with a set membership test, and restrict the prefix loop to the remaining long entries.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code; the timings were not rerun. Related: bug-217."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code; the timings were not rerun. Related: bug-217.",
+      "fix_note": "_content_excluded answers a row from an index built once per recall (ExcludeSet: set lookup for exact matches, sorted entries at or above the prefix floor searched by bisection) instead of walking every entry per row. Restoring the linear walk turns test_exclusion_cost_per_row_does_not_grow_with_the_list red."
     },
     {
       "id": "bug-740",
@@ -10931,12 +10999,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/vector.py",
-      "pattern": "score = hit\\[\"score\"\\]",
+      "pattern": "score = _remote_score\\(hit\\[\"score\"\\]\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Validate each hit's score inside the guarded parse (a real, finite number, not a bool), and treat a body that fails it like the other malformed shapes: log a warning and return None so the local scan runs.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-333."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-333.",
+      "fix_note": "Each remote hit's score is validated inside the fallback try (finite int/float, not bool), so a malformed score falls back to the local scan instead of raising at the quality gate; reverting turns test_2611a2_x13.py::test_a_recall_survives_a_string_score_from_the_remote_service red with TypeError."
     },
     {
       "id": "bug-742",
@@ -10945,12 +11014,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/vector.py",
-      "pattern": "scan_offset = MAX_MEMORIES$",
+      "pattern": "if await _change_stamp\\(db\\) == stamp:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Read the near and far windows inside one pinned read snapshot, or define the far window by a keyset boundary (the last near row's created_at/id) instead of a numeric OFFSET, so a concurrent delete cannot open a gap between them.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Completes bug-334, which handled only the insert direction."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. Completes bug-334, which handled only the insert direction.",
+      "fix_note": "_search_vector stamps the connection (PRAGMA data_version, total_changes) around the near+far reads and reads the pair again once when it moved, so a delete between them cannot hide the boundary row; removing the check turns test_2611a2_x13.py::test_a_delete_between_the_near_and_far_reads_does_not_hide_a_row red."
     },
     {
       "id": "bug-743",
@@ -10959,12 +11029,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/vector_index.py",
-      "pattern": "src_expr = \", json_extract\\(source, '\\$\\.id'\\)\"",
+      "pattern": "CASE WHEN json_valid\\(source\\) THEN json_extract\\(source, '\\$\\.id'\\) END",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Guard the projection, e.g. `CASE WHEN json_valid(source) THEN json_extract(source, '$.id') END`, so a malformed source is indexed with a NULL source id instead of aborting the build. Optionally have `check_invalid_json` name the locked ids it cannot repair.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same unguarded-json_extract class as bug-144, bug-227 and bug-239, at a new site."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same unguarded-json_extract class as bug-144, bug-227 and bug-239, at a new site.",
+      "fix_note": "plan_rows reads the source id only when json_valid(source), so a malformed source indexes as a NULL source id instead of aborting both builders; reverting turns test_2611a2_x13.py::test_a_locked_row_with_a_malformed_source_does_not_stop_either_build red with 'malformed JSON'."
     },
     {
       "id": "bug-744",
@@ -10973,12 +11044,12 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/vector_index.py",
-      "pattern": "return np\\.fromfile\\(src, dtype=dtype, count=items, offset=offset\\)",
+      "pattern": "return os\\.name != \"nt\"",
       "expected": "present",
       "status": "open",
       "category": "resource-budget",
       "fix_sketch": "Correct the comment and design doc to say the Windows cost scales with the whole corpus, and drop the stale cache entry before loading the replacement to remove the 2x peak. A fuller fix keeps the memory mapping on Windows by having the builder write a new file name per build instead of replacing a mapped file.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. A consequence of the bug-503 fix, which switched Windows from mapping to reading."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. A consequence of the bug-503 fix, which switched Windows from mapping to reading. Partly fixed in 2.6.11a2: cached_index (and cached_coarse_index) pop the replaced entry before reading the rebuilt file, so a Windows reload never holds two copies; the doc and docstring now state the whole-corpus resident cost. Reverting turns test_2611a2_x13.py::test_a_reload_lets_go_of_the_replaced_index_before_reading_the_new_one red. The open anchor now names the remaining half."
     },
     {
       "id": "bug-745",
@@ -10987,12 +11058,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/vector_index.py",
-      "pattern": "return np\\.memmap\\(src, dtype=dtype, mode=\"r\", offset=offset, shape=shape\\)",
+      "pattern": "return np\\.memmap\\(fh, dtype=dtype, mode=\"r\", offset=offset, shape=shape\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Open the file once and derive every array from that single handle (one mmap or one read of the whole file), or re-check the file's stat or inode after mapping and retry the load if it changed.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced.",
+      "fix_note": "Both loaders open the index once and map or read every array from that handle, so a rebuild's os.replace mid-load cannot pair one header with another file's bytes; reverting to per-array opens by path turns test_2611a2_x13.py::test_a_rebuild_replacing_the_file_mid_load_does_not_mix_two_files red."
     },
     {
       "id": "bug-746",
@@ -11113,12 +11185,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "scripts/check-docs-facts.py",
-      "pattern": "if var not in env_defaults or var_idx \\+ 1 >= len\\(cells\\):",
+      "pattern": "for path in sorted\\(\\(ROOT / \"cpersona\"\\)\\.glob\\(\"\\*\\.py\"\\)\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Extend the default parse to the other files that read CPERSONA_* vars and to the `or` fallback shape, or fail when a documented table row states a literal default for a var the parse did not understand.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-282."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-282.",
+      "fix_note": "parsed_env_defaults scans every package module, including the parse_int/parse_float and `or`-fallback shapes, and check_env_tables fails a documented literal default that no parse shape found. Narrowing the scan to config.py turns tests/test_2611a2_x16.py::test_env_defaults_read_outside_config_are_parsed and ::test_a_changed_server_side_default_fails_the_docs_table red. Removing the unparsed-row failure turns ::test_a_documented_default_no_parse_shape_reads_is_a_failure red."
     },
     {
       "id": "bug-755",
@@ -11127,12 +11200,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "scripts/check-docs-facts.py",
-      "pattern": "r\"`channel` by exactly \\\\w\\+",
+      "pattern": "r\"`channel` by exactly \\\\w\\+:\\(\\[\\^\\.\\]\\*\\)\\\\\\.\",",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
       "fix_sketch": "Fix the channel-name patterns to match the pages' actual punctuation. Give the name loop, check_embed_batch and each VOLATILE_CLAIMS key a seen counter that fails when nothing matched, as check_calibrate_default does, and add a test that each pattern reaches the live pages.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Same dead-pattern class as bug-360."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced. Same dead-pattern class as bug-360.",
+      "fix_note": "The channel tool-name patterns match the tools pages as written: a colon list in English, a parenthesised list in Japanese. Every claim pattern in check_axis_claims, check_embed_batch and check_volatile_claims now fails through _report_dead_patterns when it matches nothing. Restoring the em-dash patterns turns tests/test_2611a2_x16.py::test_channel_name_pattern_reaches_the_live_page red. Disabling the dead-pattern report turns ::test_an_axis_claim_pattern_with_no_subject_fails red."
     },
     {
       "id": "bug-756",
@@ -11141,12 +11215,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "scripts/check-docs-facts.py",
-      "pattern": "r\"~\\(\\[\\\\d,\\]\\+\\) LOC\\\\\\*\\?\\\\\\* Python\": \"server LOC\",",
+      "pattern": "r\"\\(\\[\\\\d,\\]\\+\\) 行の vendored\": \"vendored LOC\",",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Add Japanese-phrasing patterns for the three LOC claims (or key them on a language-neutral marker), and give each VOLATILE_CLAIMS key a per-page seen check so a page listed in DOC_FILES cannot pass without its claims being read.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced.",
+      "fix_note": "VOLATILE_CLAIMS reads the Japanese QA page's server, vendored and test LOC sentences. Removing those patterns turns tests/test_2611a2_x16.py::test_japanese_qa_page_loc_claims_are_read red."
     },
     {
       "id": "bug-757",
@@ -11155,12 +11230,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "scripts/check-docs-live.py",
-      "pattern": "version\\[\"id\"\\]: commit_age_hours\\(version\\.get\\(\"commit\", \"\"\\)\\)",
+      "pattern": "version\\[\"id\"\\]: waiting_age_hours\\(version\\[\"commit\"\\], published_commits\\[version\\[\"id\"\\]\\]\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check",
       "fix_sketch": "Measure the wait from the oldest commit not contained in the published commit (for example the first commit of `git rev-list published..local`) and compare that age against lag_hours. Add a test with multiple unpublished commits.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Reproduced.",
+      "fix_note": "main measures each lagging line's wait from the first commit in published..local (git rev-list --reverse), not from the branch head, so a stopped publisher is STALLED while commits keep landing. Reverting to the head's age turns tests/test_2611a2_x16.py::test_a_stopped_publisher_is_stalled_while_commits_keep_landing red."
     },
     {
       "id": "bug-758",
@@ -11169,12 +11245,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "scripts/check-i18n-drift.py",
-      "pattern": "for ja in sorted\\(\\(ROOT / \"docs\"\\)\\.glob\\(\"\\*\\.ja\\.md\"\\)\\):",
+      "pattern": "for ja in sorted\\(\\(ROOT / \"docs\"\\)\\.rglob\\(\"\\*\\.ja\\.md\"\\)\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "gate-reach",
       "fix_sketch": "Use `(ROOT / \"docs\").rglob(\"*.ja.md\")` in check-i18n-drift.py and walk subdirectories in check-mermaid.mjs (readdirSync with `recursive: true`), keeping each path relative to docs/ in messages. Add a fixture test with a stale translation and a broken diagram under docs/research/.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced on a scratch copy of the scripts. Distinct from bug-260 and bug-401, which cover other mechanisms in the same drift checker."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced on a scratch copy of the scripts. Distinct from bug-260 and bug-401, which cover other mechanisms in the same drift checker.",
+      "fix_note": "The drift gate walks docs/ recursively, and check-mermaid.mjs walks subdirectories through pages(). Reverting to glob turns tests/test_2611a2_x16.py::test_i18n_drift_reads_translations_in_subdirectories red. Reverting the mermaid walk turns ::test_mermaid_gate_parses_blocks_in_subdirectories red."
     },
     {
       "id": "bug-759",
@@ -11197,12 +11274,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "scripts/mutation_waivers.py",
-      "pattern": "return json\\.loads\\(path\\.read_text\\(encoding=\"utf-8\"\\)\\)",
+      "pattern": "return waivers if isinstance\\(waivers, list\\) else None",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Validate the shape once in load_registry: require a `waivers` key holding a list (and a dict per entry), and report anything else as a hard problem instead of defaulting to an empty list.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. Same class as bug-309, which fixed this shape for the issue registry in verify-issues.sh."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and confirmed by reading the code. Same class as bug-309, which fixed this shape for the issue registry in verify-issues.sh.",
+      "fix_note": "_waiver_list returns None when the registry has no 'waivers' list, and verify() reports that (and non-object entries) as a hard problem, so the CI step fails instead of reading an empty registry. Making it fall back to [] turns tests/test_2611a2_x16.py::test_a_registry_without_a_waiver_list_is_malformed red."
     },
     {
       "id": "bug-761",
@@ -11465,6 +11543,272 @@
       "fix_sketch": "Emit host paths only in the unscoped (operator) report: drop `path` from the file-permission and operating-context findings on agent-scoped calls and cut OS error text to the file name, keeping the finding itself.",
       "fix_note": "check_file_permissions (and the two operating-context checks) emit the absolute path only on the unscoped report; an agent-scoped call gets the finding without it, and its fix_error names the file only. Reverting turns tests/test_2611a1_u16.py::test_an_agent_scoped_health_report_names_no_server_path, ::test_a_scoped_repair_failure_names_no_server_path and ::test_a_scoped_operating_context_finding_names_no_server_path red.",
       "fixed_in": "2.6.11a1"
+    },
+    {
+      "id": "bug-779",
+      "summary": "(LOW) check_health(fix=true)'s remote index sync (_sync_remote_index) keeps posting chunk after chunk to a remote index that has stopped answering. Each post waits out the index deadline, so a repair that rewrote many rows spends one deadline per chunk. The merge path's removals stop after the first timeout (bug-608 made _post_remote_side_effect return whether the post timed out); this loop ignores that answer.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/maintenance_handlers.py",
+      "pattern": "for start in range\\(0, len\\(removed\\), _REMOTE_SYNC_CHUNK\\):",
+      "expected": "present",
+      "status": "open",
+      "category": "resource-budget",
+      "fix_sketch": "Read the timed_out value _post_remote_side_effect returns and stop posting the remaining chunks for that namespace after a timeout, logging how many rows stay out of step, as _remove_moved_source_vectors does.",
+      "note": "Found while fixing bug-608 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-780",
+      "summary": "(LOW) set_recall_precision persists the new beta even when the fused-gate measurement degraded (no embedding client, a failing backend), so the sidecar holds the new beta beside the gate measured at the old one. The handler's own comment says a gate and its beta must arrive together; on a degraded run only the beta arrives, and a restart restores the pair that disagrees.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "agent_betas\\[agent_id\\] = precision_override",
+      "expected": "present",
+      "status": "open",
+      "category": "calibration-staleness",
+      "fix_sketch": "When precision_override names a new beta and fused_stats is None, either leave the stored beta unchanged and report that the precision was not applied, or persist the beta together with a marker that the gate must be re-measured.",
+      "note": "Found while fixing bug-613 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-781",
+      "summary": "(LOW) check_memory_annotation's repair strips `[Memory from ...]` annotations with one regex pass. bug-616 made the write seam strip to a fixed point (utils._strip_annotations) because one pass can assemble a new annotation out of the text on either side of the one it removed. The health repair still makes one pass, so a repaired row can keep an annotation, and the next run rewrites it again.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/checks.py",
+      "pattern": "writable = _rewritable\\(rows, _MEMORY_ANNOTATION_PATTERN\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "data-integrity",
+      "fix_sketch": "Clean the rows with utils._strip_annotations (then strip) instead of _MEMORY_ANNOTATION_PATTERN.sub, so the repair and the write seam produce the same text.",
+      "note": "Found while fixing bug-616 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-782",
+      "summary": "(LOW) The content-rewriting health repairs (annotation, mention and oversized-content fixes, through _rewrite_or_delete_on_collision) change a row's text without queueing its overflow-node and block builds. The content triggers drop the row's node and block sets with the old text, so the record has none, and reads fall back to read-time division, until a later sweep (the block backfill at the next start, or a missing-nodes / missing-blocks repair) builds them. update_memory and merge_memories queue the builds after they rewrite text (bug-625).",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/checks.py",
+      "pattern": "\\\"UPDATE memories SET content = \\?, embedding = NULL, embedding_model = '' WHERE id = \\? AND locked = 0\\\",",
+      "expected": "present",
+      "status": "open",
+      "category": "index-divergence",
+      "fix_sketch": "Collect the rewritten row ids during the fix run and queue their node and block builds after the run commits, as the merge path does.",
+      "note": "Found while fixing bug-625 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-783",
+      "summary": "(LOW) A lone UTF-16 surrogate (half of a pair, such as U+DFFF sent on its own) is refused by store, archive_episode, recall, reconstruct and get_contents (bug-633), but the other handlers still bind it and raise from SQLite with a bare error: update_memory, update_profile, the list tools, delete/lock/unlock, import_memories, declare_associations and traverse.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "_warn_if_unscoped\\(\\\"do_update_memory\\\", memory_id, agent_id\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "input-validation",
+      "fix_sketch": "Refuse a lone surrogate once at the tool boundary for every string argument (utils.lone_surrogate_issue), rather than handler by handler, and keep each tool's own refusal shape.",
+      "note": "Found while fixing bug-633 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-784",
+      "summary": "(LOW) check_future_timestamp reads memories only. archive_episode now applies the future-timestamp verdict to an episode's history span (bug-690), but episodes already stored with a span ahead of the clock, or restored by import_memories (which does not report them either), are never found.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/checks.py",
+      "pattern": "Memories whose ``timestamp`` names a moment ahead of this clock",
+      "expected": "present",
+      "status": "open",
+      "category": "timestamp-correctness",
+      "fix_sketch": "Extend the check (and the import's report) to episodes' start_time / end_time with the same boundary, and decide the repair: created_at, as for memories.",
+      "note": "Found while fixing bug-690 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-785",
+      "summary": "(LOW) The coverage ledger of a traced recall reads the returned records with one IN (...) over every id, which grows with the caller's limit (up to the library ceiling). The other id reads on the recall path are chunked at vector._ID_FETCH_CHUNK (bug-682, bug-672) so a statement stays under SQLite's bound-variable limit.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/coverage.py",
+      "pattern": "f\\\"SELECT id, \\{column\\} FROM \\{table\\} WHERE agent_id = \\? AND id IN \\(\\{marks\\}\\)\\\",",
+      "expected": "present",
+      "status": "open",
+      "category": "read-path-budget",
+      "fix_sketch": "Read the ids through vector._fetch_rows_by_id, or chunk them at _ID_FETCH_CHUNK.",
+      "note": "Found while fixing bug-682 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-786",
+      "summary": "(LOW) Three \"is remote search armed\" predicates still test only that an embedding URL is set: coarse_notice (the coarse-index suggestion), the startup trade warning in server.main and the remote predicate in checks.py. Since bug-669 the remote calls are skipped when the URL does not end in /embed, so for such a URL these predicates describe remote search that never runs.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/coarse_notice.py",
+      "pattern": "return not \\(vector\\.VECTOR_SEARCH_MODE == \\\"remote\\\" and client\\._http_url\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "contract-drift",
+      "fix_sketch": "Use vector.remote_route(\"search\") is not None as the predicate, the one the search and the single-arm marking use.",
+      "note": "Found while fixing bug-669 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-787",
+      "summary": "(LOW) The v12 migration's two dedup steps choose their survivor without regard to locks: the content step keeps MIN(id) and the msg_id step keeps MAX(id), and both leave locked rows alone. When the survivor they choose is unlocked and a locked collider exists, both rows stay and the unique index is skipped. bug-638 fixed the same choice in check_dedup_msg_id_index by preferring a locked survivor.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/database.py",
+      "pattern": "SELECT MAX\\(id\\) FROM memories",
+      "expected": "present",
+      "status": "open",
+      "category": "health-check",
+      "fix_sketch": "Choose the survivor as COALESCE(locked row, MIN/MAX(id)) per group, as check_dedup_msg_id_index now does.",
+      "note": "Found while fixing bug-638 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-788",
+      "summary": "(LOW) check_duplicate_content's repair keeps MIN(id) of each duplicate group and deletes only unlocked rows, so a group whose oldest row is unlocked and whose newer copy is locked keeps both, and the finding reports the group as repairable on every run. The survivor choice is the one bug-638 fixed for msg_id collisions.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/checks.py",
+      "pattern": "SELECT MIN\\(id\\) FROM memories",
+      "expected": "present",
+      "status": "open",
+      "category": "health-check",
+      "fix_sketch": "Prefer a locked row as the survivor, and repoint associations to it as the current repair repoints them to MIN(id).",
+      "note": "Found while fixing bug-638 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-789",
+      "summary": "(LOW) check_block_index's block_index_behind finding reports changes_since_build from the store-wide change clock, also in an agent-scoped call, so a caller with read on one agent is told how many block changes every other agent has made since the build. The other index checks report the checked agent's share (bug-642, the bug-062 rule).",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/checks.py",
+      "pattern": "\\\"changes_since_build\\\": max\\(0, clock\\[2\\] - index\\.built_seq\\),",
+      "expected": "present",
+      "status": "open",
+      "category": "isolation",
+      "fix_sketch": "Report the checked agent's changed rows in an agent-scoped call (or omit the figure there), keeping the store-wide count for a whole-store call.",
+      "note": "Found while fixing bug-642 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-790",
+      "summary": "(LOW) excerpts.fill_ranges computes each ranked block's governing range before checking whether the block already lies inside a range it took, and tests each against every taken range. A record of many short lines pays a context walk per block. bug-705 fixed the same pattern in reconstruct.record_passages by skipping a block already inside a taken range first.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/excerpts.py",
+      "pattern": "start, end, _ = blocks\\.context_range\\(text, spans, row\\[0\\]\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "read-path-budget",
+      "fix_sketch": "Skip a block that lies inside a taken range before computing its context range, using a sorted list and bisect as record_passages does.",
+      "note": "Found while fixing bug-705 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-791",
+      "summary": "(LOW) An ACL denial of store or declare_associations carries neither `result` nor (for store with lock:true) `locked`, though every other refusal of those tools now carries them (bug-711, bug-713). A caller that branches on `result` alone, as the store contract says it may, finds no field on a denial.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/acl.py",
+      "pattern": "response: dict = \\{\\\"ok\\\": False, \\\"error\\\": \\\"permission_denied\\\", \\\"tool\\\": tool\\}",
+      "expected": "present",
+      "status": "open",
+      "category": "response-shape",
+      "fix_sketch": "Add result: \"rejected\" (and locked: false when the store asked to lock) to the denial for the tools whose responses carry them.",
+      "note": "Found while fixing bug-711 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-792",
+      "summary": "(LOW) check_update(apply=true) closes the steps' stdin (bug-736), but git still prompts on the controlling terminal for credentials when the server has one, and nothing bounds the step, so an apply can wait forever on a prompt nobody sees.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/update_check.py",
+      "pattern": "process = await asyncio\\.create_subprocess_exec\\(",
+      "expected": "present",
+      "status": "open",
+      "category": "robustness",
+      "fix_sketch": "Run the steps with GIT_TERMINAL_PROMPT=0 (and pip's --no-input) in the child environment, so a step that needs credentials fails at once with its own message.",
+      "note": "Found while fixing bug-736 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-793",
+      "summary": "(LOW) The block index file is still loaded by reopening its path for each array, and cached_block_index reads the rebuilt file while the replaced one is still cached. bug-745 and bug-744 fixed both in the contiguous and coarse index loaders: a rebuild that moves a new file over the path between two arrays pairs one file's header with the other's bytes, and on Windows two copies are resident during a reload.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/block_index.py",
+      "pattern": "return np\\.fromfile\\(src, dtype=dtype, count=items, offset=offset\\)\\.reshape\\(shape\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "resource-budget",
+      "fix_sketch": "Load through vector_index._read_header / _array_reader from one open handle, and pop the stale cache entry before loading, as cached_index does.",
+      "note": "Found while fixing bug-744 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-794",
+      "summary": "(MEDIUM) source_id_where builds the per-user source filter with json_extract(source, '$.id') and no json_valid guard, so a scan filtered by source_id raises 'malformed JSON' as soon as one row in scope has a source that is not JSON, and the whole call fails. Such rows exist: check_invalid_json reports them and leaves locked ones alone. bug-743 guarded the same read in the index builder.",
+      "severity": "MEDIUM",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/isolation.py",
+      "pattern": "clause=f\\\"CAST\\(json_extract\\(\\{pre\\}source, '\\$\\.id'\\) AS TEXT\\) = \\?\\\",",
+      "expected": "present",
+      "status": "open",
+      "category": "robustness",
+      "fix_sketch": "Guard the read as CASE WHEN json_valid(source) THEN json_extract(source, '$.id') END, so a malformed source matches no source_id instead of failing the scan.",
+      "note": "Found while fixing bug-743 (a sibling the fix did not cover); reproduced."
+    },
+    {
+      "id": "bug-795",
+      "summary": "(LOW) The time cue's remainder search and the far seats read past the scan window from start=MAX_MEMORIES in a statement separate from the window's own read. A delete committed between the two moves the first row past the window into its last place after the window was read, so neither read sees it. bug-742 re-reads the near and far vector windows when the database changed between them; these two readers have no such check.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "source_id=source_id, floor=floor, start=MAX_MEMORIES, period=\\(start, end\\),",
+      "expected": "present",
+      "status": "open",
+      "category": "index-divergence",
+      "fix_sketch": "Apply the same change stamp (PRAGMA data_version, total_changes) around the window and remainder reads and read the pair again once when it moved.",
+      "note": "Found while fixing bug-742 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-796",
+      "summary": "(LOW) The calibration sidecar is read, overlaid and rewritten whole with no lock across processes, so two server processes on one database that calibrate different agents at the same time can each write a file built from a read that predates the other's write, and one agent's thresholds are lost. bug-630 closed the same lost update for the alias ledger with a lock file.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "stored_state, stored_unreadable = _read_calibration_sidecar\\(\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "concurrency",
+      "fix_sketch": "Hold a lock file beside the sidecar for the read, overlay and rename, as the alias ledger does.",
+      "note": "Found while fixing bug-630 (a sibling the fix did not cover); confirmed by reading the code."
+    },
+    {
+      "id": "bug-797",
+      "summary": "(LOW) An empty CPERSONA_TRANSPORT is refused at startup as an unknown transport, where every other setting reads an empty value as unset (the bug-133 and bug-561 rule) and would start on stdio.",
+      "severity": "LOW",
+      "discovered": "2026-10-14T12:00:00Z",
+      "version": "2.6.11a1",
+      "file": "cpersona/config.py",
+      "pattern": "return os\\.environ\\.get\\(\\\"CPERSONA_TRANSPORT\\\", \\\"stdio\\\"\\)",
+      "expected": "present",
+      "status": "open",
+      "category": "configuration",
+      "fix_sketch": "Read an empty CPERSONA_TRANSPORT as unset (stdio), as the other parsers do.",
+      "note": "Found while fixing bug-727 (a sibling the fix did not cover); confirmed by reading the code."
     }
   ]
 }

@@ -270,20 +270,15 @@ def load_coarse_index(table: str = "memories", path: str | None = None) -> Coars
     src = path or index_path(table)
     if not os.path.exists(src):
         return None
-
-    size = os.path.getsize(src)
+    # One open for the header, the size check and every array, as the contiguous
+    # index's loader does: a rebuild that moved a new file over this path between
+    # two arrays would otherwise pair this header's offsets with the other file's bytes.
     with open(src, "rb") as fh:
-        head = fh.read(len(MAGIC) + 4)
-        if len(head) < len(MAGIC) + 4 or head[: len(MAGIC)] != MAGIC:
-            raise IndexUnusable(f"{src}: bad magic")
-        header_len = struct.unpack("<I", head[len(MAGIC):])[0]
-        raw = fh.read(header_len)
-        if len(raw) != header_len:
-            raise IndexUnusable(f"{src}: header truncated")
-        try:
-            header = json.loads(raw.decode("utf-8"))
-        except ValueError as exc:
-            raise IndexUnusable(f"{src}: header is not JSON ({exc})") from exc
+        return _load_open(fh, src)
+
+
+def _load_open(fh, src: str) -> CoarseIndex:
+    header, base, size = vector_index._read_header(fh, src, MAGIC)
 
     if header.get("format") != FORMAT_VERSION:
         raise IndexUnusable(f"{src}: format {header.get('format')} != {FORMAT_VERSION}")
@@ -295,18 +290,11 @@ def load_coarse_index(table: str = "memories", path: str | None = None) -> Coars
         raise IndexUnusable(f"{src}: header lacks a usable dim/count ({exc!r})") from exc
 
     width = bits_width(dim)
-    base = len(MAGIC) + 4 + header_len
     expect = base + count * (8 + 4 * len(_AXIS_FIELDS) + width + vector_index.CREATED_AT_WIDTH + TIMESTAMP_WIDTH)
     if size != expect:
         raise IndexUnusable(f"{src}: expected {expect} bytes for {count} rows of {dim}d, found {size}")
 
-    mapped = vector_index._maps_files()
-
-    def _map(offset: int, dtype: str, shape) -> np.ndarray:
-        if mapped:
-            return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)
-        items = int(np.prod(shape))
-        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)
+    _map = vector_index._array_reader(fh)
 
     off = base
     ids = _map(off, "<i8", (count,))
@@ -371,6 +359,10 @@ def cached_coarse_index(table: str = "memories", path: str | None = None) -> Coa
     hit = _cache.get(src)
     if hit is not None and hit[0] == key:
         return hit[1]
+    # Let go of the replaced file before reading its successor, as `cached_index`
+    # does: on Windows the arrays are read into memory, and two copies would
+    # otherwise be resident at once.
+    _cache.pop(src, None)
     index = load_coarse_index(table, src)
     _cache[src] = (key, index)
     return index

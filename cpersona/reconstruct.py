@@ -69,7 +69,7 @@ import numpy as np
 
 from . import associations, blocks, config, coverage, excerpts, far_seats, generation, nodes, tokens, vector
 from .database import connection
-from .utils import _parse_timestamp_utc, error_response
+from .utils import _parse_timestamp_utc, error_response, lone_surrogate_issue
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +212,10 @@ PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
 #: error of a mode call whose smallest possible response exceeds the cap.
 CAP_BELOW_MINIMUM = "cap_below_minimum"
+#: The candidate recall's per-session notices. do_recall marks each as told to the
+#: session when it attaches it, so every response this module returns after that
+#: recall carries them (bug-436), an error included.
+_NOTICES = ("advisory", "update", "suggestion", "time_cue")
 
 
 def _compact_item(item: dict) -> dict:
@@ -418,7 +422,7 @@ def _head_cap_at(position: int) -> int:
     return config.RECONSTRUCT_TAIL_QUOTE_CHARS
 
 
-def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
+def resolve_budget(requested: int | None, count: int = 1, default: int | None = None) -> tuple[int, dict]:
     """The payload budget (section 7, "Breadth before depth").
 
         budget_base      = forced_budget ?? requested_budget ?? default_budget(count)
@@ -440,6 +444,11 @@ def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
     excerpt are refused at startup (config.validate_reconstruct_counts); one between
     that and a head quote is raised here, and budget_policy says so. Returns
     `(effective, budget_policy)`.
+
+    ``default`` is a mode's own budget (lite's LITE_BUDGET). It stands where the
+    configured default would and is the server's, not the caller's: a response that
+    reports it must not say the caller asked for it. Like a named budget it is taken
+    as given, never widened to the window.
     """
     maximum = config.RECONSTRUCT_MAX_BUDGET
     forced = config.RECONSTRUCT_FORCED_BUDGET
@@ -447,6 +456,8 @@ def resolve_budget(requested: int | None, count: int = 1) -> tuple[int, dict]:
         base, source, reason = forced, "operator_forced", "forced_budget_set"
     elif requested is not None:
         base, source, reason = requested, "caller", "budget_requested"
+    elif default is not None:
+        base, source, reason = default, "server_default", "budget_omitted"
     else:
         base, source, reason = config.RECONSTRUCT_DEFAULT_BUDGET, "server_default", "budget_omitted"
         heads = sum(max(_head_cap_at(position), 0) for position in range(int(count)))
@@ -621,7 +632,8 @@ def walk(
     cluster, `(ref, why, hops)` in the written order -- fewer hops first, then the
     more recently declared relation, then the lower record id -- and, per cluster,
     the bounds that cut it: `max_hops` when a relation was left unfollowed at the
-    hop bound, `max_evidence` when a reached entity had more records than the
+    hop bound or at the loader's entity bound (`associations.NEIGHBOURHOOD_MAX_ENTITIES`),
+    `max_evidence` when a reached entity had more records than the
     graph read held (see `associations.walk_graph`).
 
     A reached record is never an item and never repeated: one already in the
@@ -652,6 +664,10 @@ def walk(
                 via[other] = edge
             frontier = sorted(step)
         if any(other not in distance for entity in frontier for _, _, other, _ in graph.adjacency.get(entity, ())):
+            cuts[position].add(BOUND_HOPS)
+        # An entity the loader did not expand, stepped onto within the hop bound: the
+        # loader's entity bound cut the walk here, and a relation went unfollowed.
+        if any(entity in graph.unexpanded for entity in distance):
             cuts[position].add(BOUND_HOPS)
         best: dict[str, tuple] = {}
         for entity, hops in distance.items():
@@ -952,7 +968,16 @@ async def _current_sets(
     One connection, and each record's text read once for both kinds of set (bug-479,
     bug-496: the two readers each opened a connection and read the same texts). Reads
     are keyed on refs retrieval already scoped to this agent.
+
+    A record read only for its block set reads its node ends, never its node
+    embeddings: block currency needs where the nodes end, and only a claim in
+    ``node_claims`` is quoted from the vectors (bug-495).
     """
+    # Judged by the backend as it is now, as the builders that stamp these sets judge
+    # it (bug-461): a backend redeployed under the same URL with another model of the
+    # same width otherwise leaves the old model's sets reading as current to every
+    # read that no write happened to follow. Bounded by the refresh interval.
+    await generation.refresh()
     node_keys = generation.node_keys()
     block_keys = generation.block_keys()
     node_sets: dict[str, tuple[str, list[tuple]]] = {}
@@ -973,13 +998,25 @@ async def _current_sets(
                     )
                 )
                 ends: dict[int, list[int]] = {}
-                for parent_id, index, start, end, blob, model in await db.execute_fetchall(
-                    "SELECT parent_id, node_index, start_char, end_char, embedding, embedding_model "
-                    f"FROM record_nodes WHERE parent_kind = ? AND parent_id IN ({marks}) "
-                    "ORDER BY parent_id, node_index",
-                    [kind, *batch],
-                ):
-                    ends.setdefault(parent_id, []).append((index, start, end, blob, model))
+                with_vectors = [i for i in batch if i in node_ids]
+                if with_vectors:
+                    vector_marks = ",".join("?" for _ in with_vectors)
+                    for parent_id, index, start, end, blob, model in await db.execute_fetchall(
+                        "SELECT parent_id, node_index, start_char, end_char, embedding, embedding_model "
+                        f"FROM record_nodes WHERE parent_kind = ? AND parent_id IN ({vector_marks}) "
+                        "ORDER BY parent_id, node_index",
+                        [kind, *with_vectors],
+                    ):
+                        ends.setdefault(parent_id, []).append((index, start, end, blob, model))
+                ends_only = [i for i in batch if i in block_ids and i not in node_ids]
+                if ends_only:
+                    ends_marks = ",".join("?" for _ in ends_only)
+                    for parent_id, end in await db.execute_fetchall(
+                        "SELECT parent_id, end_char FROM record_nodes WHERE parent_kind = ? "
+                        f"AND parent_id IN ({ends_marks}) ORDER BY parent_id, node_index",
+                        [kind, *ends_only],
+                    ):
+                        ends.setdefault(parent_id, []).append((None, None, end, None, None))
                 for parent_id, group in ends.items():
                     text = texts.get(parent_id)
                     if text is None or parent_id not in node_ids:
@@ -1328,8 +1365,14 @@ def record_passages(
     # when the last taken range that starts before it ends reaches past its start. One
     # search per block, not a scan of every range taken: a record of one-character
     # sentences divides into thousands of blocks.
+    # A governing range always contains its own block, so a block that already lies in a
+    # taken range is skipped before its range is computed: that range would overlap and
+    # be thrown away, and a record of short lines spent a context walk on every block.
     governed: list[tuple[int, int]] = []
     for n, row in enumerate(ranked):
+        before = bisect.bisect_left(governed, (row[2],))
+        if before and governed[before - 1][1] > row[1]:
+            continue
         start, end, _ = blocks.context_range(text, spans, row[0])
         before = bisect.bisect_left(governed, (end,))
         if before and governed[before - 1][1] > start:
@@ -1552,6 +1595,13 @@ async def do_reconstruct(
             else f"mode must be one of {sorted(MODE_CAPS)}"
         )
         return error_response(message, items=[], returned_count=0)
+    # Half of a surrogate pair cannot be bound as text, so the first search that
+    # bound it raised and the call answered with no items field at all.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, query=query, channel=channel, project_id=project_id, source_id=source_id
+    )
+    if surrogate:
+        return error_response(surrogate, items=[], returned_count=0)
     if lite:
         mode = MODE_LITE
     # The providers this reconstruction runs with, read once (cpersona/providers.py).
@@ -1564,13 +1614,14 @@ async def do_reconstruct(
     except _time_cue.TimeCueError as exc:
         return error_response(str(exc), items=[], returned_count=0)
     effective_count, count_policy = resolve_count(count, mode=mode)
-    if mode == MODE_LITE and budget is None:
-        budget = LITE_BUDGET
+    # Lite's budget is the server's default for the mode, not a request: `budget` stays
+    # what the caller sent, so `requested_budget` and budget_policy say who chose it.
+    mode_budget = LITE_BUDGET if mode == MODE_LITE else None
     # Pro names no character budget: its cap bounds the payload. A budget the caller
     # or an operator names still applies, under the cap.
     uncapped = mode == MODE_PRO and budget is None and config.RECONSTRUCT_FORCED_BUDGET is None
     sequence = SEQUENCE_WHOLE if mode else config.RECONSTRUCT_SEQUENCE
-    effective_budget, budget_policy = resolve_budget(budget, effective_count)
+    effective_budget, budget_policy = resolve_budget(budget, effective_count, mode_budget)
     bounds_top_k = config.RECONSTRUCT_TOP_K if top_k is None else max(1, int(top_k))
     # bug-437: report the effective retrieval bound, not only the larger request.
     effective_top_k = min(bounds_top_k, RECALL_LIBRARY_MAX_LIMIT)
@@ -1669,7 +1720,7 @@ async def do_reconstruct(
     }
     # bug-436: do_recall has already marked these notices as delivered to this
     # session. Forward them even when no candidate survives reconstruction.
-    for notice in ("advisory", "update", "suggestion", "time_cue"):
+    for notice in _NOTICES:
         if notice in recall_result:
             response[notice] = recall_result[notice]
     if recall_result.get("gate_fallback"):
@@ -1738,7 +1789,7 @@ async def do_reconstruct(
         # are items too, so the default is taken for both. A budget the caller or an
         # operator named is not widened (resolve_budget takes it as given) -- it
         # bounds the payload, and the held items, being last, are cut first.
-        effective_budget, budget_policy = resolve_budget(budget, effective_count + len(held))
+        effective_budget, budget_policy = resolve_budget(budget, effective_count + len(held), mode_budget)
         response["effective_budget"], response["budget_policy"] = effective_budget, budget_policy
     graph = await associations.walk_graph(
         agent_id,
@@ -2037,13 +2088,15 @@ async def do_reconstruct(
                 else:
                     # Say what does not fit: the passage does, so naming it would send
                     # the caller after the wrong bound.
-                    notices = [key for key in ("advisory", "update", "suggestion", "time_cue") if key in smallest]
+                    notices = [key for key in _NOTICES if key in smallest]
                     detail = (
                         f"the smallest response is {smallest['used_tokens']} tokens, over mode {mode!r}'s cap of "
                         f"{limit} tokens: the first passage is {passage} tokens, and the rest is its head claim "
                         "and the response's own fields"
                         + (f", notices included ({', '.join(notices)})" if notices else "")
                     )
+                # The candidate recall has marked its notices as told to this session,
+                # so a refusal that dropped them would lose them for the session.
                 return error_response(
                     CAP_BELOW_MINIMUM,
                     detail=detail,
@@ -2051,6 +2104,7 @@ async def do_reconstruct(
                     returned_count=0,
                     mode=mode,
                     cap=limit,
+                    **{key: response[key] for key in _NOTICES if key in response},
                 )
             final, quoted, shaped = fits
     if trace:

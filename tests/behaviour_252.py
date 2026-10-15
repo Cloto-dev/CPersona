@@ -616,10 +616,19 @@ _KEYS_ADDED_SINCE_GOLDEN = {
 # the change log's generation, head and schema cookie (format 3), so the same
 # rows make a file 64 bytes longer. The rows, their count and the watermark are
 # still compared, and so is every answer the scenarios record through the file.
+#
+# ("merge-copy-skip", ("db", "profiles", 0, "updated_at")) and the same path of
+# merge-move -- the profile a merge copied used to be stamped with the merge time,
+# which made a stale profile look current to deep_stale_profile; it now keeps the
+# source's updated_at, as an import has since bug-223. The copied profile's other
+# columns, and every other row both scenarios record, are still compared.
+# Behaviour pinned in tests/test_2611a2_x04.py.
 _VALUES_CHANGED_SINCE_GOLDEN = {
     ("health-fix-repairs-warn", ("result", "issues")),
     ("corpus-nonfinite-recall-index", ("result", "built", "bytes")),
     ("corpus-nonfinite-recall-index-shipping-default", ("result", "built", "bytes")),
+    ("merge-copy-skip", ("db", "profiles", 0, "updated_at")),
+    ("merge-move", ("db", "profiles", 0, "updated_at")),
 }
 
 
@@ -656,7 +665,12 @@ def _without_changed_values(obj: Any, scenario_id: str) -> Any:
     for path in paths:
         node = out
         for key in path[:-1]:
-            node = node.get(key) if isinstance(node, dict) else None
+            if isinstance(node, dict):
+                node = node.get(key)
+            elif isinstance(node, list) and isinstance(key, int) and key < len(node):
+                node = node[key]  # a recorded table row, by its position
+            else:
+                node = None
         if isinstance(node, dict):
             node.pop(path[-1], None)
     return out

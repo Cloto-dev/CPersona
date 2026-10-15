@@ -17,8 +17,9 @@ Checked facts and their sources of truth:
                   so the claim itself is now the failure. Per-axis counts on
                   the tools page are still measured (see _AXIS_COUNT_CLAIMS)
   schema version  SCHEMA_VERSION literal in cpersona/database.py
-  env defaults    static parse of cpersona/config.py, compared against every
-                  markdown table row in docs/ that names a `CPERSONA_*` var
+  env defaults    static parse of every cpersona/*.py module, compared against
+                  every markdown table row in docs/ that names a `CPERSONA_*`
+                  var; a row stating a default the parse cannot find fails
   env names       every `CPERSONA_*` token in the checked pages, wherever it is
                   written, must be a name the package actually reads — the
                   table-row reading above left inline bullets and code fences
@@ -48,6 +49,7 @@ Run from the repository root (CI does): `uv run python scripts/check-docs-facts.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -221,33 +223,117 @@ def measured_embed_batch() -> int:
 
 
 def parsed_env_defaults() -> dict[str, str]:
-    """Static parse of config.py → {VAR_NAME: normalized default}.
+    """Static parse of the package -> {VAR_NAME: normalized default}.
 
-    Handles the four assignment shapes config.py uses. Vars read through any
-    other shape are simply absent here and fall back to an existence-only
-    check against the package source -- which is a silent hole, not a feature:
-    the documented default of such a var is never compared to the code. When a
-    new shape appears in config.py, it belongs here in the same change, or the
-    table row it produces is prose that no gate reads.
+    Every module is read, not only config.py: the HTTP bind address, port and
+    unauthenticated opt-out are read in server.py, and a default that lives
+    outside config.py is still a default the configuration page states. A var
+    read through a shape not handled here is absent, and check_env_tables
+    then fails any table row that states a literal default for it: a default
+    no gate compares is prose, so the row is the failure until the shape is
+    added here.
+
+    Two reads of one var with different defaults are reported: a table row can
+    state only one of them, and which one a reader gets depends on the path.
+    """
+    found: dict[str, dict[str, str]] = {}
+
+    def note(var: str, default: str, where: str) -> None:
+        found.setdefault(var, {}).setdefault(default, where)
+
+    for path in sorted((ROOT / "cpersona").glob("*.py")):
+        text = path.read_text()
+        where = path.name
+        # `_parse_int` inside config.py, `config.parse_int` from other modules.
+        for m in re.finditer(r'\b_?parse_int\("(CPERSONA_\w+)",\s*(-?\d+)\)', text):
+            note(m.group(1), m.group(2), where)
+        for m in re.finditer(r'\b_?parse_float\("(CPERSONA_\w+)",\s*(-?[\d.]+)\)', text):
+            note(m.group(1), m.group(2), where)
+        for m in re.finditer(r'os\.environ\.get\("(CPERSONA_\w+)"\s*,\s*"([^"]*)"\)', text):
+            note(m.group(1), m.group(2), where)
+        # An on/off setting: the default is a literal True or False, documented as
+        # `true` / `false`.
+        for m in re.finditer(r'\b_?parse_bool\(\s*"(CPERSONA_\w+)",\s*(True|False)\b', text):
+            note(m.group(1), m.group(2).lower(), where)
+        # A word-valued setting: the default is the second argument, and the tuple
+        # after it is the closed set of accepted values.
+        for m in re.finditer(r'_parse_choice\(\s*"(CPERSONA_\w+)",\s*"([^"]*)"', text):
+            note(m.group(1), m.group(2), where)
+        # A fallback chain: `get("CPERSONA_X") or get("LEGACY_X") or "d"`, or one
+        # ending in `get("LEGACY_X", "d")`. The literal at the end is the default.
+        for m in re.finditer(
+            r'os\.environ\.get\("(CPERSONA_\w+)"\)'
+            r'(?:\s*or\s*os\.environ\.get\("\w+"\))*'
+            r'\s*or\s*(?:os\.environ\.get\("\w+"\s*,\s*)?"([^"]*)"',
+            text,
+        ):
+            note(m.group(1), m.group(2), where)
+
+    for var, default in measured_computed_defaults(set(found)).items():
+        note(var, default, "config.py (measured)")
+
+    defaults: dict[str, str] = {}
+    for var, by_default in found.items():
+        if len(by_default) > 1:
+            fail(
+                f"`{var}` is read with different defaults: "
+                + ", ".join(f"`{d}` in {w}" for d, w in sorted(by_default.items()))
+                + " — a documented default can only be right for one of them"
+            )
+        defaults[var] = next(iter(by_default))
+    return defaults
+
+
+# A top-level config.py statement: the assigned name, then everything up to the next
+# line that starts a statement of its own (continuation lines are indented or close
+# a bracket), or the end of the file.
+_CONFIG_STATEMENT = re.compile(r"^([A-Z][A-Z0-9_]*) = (.*?)(?=^[^\s)\]]|\Z)", re.M | re.S)
+_CONFIG_READ = re.compile(r'\b_parse_(?:int|float|bool)\(\s*"(CPERSONA_\w+)"')
+
+
+def measured_computed_defaults(parsed: set[str]) -> dict[str, str]:
+    """{VAR: default} for the config.py settings whose default is computed.
+
+    Some defaults follow another setting -- the tail quote size follows a lower
+    quote size, the budgets follow the preview tier -- so the call names an
+    expression, not a literal, and no static shape reads it. What a reader is
+    told is the value with nothing set, so that is what is measured: config.py
+    is imported in a fresh process with every CPERSONA_* variable removed, and
+    the module attribute each such read assigns is read back.
     """
     text = (ROOT / "cpersona" / "config.py").read_text()
-    defaults: dict[str, str] = {}
-    for m in re.finditer(r'_parse_int\("(CPERSONA_\w+)",\s*(-?\d+)\)', text):
-        defaults[m.group(1)] = m.group(2)
-    for m in re.finditer(r'_parse_float\("(CPERSONA_\w+)",\s*(-?[\d.]+)\)', text):
-        defaults[m.group(1)] = m.group(2)
-    for m in re.finditer(
-        r'os\.environ\.get\("(CPERSONA_\w+)"\s*,\s*"([^"]*)"\)(\.lower\(\)\s*==\s*"true")?',
-        text,
-    ):
-        defaults[m.group(1)] = m.group(2)
-    # A word-valued setting: the default is the second argument, and the tuple
-    # after it is the closed set of accepted values.
-    for m in re.finditer(
-        r'_parse_choice\(\s*"(CPERSONA_\w+)",\s*"([^"]*)"', text
-    ):
-        defaults[m.group(1)] = m.group(2)
-    return defaults
+    names: dict[str, str] = {}
+    for m in _CONFIG_STATEMENT.finditer(text):
+        read = _CONFIG_READ.search(m.group(2))
+        if read and read.group(1) not in parsed:
+            names[m.group(1)] = read.group(1)
+    if not names:
+        return {}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CPERSONA_")}
+    env["PYTHONPATH"] = str(ROOT)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json, sys; from cpersona import config; "
+            "print(json.dumps({n: getattr(config, n) for n in sys.argv[1:]}))",
+            *names,
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=ROOT,
+        check=False,
+    )
+    if proc.returncode != 0:
+        fail(f"config.py: could not measure the computed defaults ({proc.stderr.strip()[-300:]})")
+        return {}
+    values = json.loads(proc.stdout.strip().splitlines()[-1])
+    out: dict[str, str] = {}
+    for name, var in names.items():
+        value = values[name]
+        out[var] = ("true" if value else "false") if isinstance(value, bool) else str(value)
+    return out
 
 
 def measured_volatile_stats() -> dict[str, float]:
@@ -399,16 +485,22 @@ def check_env_tables(env_defaults: dict[str, str]) -> None:
             if f'"{var}"' not in package_source and f"'{var}'" not in package_source:
                 fail(f"{rel}: table documents `{var}`, which no source file reads")
                 continue
-            # Default: only checkable for vars the static parse understood and
-            # cells that state a single literal.
-            if var not in env_defaults or var_idx + 1 >= len(cells):
+            # Default: only checkable for cells that state a single literal.
+            if var_idx + 1 >= len(cells):
                 continue
             documented = normalize_doc_default(cells[var_idx + 1])
-            if documented is None:
+            if documented is None or documented == "<unset>":
+                continue  # prose, or existence-only: parse shapes for unset vars vary
+            if var not in env_defaults:
+                # A stated default the static parse cannot find is compared with
+                # nothing, so it would stay published whatever the code does.
+                fail(
+                    f"{rel}: `{var}` documents default `{documented}`, but no read of it in "
+                    "the package has a shape parsed_env_defaults understands, so the "
+                    "default is compared with nothing — add the shape there"
+                )
                 continue
             actual = env_defaults[var]
-            if documented == "<unset>":
-                continue  # existence-only: parse shapes for unset vars vary
             try:
                 if float(documented) == float(actual):
                     continue  # numerically equal (5 vs 5.0)
@@ -417,7 +509,7 @@ def check_env_tables(env_defaults: dict[str, str]) -> None:
             if documented != actual:
                 fail(
                     f"{rel}: `{var}` documented default `{documented}` != "
-                    f"config.py default `{actual}`"
+                    f"package default `{actual}`"
                 )
 
 
@@ -492,11 +584,30 @@ _AXIS_COUNT_CLAIMS = (
 
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 
-# Where a page spells the `channel` tools out by name. Group 1 is the run of names.
+# Where a page spells the `channel` tools out by name. Group 1 is the run of names:
+# the English page lists them after a colon up to the end of the sentence, the
+# Japanese one inside the parentheses after the count. These once required an em
+# dash the pages had stopped using, and matched nothing while the gate passed.
 _CHANNEL_NAME_CLAIMS = (
-    r"`channel` by exactly \w+ —\s*\n?((?:[^\n]*`\w+`[^\n]*\n?){1,3})",
-    r"`channel` はちょうど \d+ 個 —\s*\n?((?:[^\n]*`\w+`[^\n]*\n?){1,3}?)\s*— だけです",
+    r"`channel` by exactly \w+:([^.]*)\.",
+    r"`channel` はちょうど \d+ 個 \(([^)]*)\)",
 )
+
+
+def _report_dead_patterns(seen: dict[str, int], what: str) -> None:
+    """Fail for every claim pattern that matched no scanned page.
+
+    A pattern that stops matching -- the sentence was reworded, or the pattern
+    was edited -- reports nothing, which is the same output as a claim that was
+    found and agreed. Same doctrine as check_calibrate_default.
+    """
+    for pattern, count in seen.items():
+        if not count:
+            fail(
+                f"the {what} pattern {pattern!r} matched nothing across DOC_FILES: restore "
+                "the sentence or update the pattern — a gate that cannot find its subject "
+                "must not pass."
+            )
 
 
 def check_axis_claims(acceptance: dict[str, list[str]]) -> None:
@@ -506,6 +617,8 @@ def check_axis_claims(acceptance: dict[str, list[str]]) -> None:
     stays literally true on the count while naming the wrong one, and the reader is
     the one who finds out.
     """
+    seen = {p: 0 for _, en, ja in _AXIS_COUNT_CLAIMS for p in (en, ja)}
+    seen.update({p: 0 for p in _CHANNEL_NAME_CLAIMS})
     for doc in DOC_FILES:
         text = doc.read_text()
         rel = doc.relative_to(ROOT)
@@ -513,6 +626,7 @@ def check_axis_claims(acceptance: dict[str, list[str]]) -> None:
             actual = len(acceptance[axis])
             for pattern in (en_pattern, ja_pattern):
                 for m in re.finditer(pattern, text):
+                    seen[pattern] += 1
                     raw = m.group(1)
                     claimed = _NUMBER_WORDS.get(raw)
                     if claimed is None and raw.isdigit():
@@ -534,6 +648,7 @@ def check_axis_claims(acceptance: dict[str, list[str]]) -> None:
         # The four named tools, wherever a page spells them out next to `channel`.
         for pattern in _CHANNEL_NAME_CLAIMS:
             for m in re.finditer(pattern, text):
+                seen[pattern] += 1
                 named = set(re.findall(r"`(\w+)`", m.group(1)))
                 expected = set(acceptance["channel"])
                 if named != expected:
@@ -541,6 +656,7 @@ def check_axis_claims(acceptance: dict[str, list[str]]) -> None:
                         f"{rel}: names {sorted(named)} as the tools taking `channel`, "
                         f"but the schemas say {sorted(expected)}"
                     )
+    _report_dead_patterns(seen, "per-axis tool")
 
 
 def check_calibrate_default(method: str) -> None:
@@ -575,16 +691,19 @@ def check_calibrate_default(method: str) -> None:
 def check_embed_batch(batch: int) -> None:
     if batch < 0:
         return  # already reported by the measurement
+    seen = {r"at most \*\*(\d+) texts per request\*\*": 0, r"送るのは最大 \*\*(\d+) 件\*\*": 0}
     for doc in DOC_FILES:
         text = doc.read_text()
         rel = doc.relative_to(ROOT)
-        for pattern in (r"at most \*\*(\d+) texts per request\*\*", r"送るのは最大 \*\*(\d+) 件\*\*"):
+        for pattern in seen:
             for m in re.finditer(pattern, text):
+                seen[pattern] += 1
                 if int(m.group(1)) != batch:
                     fail(
                         f"{rel}: claims at most {m.group(1)} texts per /embed request, "
                         f"but the largest embedding batch is {batch}"
                     )
+    _report_dead_patterns(seen, "embedding batch")
 
 
 # Commands from the reference embedding server that the setup pages tell a reader to
@@ -690,15 +809,23 @@ VOLATILE_CLAIMS = {
     r"~([\d,]+) cases": "collected cases",
     r"\(~([\d,]+) LOC, more test code": "test LOC",
     r"~([\d,]+) LOC Python across": "server LOC",
+    # The Japanese QA page states the same three LOC figures in its own word
+    # order. Without these the translation is the one page whose numbers are
+    # never read, and it keeps the old figure after the English one is fixed.
+    r"~([\d,]+) LOC\*\* の Python": "server LOC",
+    r"([\d,]+) 行の vendored": "vendored LOC",
+    r"\(~([\d,]+) LOC、サーバーコードより": "test LOC",
 }
 
 
 def check_volatile_claims(stats: dict[str, float]) -> None:
+    seen = dict.fromkeys(VOLATILE_CLAIMS, 0)
     for doc in DOC_FILES:
         text = doc.read_text()
         rel = doc.relative_to(ROOT)
         for pattern, key in VOLATILE_CLAIMS.items():
             for m in re.finditer(pattern, text):
+                seen[pattern] += 1
                 claimed = int(m.group(1).replace(",", ""))
                 actual = stats[key]
                 if actual <= 0:
@@ -709,6 +836,7 @@ def check_volatile_claims(stats: dict[str, float]) -> None:
                         f"{rel}: claims {key} ≈ {claimed}, measured {int(actual)} "
                         f"(drift {drift:.1%} > {TOLERANCE:.0%})"
                     )
+    _report_dead_patterns(seen, "volatile-stat")
 
 
 # (regex with group 1 = claimed version, human label). The separator is

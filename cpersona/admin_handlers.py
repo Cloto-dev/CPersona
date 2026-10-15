@@ -15,6 +15,7 @@ import json
 import logging
 import math
 import os
+import sqlite3
 import stat
 import tempfile
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from cpersona._vendored_mcp_common.embedding_client import redact_urls
 from cpersona.isolation import isolation_where
 
 from cpersona import acl
@@ -45,6 +47,7 @@ from cpersona.config import (
     CALIBRATE_SAMPLE_SIZE,
     CALIBRATE_TEMPORAL_WINDOW_MIN,
     CALIBRATE_Z_FACTOR,
+    REMOTE_INDEX_TIMEOUT_SECS,
     STORE_BLOB,
     local_blobs_stored,
     TASK_MAX_RETRIES,
@@ -56,11 +59,12 @@ from cpersona.database import background_connection, connection, read_snapshot, 
 from cpersona.utils import (
     _clamp_limit,
     _parse_timestamp_utc,
-    _try_parse_json,
+    content_cap,
     error_response,
     fits_sqlite_integer,
     future_timestamp_issue,
     json_dumps_finite,
+    profile_cap,
     sanitize_content_with_flag,
     sanitize_profile_with_flag,
 )
@@ -365,7 +369,7 @@ async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = N
     return result
 
 
-async def _post_remote_side_effect(path: str, payload: dict, *, action: str, namespace: str) -> None:
+async def _post_remote_side_effect(route: str, payload: dict, *, action: str, namespace: str) -> bool:
     """Post one index side effect, and say so when it does not land.
 
     bug-323: these four posts (delete, update, purge, episode delete) kept the
@@ -381,18 +385,47 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
     leaves is the one that does not look like a fault: an orphaned remote vector
     keeps taking a top-K slot until the by-id rehydrate finds nothing, and a
     stale index entry keeps serving pre-edit text against a post-edit row.
+
+    The post states the index deadline every other call to this service states.
+    Without it each one inherited the embedding client's own request timeout
+    (30 s by default), so a service that accepts connections and stops answering
+    held every delete and edit three times longer than it holds a store.
+
+    Returns True when the post timed out, so a caller posting in chunks can stop
+    instead of spending the same deadline again on every remaining chunk.
+
+    ``route`` is named rather than built by each caller, so every post derives it
+    the one way ``vector.remote_route`` does, keeping the configured URL's query;
+    with no route to derive there is nothing to post.
     """
+    path = vector.remote_route(route)
+    if path is None:
+        return False
     try:
-        response = await vector._embedding_client._client.post(path, json=payload)
+        response = await vector._embedding_client._client.post(
+            path, json=payload, timeout=REMOTE_INDEX_TIMEOUT_SECS
+        )
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Remote index %s timed out after %ss for %s (non-fatal, local change already "
+            "committed; the index is now out of step with the database): %s",
+            action,
+            REMOTE_INDEX_TIMEOUT_SECS,
+            namespace,
+            # The request URL carries the configured query, so it is redacted.
+            redact_urls(str(e)),
+        )
+        return True
     except Exception as e:  # noqa: BLE001 - non-fatal by contract, reported by design
+        # The request URL carries the configured query, so it is redacted.
         logger.warning(
             "Remote index %s failed for %s (non-fatal, local change already committed; "
             "the index is now out of step with the database): %s",
             action,
             namespace,
-            e,
+            redact_urls(str(e)),
         )
-        return
+        return False
     # A non-2xx answer is a refusal the service chose to give; it raises nothing,
     # so without this it was indistinguishable from success. Read defensively: the
     # local change is already committed, and a client that hands back something
@@ -406,6 +439,7 @@ async def _post_remote_side_effect(path: str, payload: dict, *, action: str, nam
             namespace,
             status,
         )
+    return False
 
 
 def _by_id_refusal(memory_id: int, agent_id: str, unscoped: str) -> dict:
@@ -480,15 +514,42 @@ async def do_delete_memory(memory_id: int, agent_id: str = "", session_key: str 
         # Deleting by id without passing agent_id used to compute "cpersona:" and
         # leave the remote vector entry orphaned. Use the owner we just read.
         ns = f"cpersona:{owner_agent_id}"
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/remove",
+            "remove",
             {"namespace": ns, "ids": [f"mem:{memory_id}"]},
             action="removal",
             namespace=ns,
         )
 
     return {"ok": True, "deleted_id": memory_id}
+
+
+async def _same_bucket_holder(db, memory_id: int, content: str) -> int | None:
+    """The id of another row in this row's (agent, project, channel) holding ``content``.
+
+    That bucket is exactly what the content unique index covers, so this is the
+    row an UPDATE of ``memory_id`` to ``content`` would collide with.
+    """
+    bucket = await db.execute_fetchall(
+        "SELECT agent_id, project_id, channel FROM memories WHERE id = ?", (memory_id,)
+    )
+    if not bucket:
+        return None
+    found = await db.execute_fetchall(
+        "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ?"
+        " AND content = ? AND id != ? LIMIT 1",
+        (*bucket[0], content, memory_id),
+    )
+    return found[0][0] if found else None
+
+
+def _held_elsewhere_refusal(memory_id: int, holder_id: int) -> dict:
+    # Named, because the holder is in the caller's own agent bucket and is the
+    # row to edit or delete instead; the raw constraint error named only columns.
+    return error_response(
+        f"Memory {memory_id} was not edited: memory {holder_id} in the same agent, "
+        "project and channel already holds this content, and one copy is kept per bucket"
+    )
 
 
 async def do_update_memory(
@@ -534,6 +595,15 @@ async def do_update_memory(
         # rather than writing an empty row (do_store's "empty after sanitization").
         return error_response("Content cannot be empty after sanitization")
 
+    # The content unique index keeps one copy of a text per bucket, so an edit into
+    # text another row there holds cannot land. Asked before the embedding round
+    # trip, which would otherwise be spent on a write that is then refused; the
+    # UPDATE below still catches a copy that lands after this read.
+    async with connection() as db:
+        holder_id = await _same_bucket_holder(db, memory_id, content)
+    if holder_id is not None:
+        return _held_elsewhere_refusal(memory_id, holder_id)
+
     # bug-011: recompute the embedding for the new text with the same policy as
     # do_store. On failure (or no client) the BLOB is NULLed rather than left
     # stale, so recall stops matching the old wording and check_health's
@@ -559,20 +629,44 @@ async def do_update_memory(
     # must not be overwritten, and a raced no-op must not report success or push
     # the new text to the remote index.
     # bug-042/043: transaction() serialises the UPDATE+commit behind the shared lock.
+    holder_id = None
+    still_there = None
     async with transaction() as db:
-        cursor = await db.execute(
-            "UPDATE memories SET content = ?, embedding = ?, embedding_model = ? WHERE id = ? AND locked = 0",
-            (content, embedding_blob, embedding_label, memory_id),
-        )
+        try:
+            cursor = await db.execute(
+                "UPDATE memories SET content = ?, embedding = ?, embedding_model = ? WHERE id = ? AND locked = 0",
+                (content, embedding_blob, embedding_label, memory_id),
+            )
+        except sqlite3.IntegrityError:
+            # A copy of this text landed in the bucket during the embedding await
+            # (a concurrent store or edit). Answered as the refusal above, not as
+            # a raw constraint error that carries no ok:false.
+            holder_id = await _same_bucket_holder(db, memory_id, content)
+            if holder_id is None:
+                raise
+        else:
+            if cursor.rowcount == 0:
+                # Read under the same write lock as the UPDATE: a lock_memory that
+                # landed after the pre-check is not the only way to match nothing --
+                # a delete or a merge-move may have removed the row, and calling
+                # that "locked" sends the caller to unlock_memory for a row that is gone.
+                still_there = await db.execute_fetchall(
+                    "SELECT locked FROM memories WHERE id = ?", (memory_id,)
+                )
+    if holder_id is not None:
+        return _held_elsewhere_refusal(memory_id, holder_id)
     if cursor.rowcount == 0:
-        return error_response(f"Memory {memory_id} is locked and cannot be edited")
+        if still_there and still_there[0][0]:
+            return _by_id_refusal(
+                memory_id, agent_id, f"Memory {memory_id} is locked and cannot be edited"
+            )
+        return _by_id_refusal(memory_id, agent_id, f"Memory {memory_id} not found")
 
     # Keep the remote vector entry in step with the new text (same
     # namespace/id scheme as do_store; non-fatal).
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/index",
+            "index",
             {
                 "namespace": f"cpersona:{row[1]}",
                 "items": [{"id": f"mem:{memory_id}", "text": content}],
@@ -696,6 +790,10 @@ def _purge_agent_calibration(agent_id: str) -> bool:
     removed_cal = False
     for _d in (vector._agent_thresholds, vector._agent_fused_gates, vector._agent_betas):
         removed_cal = (_d.pop(agent_id, None) is not None) or removed_cal
+    # A calibration of this agent may be suspended in one of its awaits right now;
+    # this tells it that what it is measuring was deleted, so it discards the result
+    # instead of writing it back after this function has run.
+    vector._note_agent_calibration_purge(agent_id)
     # This is the textbook deliberate removal, so claim it: the rewrite below can
     # fail (OSError -> _save_calibration_state returns False) and leave the agent
     # in the file, and without the claim the very next calibration would carry
@@ -722,6 +820,10 @@ def _purge_agent_calibration(agent_id: str) -> bool:
                 # re-measure anything — carry the stored fingerprint (None for a
                 # pre-2.5.2b2 sidecar) so the startup guard still sees the staleness.
                 scoring_version=state.get("scoring_version"),
+                # The same reason for the time: deep_check ages every agent's
+                # calibration from this one stamp, so restamping it here made a
+                # months-old calibration of every other agent read as fresh.
+                calibrated_at=state.get("calibrated_at"),
             )
             # The removal is on disk, so it is no longer pending: a later calibration
             # of a same-id agent by another process must not be deleted again here.
@@ -760,14 +862,25 @@ async def _remove_moved_source_vectors(source_agent_id: str, tally: "_MergeTally
     if not refs:
         return
     namespace = f"cpersona:{source_agent_id}"
-    base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
     for start in range(0, len(refs), 128):
-        await _post_remote_side_effect(
-            f"{base_url}/remove",
+        timed_out = await _post_remote_side_effect(
+            "remove",
             {"namespace": namespace, "ids": refs[start : start + 128]},
             action="removal",
             namespace=namespace,
         )
+        if timed_out:
+            # A service that let one chunk run out its deadline is not asked for the
+            # next: the wait would multiply by the chunk count (a hundred chunks is a
+            # hundred deadlines) for removals that most likely fail the same way. A
+            # refusal or a refused connection answers at once, so those keep going.
+            logger.warning(
+                "Skipped the remaining remote removals for %s after a timeout; %d more "
+                "moved row(s) stay indexed under the source namespace",
+                namespace,
+                max(0, len(refs) - start - 128),
+            )
+            break
 
 
 def _purge_local_vector_index(counts: dict) -> list:
@@ -844,9 +957,8 @@ def _purge_local_vector_index(counts: dict) -> list:
 async def _purge_agent_remote_namespace(agent_id: str) -> None:
     """Purge the agent's remote vector namespace (network I/O — post-commit only)."""
     if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/purge",
+            "purge",
             {"namespace": f"cpersona:{agent_id}"},
             action="purge",
             namespace=f"cpersona:{agent_id}",
@@ -1317,7 +1429,8 @@ def _refresh_unchanged_calibration(state: dict | None, embedding_dim: int) -> No
         vector._fused_gate_signal = state["fused_gate_signal"]
 
 
-#: "Stamp the live fingerprint": distinct from None, which a rewrite may pass through.
+#: "Stamp the live fingerprint" (or the current time): distinct from None, which a
+#: rewrite may pass through.
 _LIVE = object()
 
 
@@ -1339,6 +1452,7 @@ def _save_calibration_state(
     fused_gate_signal: str | None = None,
     agent_betas: dict | None = None,
     scoring_version: str | None | object = _LIVE,
+    calibrated_at: str | None | object = _LIVE,
 ) -> bool:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
@@ -1364,10 +1478,13 @@ def _save_calibration_state(
     MEASURES thresholds measures them on the running scoring function; the one caller
     that only REWRITES an existing payload (``_purge_agent_calibration``) passes the
     stored value through, so dropping an agent cannot launder a stale sidecar into
-    looking freshly calibrated.
+    looking freshly calibrated. ``calibrated_at`` follows the same rule: it defaults
+    to now, and the rewrite passes the stored time through.
     """
     if scoring_version is _LIVE:
         scoring_version = _live_fingerprint()
+    if calibrated_at is _LIVE:
+        calibrated_at = datetime.now(timezone.utc).isoformat()
     payload = {
         "embedding_dim": embedding_dim,
         "embedding_model": embedding_model,
@@ -1378,7 +1495,7 @@ def _save_calibration_state(
         "agent_fused_gates": agent_fused_gates or {},
         "fused_gate_signal": fused_gate_signal,
         "agent_betas": agent_betas or {},
-        "calibrated_at": datetime.now(timezone.utc).isoformat(),
+        "calibrated_at": calibrated_at,
     }
     path = _calibration_sidecar_path()
     tmp = f"{path}.tmp.{os.getpid()}"
@@ -1825,6 +1942,30 @@ def _null_distribution(vecs):
     return sim_matrix, pairwise_sims
 
 
+def _purged_during_calibration(agent_id: str) -> dict:
+    """The answer of a calibration whose agent was deleted while it measured (bug-036).
+
+    Writing the result would put back, in memory and in the sidecar, calibration the
+    delete just removed, and a later agent created under the same id would inherit
+    numbers measured on a corpus that no longer exists. So nothing is applied, and the
+    caller is told so rather than handed a threshold that is not in effect.
+    """
+    logger.info(
+        "Calibration [%s]: the agent's data was deleted while it was measured; "
+        "the result was discarded.",
+        agent_id,
+    )
+    return error_response(
+        f"the data of agent '{agent_id}' was deleted while it was being calibrated; "
+        "the measurement was discarded and nothing was applied"
+    )
+
+
+#: "Measure the gate at the agent's current beta": the default of do_calibrate_threshold's
+#: ``precision_override``, distinct from None (measure at the global default, drop the override).
+_CURRENT_PRECISION = object()
+
+
 async def do_calibrate_threshold(
     agent_id: str,
     sample_size: int = 0,
@@ -1832,6 +1973,8 @@ async def do_calibrate_threshold(
     method: str = "",
     percentile: float = 0,
     session_key: str = "",
+    *,
+    precision_override: float | None | object = _CURRENT_PRECISION,
 ) -> dict:
     """Auto-calibrate the vector-similarity threshold from the embedding distribution.
 
@@ -1843,6 +1986,12 @@ async def do_calibrate_threshold(
     v2.4.24: the threshold is placed ABOVE the null mean (see ``_threshold_from_sims``);
     ``method`` defaults to ``percentile``. The result is persisted to a sidecar keyed by
     embedding dimension so a later embedding-model swap triggers recalibration at startup.
+
+    ``precision_override`` is set_recall_precision's, and no tool argument reaches it:
+    a beta (or None, for "clear the override") the gate is measured at and the sidecar
+    write records for the agent, while process memory keeps the current beta. The
+    caller adopts the new beta only once this call has persisted it, so a calibration
+    that fails leaves no tentative value anywhere another calibration could save it.
     """
     import numpy as np
 
@@ -1917,6 +2066,11 @@ async def do_calibrate_threshold(
             key,
         )
 
+    # Noted before the first await: a delete_agent_data that lands while this call is
+    # suspended purges the agent once, at that instant, and everything measured here
+    # from then on describes a corpus that no longer exists.
+    purges_at_start = vector._agent_calibration_purges(agent_id)
+
     # The read seam stays open through the fused-gate calibration below — it issues
     # simulate-query recalls against the same connection. It is the background seam:
     # each simulate query is a whole stored record, and on a large store its keyword
@@ -1986,6 +2140,9 @@ async def do_calibrate_threshold(
                 ),
             }
 
+        if agent_id and vector._agent_calibration_purges(agent_id) != purges_at_start:
+            return _purged_during_calibration(agent_id)
+
         # Apply: per-agent dict when agent_id provided, global fallback when empty.
         # Claiming the axis makes this process the owner of what it just measured, so
         # the sidecar write below overwrites the stored value instead of carrying it
@@ -2003,7 +2160,14 @@ async def do_calibrate_threshold(
         # every mode (cascade via the vector floor above, rsf/rrf via this gate) instead of
         # the pool-size heuristic _adaptive_min_score.
         fused_stats = None
+        gate_beta = None
         if agent_id and config.FUSED_GATE_ENABLED:
+            if precision_override is _CURRENT_PRECISION:
+                gate_beta = vector._get_precision_beta(agent_id)
+            elif precision_override is None:
+                gate_beta = config.FUSED_GATE_BETA
+            else:
+                gate_beta = precision_override
             # The simulate-query pass issues live fusion recalls; a flaky embedding backend
             # must not abort calibration and lose the vector threshold computed above (which
             # is persisted below). Degrade to the heuristic gate on any failure.
@@ -2013,7 +2177,7 @@ async def do_calibrate_threshold(
                     agent_id,
                     config.FUSED_GATE_SAMPLE_QUERIES,
                     CALIBRATE_TEMPORAL_WINDOW_MIN,
-                    vector._get_precision_beta(agent_id),
+                    gate_beta,
                     CALIBRATE_FLOOR,
                 )
             except Exception as exc:
@@ -2023,24 +2187,15 @@ async def do_calibrate_threshold(
                     exc,
                 )
                 fused_stats = None
-            if fused_stats is not None:
-                # The 0.1544 collapse produced zero log lines —
-                # the gate is recall's effective filter, so a replacement is worth one.
-                logger.info(
-                    "Fused gate [%s]: %s -> %.4f (signal=%s, draws=%s)",
-                    agent_id,
-                    vector._agent_fused_gates.get(agent_id, "unset"),
-                    fused_stats["threshold"],
-                    fused_stats["signal"],
-                    fused_stats.get("threshold_draws", [fused_stats["threshold"]]),
-                )
-                vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
-                vector._fused_gate_signal = fused_stats["signal"]
-                # Only on success: a degraded run (no embedding client, a flaky
-                # backend) measured no gate, so it owns neither the agent's gate
-                # nor the signal and must leave the stored ones alone.
-                vector._record_agent_calibration_change(agent_id, "agent_fused_gates")
-                vector._record_global_calibration_change("fused_gate_signal")
+
+    # From here to the sidecar write there is no await, so no other call can land
+    # between the checks below, the writes into process memory and the save that
+    # persists them. The gate is written here rather than where it was measured for
+    # that reason: set_recall_precision's gate and beta must arrive together, and a
+    # gate written before the await above could be replaced in it by a calibration
+    # measured at the old beta, leaving the new beta saved beside the old gate.
+    if agent_id and vector._agent_calibration_purges(agent_id) != purges_at_start:
+        return _purged_during_calibration(agent_id)
 
     # Persist for restart survival + embedding-change detection (Tier 4).
     # bug-095: surface a failed sidecar write — the in-memory calibration applied,
@@ -2061,7 +2216,51 @@ async def do_calibrate_threshold(
     may_replace = not stored_unreadable or _backup_unreadable_calibration_sidecar() is not None
     if may_replace:
         _refresh_unchanged_calibration(stored_state, embedding_dim)
+
+    # The gate sits on the separation curve at the beta it was measured at. When the
+    # agent's beta changed during the measurement -- set_recall_precision applied a new
+    # one, typically while the startup guard was calibrating this agent -- the agent
+    # already holds a gate measured at its new beta, and this one would replace it with
+    # a value for a beta the agent no longer has, in memory and in the sidecar.
+    if (
+        fused_stats is not None
+        and precision_override is _CURRENT_PRECISION
+        and vector._get_precision_beta(agent_id) != gate_beta
+    ):
+        logger.info(
+            "Fused gate [%s]: discarded a gate measured at beta %s; the agent's beta "
+            "changed to %s while it was measured.",
+            agent_id,
+            gate_beta,
+            vector._get_precision_beta(agent_id),
+        )
+        fused_stats = None
+    if fused_stats is not None:
+        # The 0.1544 collapse produced zero log lines —
+        # the gate is recall's effective filter, so a replacement is worth one.
+        logger.info(
+            "Fused gate [%s]: %s -> %.4f (signal=%s, draws=%s)",
+            agent_id,
+            vector._agent_fused_gates.get(agent_id, "unset"),
+            fused_stats["threshold"],
+            fused_stats["signal"],
+            fused_stats.get("threshold_draws", [fused_stats["threshold"]]),
+        )
+        vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
+        vector._fused_gate_signal = fused_stats["signal"]
+        # Only on success: a degraded run (no embedding client, a flaky
+        # backend) measured no gate, so it owns neither the agent's gate
+        # nor the signal and must leave the stored ones alone.
+        vector._record_agent_calibration_change(agent_id, "agent_fused_gates")
+        vector._record_global_calibration_change("fused_gate_signal")
+
+    if may_replace:
         carried = _stored_calibration_to_carry(embedding_dim, stored_state)
+        agent_betas = {**carried.get("agent_betas", {}), **dict(vector._agent_betas)}
+        if precision_override is None:
+            agent_betas.pop(agent_id, None)
+        elif precision_override is not _CURRENT_PRECISION:
+            agent_betas[agent_id] = precision_override
         sidecar_persisted = _save_calibration_state(
             embedding_dim,
             config.EMBEDDING_MODEL,
@@ -2073,7 +2272,7 @@ async def do_calibrate_threshold(
                 **dict(vector._agent_fused_gates),
             },
             fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
-            agent_betas={**carried.get("agent_betas", {}), **dict(vector._agent_betas)},
+            agent_betas=agent_betas,
         )
         if sidecar_persisted:
             vector._clear_calibration_pending()
@@ -2206,30 +2405,16 @@ async def do_set_recall_precision(
             key,
         )
 
-    # Apply the override, then recalibrate so the change takes effect now (this also
-    # persists the sidecar, including agent_betas, via do_calibrate_threshold). Keep it
-    # atomic: if calibration cannot run (e.g. an agent with too few embeddings returns
-    # ok=False before the sidecar is saved), roll the in-memory override back so it never
-    # diverges from the unpersisted sidecar.
-    had_override = agent_id in vector._agent_betas
-    prev_beta = vector._agent_betas.get(agent_id)
-    had_authority = agent_id in vector._calibration_authority["agent_betas"]
-    was_pending = agent_id in vector._calibration_pending["agent_betas"]
-    if clear:
-        vector._agent_betas.pop(agent_id, None)
-    else:
-        vector._agent_betas[agent_id] = resolved_beta
-    # The clear is the reason the authority set exists: popping the beta is how the
-    # removal is expressed, and the sidecar write inside do_calibrate_threshold is
-    # what makes it durable. Without the claim that write carries the stored beta
-    # back over the hole, so the tool answers {cleared: true} and the override is
-    # live again after the next restart.
-    vector._record_agent_calibration_change(agent_id, "agent_betas")
-
-    # bug-096: the rollback must also cover a RAISED calibration failure (transient
-    # DB lock, numpy fault) — the old ok:False-only path leaked the un-persisted
-    # beta into process memory, and the next routine calibration then persisted a
-    # gate at a beta the caller was told failed to apply.
+    # Recalibrate at the new beta so the change takes effect now. The beta is handed to
+    # the calibration rather than written into process memory first: the calibration
+    # measures the gate at it and writes it into the sidecar together with that gate,
+    # and it is adopted here only once that write succeeded. A tentative value in
+    # vector._agent_betas was visible to every other calibration for as long as this
+    # one ran -- another agent's calibration saved it to the sidecar while this call
+    # went on to fail and answer ok:false, and the next restart applied it (bug-613).
+    #
+    # bug-096: a RAISED calibration failure (transient DB lock, numpy fault) is a
+    # failure like any other, and since nothing was applied there is nothing to undo.
     try:
         # bug-342: the caller's own session bucket, not the shared keyless one.
         # This handler gates itself on `key` and then asked calibration to decide
@@ -2238,58 +2423,34 @@ async def do_set_recall_precision(
         # keyless pause armed and this caller declaring an unpaused key, the call
         # answered ok:true with the beta applied and new_threshold None -- nothing
         # measured, no sidecar written, and no field to branch on.
-        cal = await do_calibrate_threshold(agent_id=agent_id, session_key=session_key)
+        cal = await do_calibrate_threshold(
+            agent_id=agent_id,
+            session_key=session_key,
+            precision_override=None if clear else resolved_beta,
+        )
     except Exception as exc:
         cal = {"ok": False, "error": f"calibration raised: {exc}"}
     # A skipped calibration is ok:true by design (that is the no-persist shape), so
-    # `ok` alone cannot tell "measured and applied" from "declined to measure". The
-    # rollback below exists to stop an un-persisted weight from living on in process
-    # memory, and that is exactly the state a skip leaves, so it counts as a failure
-    # to apply here even though it is not an error.
+    # `ok` alone cannot tell "measured and applied" from "declined to measure". A skip
+    # wrote nothing, so adopting the beta below would leave an un-persisted weight in
+    # process memory: it counts as a failure to apply here even though it is not an
+    # error.
     # A calibration whose sidecar write failed is the same state reached the other way:
     # measured, but the override would be gone on the next restart (the previous sidecar
-    # is what a restart restores), so it is rolled back and reported as not applied.
+    # is what a restart restores), so it is not adopted and reported as not applied.
     if cal.get("ok") and cal.get("persisted") is not False and cal.get("sidecar_persisted") is False:
         cal = {
             **cal,
             "ok": False,
             "error": (
                 "the calibration sidecar could not be written, so the change would not "
-                "survive a restart; the precision override was rolled back"
+                "survive a restart; the precision override was not applied"
             ),
         }
     if not cal.get("ok") or cal.get("persisted") is False:
-        # bug-149 (bug-096 residual): compare-and-restore. do_calibrate_threshold awaits, so a
-        # concurrent set_recall_precision for the SAME agent can apply + persist its own
-        # value while this call is suspended. Roll back only if this call's own write is
-        # still the live value; otherwise leave the concurrent writer's applied value in
-        # place rather than clobbering it with our stale pre-await snapshot.
-        if clear:
-            this_write_survived = agent_id not in vector._agent_betas
-        else:
-            this_write_survived = vector._agent_betas.get(agent_id) == resolved_beta
-        if this_write_survived:
-            if had_override:
-                vector._agent_betas[agent_id] = prev_beta
-            else:
-                vector._agent_betas.pop(agent_id, None)
-            # Roll the ownership claim back with the value. A failed call that left
-            # the claim behind would teach the next calibration to treat "this
-            # process has no beta for the agent" as a deletion and drop a stored
-            # override this call was told it never applied. Only inside the
-            # this_write_survived branch: a concurrent writer that overtook us owns
-            # its own claim.
-            if not had_authority:
-                vector._release_agent_calibration(agent_id, "agent_betas")
-            # Still pending means no sidecar write ran since this call's change, so the
-            # file still holds the restored value. Not pending means one did -- possibly
-            # with this call's value in it -- and the restored value must reach the file
-            # too rather than be refreshed back from it.
-            if agent_id in vector._calibration_pending["agent_betas"]:
-                if not was_pending:
-                    vector._calibration_pending["agent_betas"].discard(agent_id)
-            else:
-                vector._calibration_pending["agent_betas"].add(agent_id)
+        # bug-149: nothing to restore. The override never entered process memory, so a
+        # concurrent set_recall_precision for the same agent that applied its own value
+        # while this call was suspended keeps it.
         return {
             "ok": False,
             "agent_id": agent_id,
@@ -2298,6 +2459,15 @@ async def do_set_recall_precision(
             "cleared": clear,
             "error": cal.get("error", "calibration failed"),
         }
+    # The calibration has persisted the override with the gate measured at it, and no
+    # await separates that write from this one, so the two arrive together. Claimed
+    # but not pending: the value is on disk, so a later write by this process must not
+    # carry the stored entry back over a clear, and need not rewrite it either.
+    if clear:
+        vector._agent_betas.pop(agent_id, None)
+    else:
+        vector._agent_betas[agent_id] = resolved_beta
+    vector._claim_agent_calibration(agent_id, "agent_betas")
     return {
         "ok": True,
         "agent_id": agent_id,
@@ -2348,6 +2518,16 @@ async def do_get_recall_precision(agent_id: str) -> dict:
     }
 
 
+def _unchanged_stored_entries(state: dict, axis: str) -> dict:
+    """The stored entries of *axis*, without those this process changed since its last write."""
+    pending = vector._calibration_pending[axis]
+    return {
+        agent_id: value
+        for agent_id, value in (state.get(axis) or {}).items()
+        if agent_id not in pending
+    }
+
+
 def _restore_calibration_state(state: dict) -> None:
     """Load persisted thresholds from a sidecar payload into live config + dict.
 
@@ -2360,21 +2540,29 @@ def _restore_calibration_state(state: dict) -> None:
     only then may the sidecar write drop it. The claims are per axis and per stored key
     for the same reason the restore itself is: a key absent from the file is not owned,
     so a concurrent writer that adds one later still has it carried.
+
+    An entry this process changed since its last sidecar write is newer than the file
+    and is left alone, as ``_refresh_unchanged_calibration`` leaves it. The startup
+    guard restores beside serving (bug-258), so a delete_agent_data whose rewrite of
+    the file failed, or a calibration that has measured and not yet saved, can come
+    first; restoring over them brought the deleted agent's calibration back, or
+    replaced the measurement the calibration then saved with the stale stored value.
     """
+    pending_globals = vector._global_calibration_pending
     global_threshold = state.get("global_threshold")
-    if global_threshold is not None:
+    if global_threshold is not None and "global_threshold" not in pending_globals:
         config.VECTOR_MIN_SIMILARITY = global_threshold
-    vector._agent_thresholds.update(state.get("agent_thresholds") or {})
+    vector._agent_thresholds.update(_unchanged_stored_entries(state, "agent_thresholds"))
     global_fused_gate = state.get("global_fused_gate")
-    if global_fused_gate is not None:
+    if global_fused_gate is not None and "global_fused_gate" not in pending_globals:
         vector._global_fused_gate = global_fused_gate
-    vector._agent_fused_gates.update(state.get("agent_fused_gates") or {})
+    vector._agent_fused_gates.update(_unchanged_stored_entries(state, "agent_fused_gates"))
     fused_gate_signal = state.get("fused_gate_signal")
-    if fused_gate_signal is not None:
+    if fused_gate_signal is not None and "fused_gate_signal" not in pending_globals:
         vector._fused_gate_signal = fused_gate_signal
     # Per-agent precision overrides (knob 3, v2.4.29). Backward compatible: a pre-v2.4.29
     # sidecar has no key, leaving every agent on the global beta default.
-    vector._agent_betas.update(state.get("agent_betas") or {})
+    vector._agent_betas.update(_unchanged_stored_entries(state, "agent_betas"))
     for axis in vector._CALIBRATION_AGENT_AXES:
         for stored_agent_id in state.get(axis) or {}:
             vector._claim_agent_calibration(stored_agent_id, axis)
@@ -2398,8 +2586,12 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     cosine backfill invalidated. Both triggers are reported in the status dict; the
     action names whichever fired (dimension first — it also implies new vectors).
     """
-    state, sidecar_unreadable = _read_calibration_sidecar()
     live_dim = await _corpus_embedding_dim()
+    # Read after the await, not before it: this guard runs beside serving (bug-258), and
+    # a delete_agent_data that landed in the await rewrote the file without the agent.
+    # Applying a copy read earlier restored the calibration it had just removed. From
+    # here to the restore and the beta preload below there is no await.
+    state, sidecar_unreadable = _read_calibration_sidecar()
     dim_changed = (
         state is not None and live_dim is not None and state.get("embedding_dim") != live_dim
     )
@@ -2439,7 +2631,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
     # the life of the process, and the next calibrate_threshold — the documented repair
     # for that state — wrote the sidecar from the empty dict and deleted them.
     if not restored and state is not None:
-        vector._agent_betas.update(state.get("agent_betas") or {})
+        vector._agent_betas.update(_unchanged_stored_entries(state, "agent_betas"))
         # Claim the beta axis ONLY. This process now holds every stored beta, so a
         # later clear of one is a real deletion and must reach disk; it holds none of
         # the thresholds and gates deliberately left behind above, so those stay
@@ -2630,9 +2822,8 @@ async def do_delete_episode(episode_id: int, agent_id: str = "", session_key: st
         # remote-mode recall, wasting top-K slots until the by-id rehydrate missed.
         # Mirror do_delete_memory's /remove; a removal failure must not fail the delete.
         ns = f"cpersona:{owner_agent_id}"
-        base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
         await _post_remote_side_effect(
-            f"{base_url}/remove",
+            "remove",
             {"namespace": ns, "ids": [f"ep:{episode_id}"]},
             action="removal",
             namespace=ns,
@@ -2729,8 +2920,12 @@ def _confine_io_path(path: str) -> str | None:
     backups); the destructiveHint tool annotation makes the host confirm the write.
 
     bug-130: import uses the same confinement as export.
+
+    A path holding a NUL byte names no file. Every filesystem call raises
+    ValueError on it rather than OSError, which the handlers and the ACL guard's
+    file readers do not catch, so it is refused here, before any of them runs.
     """
-    if not path:
+    if not path or "\x00" in path:
         return None
     if config.EXPORT_DIR:
         root = os.path.realpath(config.EXPORT_DIR)
@@ -2847,6 +3042,26 @@ def export_file_owner(output_path: str) -> str | None:
     return _header_agent(header)
 
 
+def _export_json_column(text) -> tuple[object, str | None]:
+    """A stored JSON column as an export record carries it: (value, verbatim text).
+
+    A column holding JSON is written as the value it parses to, and the text is
+    None. One holding text that is not JSON -- a legacy attribution string, a hand
+    edit -- used to be written as {} with nothing to say so, and the restore stored
+    '{}' in its place, locked rows included, which the invalid-JSON repair leaves
+    alone on purpose. That text now travels verbatim beside the {} (as
+    ``source_text`` / ``metadata_text``), and the import stores it back as it was.
+    A reader that does not know the extra key still sees the {} it always saw.
+    """
+    if not text:
+        return {}, None
+    try:
+        return json.loads(text), None
+    except (ValueError, TypeError, RecursionError):
+        # Only text can be written into the file; anything else keeps the old {}.
+        return {}, text if isinstance(text, str) else None
+
+
 async def do_export_memories(agent_id: str, output_path: str, include_embeddings: bool = False) -> dict:
     """Export memories, episodes, profiles and the declared graph to a JSONL file.
 
@@ -2958,15 +3173,17 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                 )
                 while rows := await cur.fetchmany(500):
                     for row in rows:
+                        source, source_text = _export_json_column(row[4])
+                        metadata, metadata_text = _export_json_column(row[6])
                         record: dict = {
                             "_type": "memory",
                             "id": row[0],
                             "agent_id": row[1],
                             "msg_id": row[2],
                             "content": row[3],
-                            "source": _try_parse_json(row[4]) if row[4] else {},
+                            "source": source,
                             "timestamp": row[5],
-                            "metadata": _try_parse_json(row[6]) if row[6] else {},
+                            "metadata": metadata,
                             "created_at": row[8],
                             "project_id": row[9],
                             "channel": row[10],
@@ -2974,6 +3191,10 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                             "recall_count": int(row[12]) if row[12] else 0,
                             "last_recalled_at": row[13],
                         }
+                        if source_text is not None:
+                            record["source_text"] = source_text
+                        if metadata_text is not None:
+                            record["metadata_text"] = metadata_text
                         if include_embeddings and row[7]:
                             record["embedding_b64"] = base64.b64encode(row[7]).decode("ascii")
                             # The label travels with the vector it describes, and only with it.
@@ -3109,6 +3330,145 @@ class _ImportErrors(list):
         return [*self, f"{self.omitted} more errors were not listed"]
 
 
+#: Episodes read in one statement while an agent's summary digests are collected.
+_EPISODE_KEY_PAGE = 500
+
+
+class _EpisodeSummaryIndex:
+    """Where an agent's stored episode summaries live, for the episode dedup gate.
+
+    Episodes have no uniqueness constraint and no index holding ``summary``, so the
+    gate used to be one probe per incoming episode that SQLite answered by reading
+    every episode in the (agent_id, project_id) bucket -- each row of a merge or a
+    restore paid for everything stored before it, rows of the same run included, with
+    the write lock held: quadratic in the bucket. Without a schema change, the bucket
+    is read once instead: the first probe for an agent walks its episodes in keyset
+    pages and keeps a 16-byte digest of each (project_id, channel, summary) mapped to
+    the row id, and every later probe is a dictionary lookup. The summaries themselves
+    are never kept, so what stays resident is a fixed few dozen bytes per episode,
+    not the corpus.
+
+    A digest hit is confirmed against the row by its primary key before it is
+    believed, so a digest collision cannot skip a distinct episode. A value that is
+    not text (a summary stored as a BLOB, say) cannot be digested with the meaning
+    SQL's ``=`` gives it, so it falls back to the original probe.
+    """
+
+    def __init__(self) -> None:
+        self._agents: dict[str, dict[bytes, int]] = {}
+        # Agents holding a row the digest cannot stand for: every probe asks SQL.
+        self._untyped: set[str] = set()
+
+    @staticmethod
+    def _key(project_id, channel, summary) -> bytes | None:
+        if not (isinstance(project_id, str) and isinstance(channel, str) and isinstance(summary, str)):
+            return None
+        h = hashlib.blake2b(digest_size=16)
+        for part in (project_id, channel, summary):
+            raw = part.encode("utf-8", "surrogatepass")
+            # Length-prefixed, so ("ab", "c") and ("a", "bc") cannot share a digest.
+            h.update(len(raw).to_bytes(8, "little"))
+            h.update(raw)
+        return h.digest()
+
+    async def _keys_for(self, db, agent_id: str) -> dict[bytes, int]:
+        keys = self._agents.get(agent_id)
+        if keys is not None:
+            return keys
+        keys = {}
+        last_id = 0
+        while True:
+            # The unary plus walks the primary key from the last id, as the merge's
+            # source reads do; an agent index would sort the agent's rows per page.
+            rows = await db.execute_fetchall(
+                "SELECT id, project_id, channel, summary FROM episodes"
+                " WHERE +agent_id = ? AND id > ? ORDER BY id LIMIT ?",
+                (agent_id, last_id, _EPISODE_KEY_PAGE),
+            )
+            if not rows:
+                break
+            last_id = rows[-1][0]
+            for row_id, project_id, channel, summary in rows:
+                key = self._key(project_id, channel, summary)
+                if key is None:
+                    self._untyped.add(agent_id)
+                else:
+                    keys.setdefault(key, row_id)
+        self._agents[agent_id] = keys
+        return keys
+
+    async def _probe(self, db, agent_id: str, project_id, channel, summary) -> int | None:
+        rows = await db.execute_fetchall(
+            "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
+            " AND summary = ? LIMIT 1",
+            (agent_id, project_id, channel, summary),
+        )
+        return rows[0][0] if rows else None
+
+    async def find(self, db, agent_id: str, project_id, channel, summary) -> int | None:
+        """The id of an episode the agent holds with this summary in this bucket."""
+        keys = await self._keys_for(db, agent_id)
+        key = self._key(project_id, channel, summary)
+        if key is None or agent_id in self._untyped:
+            return await self._probe(db, agent_id, project_id, channel, summary)
+        row_id = keys.get(key)
+        if row_id is None:
+            return None
+        rows = await db.execute_fetchall(
+            "SELECT 1 FROM episodes WHERE id = ? AND agent_id = ? AND project_id = ? AND channel = ?"
+            " AND summary = ?",
+            (row_id, agent_id, project_id, channel, summary),
+        )
+        if rows:
+            return row_id
+        return await self._probe(db, agent_id, project_id, channel, summary)
+
+    def add(self, agent_id: str, project_id, channel, summary, row_id: int) -> None:
+        """Record an episode this run inserted, so a repeat later in the run finds it."""
+        keys = self._agents.get(agent_id)
+        key = self._key(project_id, channel, summary)
+        if keys is None:
+            return  # not read yet: the first probe will read this row from the table
+        if key is None:
+            self._untyped.add(agent_id)
+        else:
+            keys.setdefault(key, row_id)
+
+
+async def _queue_derived_builds(agent_id: str, items: list[dict], session_key: str) -> None:
+    """Queue node and block construction for the records a merge inserted.
+
+    store and update_memory queue these for the record they write; a merge inserts
+    rows by the batch and used to queue none, so a copied record had no blocks (and,
+    past the token window, no nodes) until a restart's backfill or a health repair
+    came round to it -- and a move had already dropped the source's blocks with the
+    source row. (An import is documented not to queue them: OVERFLOW_TREE_DESIGN §4.)
+    ``items`` are the remote-index entries the run queued, which are exactly the rows
+    it inserted: ``{"id": "<kind>:<row id>", "text": ...}``.
+
+    Called after the commit: the token report is a network call and must not run under
+    the write lock. Never raises -- the records are stored, and the derived layer's
+    absence changes no answer; the health check still finds anything missed here.
+    """
+    if not items:
+        return
+    records = []
+    for item in items:
+        kind, _, row_id = item["id"].partition(":")
+        records.append((kind, int(row_id), item["text"]))
+    if nodes.building_enabled():
+        try:
+            past_window = await nodes.overflowing(records)
+        except Exception as e:  # the report is advisory to the write path
+            logger.warning("token report failed after a bulk write, no nodes queued: %s", e)
+            past_window = None
+        for kind, row_id, _text in past_window or ():
+            await nodes.queue_build(kind, row_id, agent_id, session_key)
+    if blocks.building_enabled():
+        for kind, row_id, _text in records:
+            await blocks.queue_build(kind, row_id, agent_id, session_key)
+
+
 @dataclass
 class _ImportTally:
     """The state one import run threads through its per-record handlers.
@@ -3146,6 +3506,16 @@ class _ImportTally:
     # not the seam that gets to say no.
     future_timestamps: int = 0
     errors: _ImportErrors = field(default_factory=_ImportErrors)
+    # Rows restored from records that carry no project_id key. An export written
+    # before the project and channel axes were exported looks like that, and its rows
+    # land in the global pool whatever project they lived in, so the import says how
+    # many. Its header carries the same version string a later export's does, so the
+    # records are the only witness.
+    axisless_memories: int = 0
+    axisless_episodes: int = 0
+    # The (agent_id, user_id) key of each profile this file has restored, and the
+    # line it came from. Several agents imported into one target share that key.
+    profile_lines: dict[tuple[str, str], int] = field(default_factory=dict)
     # bug-091: track the header and the per-type record counts actually present in
     # the file, so a truncated backup (mid-export crash, partial copy) is rejected
     # instead of silently restoring a partial corpus with ok:true.
@@ -3172,6 +3542,8 @@ class _ImportTally:
     seen_content: set = field(default_factory=set)
     # bug-220: the episode axis of the same preview problem (bug-071's import twin).
     seen_episode: set = field(default_factory=set)
+    # The episode dedup gate, read once per agent rather than once per record.
+    episode_keys: _EpisodeSummaryIndex = field(default_factory=_EpisodeSummaryIndex)
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: dict[str, list[dict]] = field(default_factory=dict)
     # Whether each agent id the file names may receive rows, asked once per id.
@@ -3263,7 +3635,31 @@ def _validate_import_preconditions(
     return confined, None
 
 
-def _null_as_empty(record: dict, key: str):
+class _FieldRefused(ValueError):
+    """A record value the import cannot store; its line is refused, not the file."""
+
+
+def _bindable_text(key: str, value) -> str:
+    """``value`` if it is text SQLite can bind, else _FieldRefused naming ``key``.
+
+    A value bound as whatever JSON type the file held -- an object, a list, a
+    number where text belongs -- or a string holding a lone surrogate (which
+    JSON escapes can spell and UTF-8 cannot encode) raised at the INSERT. That
+    aborted and rolled back the whole restore over one line, and only on the real
+    run: the preview binds nothing and answered ok:true for the same file. Every
+    value is checked here, on both arms, before the dry_run split, so a bad line
+    is refused and reported the way an invalid JSON line is.
+    """
+    if not isinstance(value, str):
+        raise _FieldRefused(f"{key} is not a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise _FieldRefused(f"{key} is not valid UTF-8 text") from None
+    return value
+
+
+def _null_as_empty(record: dict, key: str) -> str:
     """A record field, with JSON null read as the empty value a missing key gets.
 
     bug-527: these fields land in NOT NULL columns. A null bound straight in was
@@ -3273,7 +3669,65 @@ def _null_as_empty(record: dict, key: str):
     dry_run split, as bug-094 does for keywords.
     """
     value = record.get(key)
-    return "" if value is None else value
+    return "" if value is None else _bindable_text(key, value)
+
+
+def _optional_text(record: dict, key: str) -> str | None:
+    """A nullable text field (a stamp the INSERT defaults or leaves NULL)."""
+    value = record.get(key)
+    return None if value is None else _bindable_text(key, value)
+
+
+def _recall_count(record: dict) -> int:
+    """The record's recall_count as an integer SQLite can bind.
+
+    The values the old ``int(...)`` accepted -- an integer, a numeric string, a
+    float -- still are. One it raised on, or one past SQLite's integer range,
+    is refused for its line instead of aborting the restore.
+    """
+    value = record.get("recall_count")
+    if not value:
+        return 0
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise _FieldRefused("recall_count is not a whole number") from None
+    if not fits_sqlite_integer(count):
+        raise _FieldRefused("recall_count is out of range")
+    return count
+
+
+def _record_agent(record: dict, kind: str, target_agent_id: str, tally: "_ImportTally", line_num: int) -> str | None:
+    """The agent a record is restored into, or None when its line is passed over."""
+    aid = target_agent_id or record.get("agent_id", "")
+    if not aid:
+        tally.errors.append(f"Line {line_num}: {kind} missing agent_id")
+        return None
+    try:
+        aid = _bindable_text("agent_id", aid)
+    except _FieldRefused as e:
+        tally.errors.append(f"Line {line_num}: {kind} {e}; it was not imported")
+        return None
+    if tally.refuses_agent(aid, kind, line_num):
+        return None
+    return aid
+
+
+async def _import_line(handler, db, record: dict, aid: str, tally: "_ImportTally", line_num: int, kind: str) -> None:
+    """Run one record handler; a value it cannot store refuses this line only.
+
+    The handlers read and check every value before they count or write anything,
+    so a refusal leaves nothing half-done for this line, and the preview refuses
+    exactly what the real run does.
+    """
+    try:
+        await handler(db, record, aid, tally, line_num)
+    except _FieldRefused as e:
+        if kind == "memory":
+            tally.skipped_memories += 1
+        elif kind == "episode":
+            tally.skipped_episodes += 1
+        tally.errors.append(f"Line {line_num}: {kind} {e}; it was not imported")
 
 
 async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
@@ -3297,19 +3751,9 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         tally.skipped_memories += 1
         return
 
-    content, truncated = sanitize_content_with_flag(content)
-    if not content:
-        tally.skipped_memories += 1
-        tally.errors.append(f"Line {line_num}: memory is empty after sanitisation; it was not imported")
-        return
-    if truncated:
-        # The number is the text that was actually kept, not a second read of the
-        # constant: len(content) after a truncation IS the cap.
-        tally.errors.append(
-            f"Line {line_num}: memory content exceeded the {len(content)}-character cap "
-            "and was truncated"
-        )
-
+    # Every value is read and checked before anything is counted or written: a
+    # _FieldRefused raised here refuses the line (see _import_line).
+    content = _bindable_text("content", content)
     msg_id = _null_as_empty(record, "msg_id")
     pid = _null_as_empty(record, "project_id")
     chan = _null_as_empty(record, "channel")
@@ -3317,9 +3761,22 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     # report below parses it on both, so a value that is not a string aborted the
     # preview and the restore alike. It is refused for this line instead.
     timestamp = _null_as_empty(record, "timestamp")
-    if not isinstance(timestamp, str):
+    # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;
+    # written back as bare tokens they are JSON SQLite rejects (see
+    # json_dumps_finite), so the restore writes null in their place. A column the
+    # export carried as text (see _export_json_column) is stored back verbatim.
+    source = json_dumps_finite(record.get("source", {}))
+    metadata = json_dumps_finite(record.get("metadata", {}))
+    source = _optional_text(record, "source_text") or source
+    metadata = _optional_text(record, "metadata_text") or metadata
+    recall_count = _recall_count(record)
+    last_recalled_at = _optional_text(record, "last_recalled_at")
+    created_at = _optional_text(record, "created_at")
+
+    content, truncated = sanitize_content_with_flag(content)
+    if not content:
         tally.skipped_memories += 1
-        tally.errors.append(f"Line {line_num}: memory timestamp is not a string; it was not imported")
+        tally.errors.append(f"Line {line_num}: memory is empty after sanitisation; it was not imported")
         return
 
     # bug-044: dedup on the full identity (agent_id, project_id,
@@ -3356,12 +3813,16 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         tally.map_record("mem", record, await _equal_memory_id(db, aid, pid, chan, content) if dup else None)
         return
 
+    if truncated:
+        # Reported only for a row that is stored: a skipped line kept nothing, so
+        # nothing of it was cut. The number is the cap the sanitiser cut at, read
+        # through the same accessor, so the message cannot disagree with the cut.
+        tally.errors.append(
+            f"Line {line_num}: memory content exceeded the {content_cap()}-character cap "
+            "and was truncated"
+        )
+
     if not tally.dry_run:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;
-        # written back as bare tokens they are JSON SQLite rejects (see
-        # json_dumps_finite), so the restore writes null in their place.
-        source = json_dumps_finite(record.get("source", {}))
-        metadata = json_dumps_finite(record.get("metadata", {}))
         # bug-016: carry the project_id / channel γ-axes, the locked
         # flag and the embedding through, and INSERT OR IGNORE so a
         # collision with the v12 dedup UNIQUE index is a counted skip
@@ -3387,9 +3848,9 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
                 blob,
                 _imported_label(record, blob),
                 1 if record.get("locked") else 0,
-                int(record.get("recall_count") or 0),
-                record.get("last_recalled_at"),
-                record.get("created_at"),
+                recall_count,
+                last_recalled_at,
+                created_at,
             ),
         )
         if cur.rowcount == 0:
@@ -3430,7 +3891,25 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     # `future_timestamp` health check, which can name and repair the rows.
     if future_timestamp_issue(timestamp):
         tally.future_timestamps += 1
+    if _lacks_isolation_axes(record):
+        tally.axisless_memories += 1
     tally.imported_memories += 1
+
+
+def _is_export_header(header: dict | None) -> bool:
+    """Whether an import file's header is one an export of this server wrote."""
+    version = header.get("version") if header else None
+    return isinstance(version, str) and version.startswith("cpersona-export/")
+
+
+def _lacks_isolation_axes(record: dict) -> bool:
+    """Whether a record predates the export of the project and channel axes.
+
+    The exporter has written project_id on every memory and episode since those
+    axes were first exported, '' for the global pool included, so a record without
+    the key came from an older export and is restored into the global pool.
+    """
+    return "project_id" not in record
 
 
 async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally, line_num: int) -> None:
@@ -3449,17 +3928,6 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     if not summary:
         return
 
-    summary, truncated = sanitize_content_with_flag(summary)
-    if not summary:
-        tally.skipped_episodes += 1
-        tally.errors.append(f"Line {line_num}: episode summary is empty after sanitisation; it was not imported")
-        return
-    if truncated:
-        tally.errors.append(
-            f"Line {line_num}: episode summary exceeded the {len(summary)}-character cap "
-            "and was truncated"
-        )
-
     # bug-094: coerce field types on BOTH paths — a JSON-array
     # keywords value (the natural hand-authored format) reached
     # db.execute as a Python list and aborted the whole import
@@ -3471,21 +3939,37 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     else:
         keywords = str(keywords or "")
 
+    # As for memories, every value is checked before anything is counted or written.
+    summary = _bindable_text("summary", summary)
+    keywords = _bindable_text("keywords", keywords)
     ep_pid = _null_as_empty(record, "project_id")
     ep_chan = _null_as_empty(record, "channel")
+    start_time = _optional_text(record, "start_time")
+    end_time = _optional_text(record, "end_time")
+    created_at = _optional_text(record, "created_at")
+
+    summary, truncated = sanitize_content_with_flag(summary)
+    if not summary:
+        tally.skipped_episodes += 1
+        tally.errors.append(f"Line {line_num}: episode summary is empty after sanitisation; it was not imported")
+        return
+
     # bug-220: dedup against what is already stored. The dry_run arm carries the
     # within-file set for the same reason the memory path does (bug-070): a
     # preview has no INSERT of its own to collide against, while a real run sees
-    # its own uncommitted rows on the shared connection.
-    existing = await db.execute_fetchall(
-        "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
-        " AND summary = ? LIMIT 1",
-        (aid, ep_pid, ep_chan, summary),
-    )
-    if existing or (tally.dry_run and (aid, ep_pid, ep_chan, summary) in tally.seen_episode):
+    # its own uncommitted rows (recorded in episode_keys as it inserts them).
+    existing = await tally.episode_keys.find(db, aid, ep_pid, ep_chan, summary)
+    if existing is not None or (tally.dry_run and (aid, ep_pid, ep_chan, summary) in tally.seen_episode):
         tally.skipped_episodes += 1
-        tally.map_record("ep", record, existing[0][0] if existing else None)
+        tally.map_record("ep", record, existing)
         return
+
+    if truncated:
+        # As for memories: only a row that is stored can have been cut.
+        tally.errors.append(
+            f"Line {line_num}: episode summary exceeded the {content_cap()}-character cap "
+            "and was truncated"
+        )
 
     if not tally.dry_run:
         blob = _decode_embedding(record, tally, line_num, "episode")
@@ -3500,19 +3984,22 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
                 ep_chan,
                 summary,
                 keywords,
-                record.get("start_time"),
-                record.get("end_time"),
+                start_time,
+                end_time,
                 1 if record.get("resolved") else 0,
                 blob,
                 _imported_label(record, blob),
-                record.get("created_at"),
+                created_at,
             ),
         )
+        tally.episode_keys.add(aid, ep_pid, ep_chan, summary, cur.lastrowid)
         tally.queue_remote(aid, f"ep:{cur.lastrowid}", summary)
         tally.map_record("ep", record, cur.lastrowid)
     else:
         tally.seen_episode.add((aid, ep_pid, ep_chan, summary))
         tally.map_record("ep", record, None)
+    if _lacks_isolation_axes(record):
+        tally.axisless_episodes += 1
     tally.imported_episodes += 1
 
 
@@ -3546,22 +4033,31 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
         tally.errors.append(f"Line {line_num}: profile has no content; the existing profile was kept")
         return
 
+    # As for memories, every value is checked before anything is counted or written.
+    content = _bindable_text("content", content)
+    user_id = _null_as_empty(record, "user_id")
+    project_id = _null_as_empty(record, "project_id")
+    stamp = _optional_text(record, "updated_at")
+
     content, truncated = sanitize_profile_with_flag(content)
     if not content:
         tally.errors.append(
             f"Line {line_num}: profile is empty after sanitisation; the existing profile was kept"
         )
         return
-    if truncated:
-        # The number comes from the text that was actually kept, not
-        # from a second read of the constant. A message that quotes its own cap
-        # can disagree with the cut; len(content) after a truncation IS the cap.
-        tally.errors.append(
-            f"Line {line_num}: profile exceeded the {len(content)}-character profile cap "
-            "and was truncated"
-        )
 
-    user_id = _null_as_empty(record, "user_id")
+    # Several agents' profiles imported into one target all land on the target's
+    # (agent_id, user_id) key, and the upsert below let each replace the one before:
+    # only the last in file order survived, reported as profile_updated. The first
+    # one this file restores to a key is kept and every later one is reported, the
+    # way merge_memories skips a profile its target already has.
+    first = tally.profile_lines.get((aid, user_id))
+    if first is not None:
+        tally.errors.append(
+            f"Line {line_num}: a profile for agent {aid!r} and user_id {user_id!r} was already "
+            f"restored from line {first}; this one was not imported"
+        )
+        return
     # bug-528: a restore does not move a profile backwards. The upsert below
     # replaces the stored row with the file's, so an older backup imported over a
     # live store -- a restore drill -- replaced newer text, moved updated_at back
@@ -3569,8 +4065,7 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
     # there; a profile has no content key to deduplicate on, so its stamp decides.
     # Asked on both arms so the preview says what the real run will do. A file
     # stamp that does not parse makes no claim to be older, and is applied.
-    stamp = record.get("updated_at")
-    file_time = _parse_timestamp_utc(stamp) if isinstance(stamp, str) else None
+    file_time = _parse_timestamp_utc(stamp) if stamp is not None else None
     if file_time is not None:
         stored = await db.execute_fetchall(
             "SELECT updated_at FROM profiles WHERE agent_id = ? AND user_id = ?",
@@ -3585,6 +4080,15 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             )
             return
 
+    if truncated:
+        # Reported only for a profile that is applied, against the cap the
+        # sanitiser cut at, read through the same accessor.
+        tally.errors.append(
+            f"Line {line_num}: profile exceeded the {profile_cap()}-character profile cap "
+            "and was truncated"
+        )
+
+    tally.profile_lines[(aid, user_id)] = line_num
     if not tally.dry_run:
         # bug-223: carry the record's own updated_at, as memories and episodes carry
         # created_at (bug-092). A restore that re-stamps every profile with import time
@@ -3598,7 +4102,7 @@ async def _import_profile_record(db, record: dict, aid: str, tally: _ImportTally
             "   updated_at = excluded.updated_at",
             (
                 aid,
-                _null_as_empty(record, "project_id"),
+                project_id,
                 user_id,
                 content,
                 stamp,
@@ -3737,8 +4241,13 @@ async def do_import_memories(
 
                 try:
                     record = json.loads(line)
-                except json.JSONDecodeError as e:
+                except (json.JSONDecodeError, RecursionError) as e:
                     tally.errors.append(f"Line {line_num}: invalid JSON: {e}")
+                    continue
+                # A line that parses to something other than an object is no
+                # record; reading a field from it raised and aborted the restore.
+                if not isinstance(record, dict):
+                    tally.errors.append(f"Line {line_num}: not a JSON object")
                     continue
 
                 rtype = record.get("_type", "")
@@ -3752,33 +4261,24 @@ async def do_import_memories(
                     # counter _validate_file_header compares against, so it must
                     # count records PRESENT in the file, not records accepted.
                     tally.file_memories += 1
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        tally.errors.append(f"Line {line_num}: memory missing agent_id")
+                    aid = _record_agent(record, "memory", target_agent_id, tally, line_num)
+                    if aid is None:
                         continue
-                    if tally.refuses_agent(aid, "memory", line_num):
-                        continue
-                    await _import_memory_record(db, record, aid, tally, line_num)
+                    await _import_line(_import_memory_record, db, record, aid, tally, line_num, "memory")
 
                 elif rtype == "episode":
                     tally.file_episodes += 1
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        tally.errors.append(f"Line {line_num}: episode missing agent_id")
+                    aid = _record_agent(record, "episode", target_agent_id, tally, line_num)
+                    if aid is None:
                         continue
-                    if tally.refuses_agent(aid, "episode", line_num):
-                        continue
-                    await _import_episode_record(db, record, aid, tally, line_num)
+                    await _import_line(_import_episode_record, db, record, aid, tally, line_num, "episode")
 
                 elif rtype == "profile":
                     tally.file_profiles += 1
-                    aid = target_agent_id or record.get("agent_id", "")
-                    if not aid:
-                        tally.errors.append(f"Line {line_num}: profile missing agent_id")
+                    aid = _record_agent(record, "profile", target_agent_id, tally, line_num)
+                    if aid is None:
                         continue
-                    if tally.refuses_agent(aid, "profile", line_num):
-                        continue
-                    await _import_profile_record(db, record, aid, tally, line_num)
+                    await _import_line(_import_profile_record, db, record, aid, tally, line_num, "profile")
 
                 elif rtype in ("entity", "mention", "relation"):
                     _collect_graph_record(record, rtype, target_agent_id, tally, line_num)
@@ -3791,6 +4291,16 @@ async def do_import_memories(
             # rather than commit a partial restore (bug-091).
             _validate_file_header(tally)
             await _import_graph(db, tally)
+            # Said only of a file that presents itself as an export. A hand-written
+            # file without the key means the global pool; an export without it means
+            # the axis was never written, whatever project the rows lived in.
+            if (tally.axisless_memories or tally.axisless_episodes) and _is_export_header(tally.file_header):
+                tally.errors.append(
+                    f"{tally.axisless_memories} memory and {tally.axisless_episodes} episode records "
+                    "carry no project_id, as an export written before the project and channel axes "
+                    "were exported does not; they were restored into the global pool, which every "
+                    "project reads"
+                )
 
     except Exception as e:
         # bug-110: keep the per-line diagnostics (a torn last line lands in
@@ -3856,9 +4366,17 @@ class _MergeTally:
     # bare INSERT, so intra-batch dedup relies on the target existing-check seeing the
     # real run's own uncommitted rows. dry_run inserts nothing, so two source episodes
     # with the same summary were both counted as merged. Track within-batch summaries so
-    # the dry_run preview matches (memories don't need this — the source's own UNIQUE
-    # indexes already make intra-batch content/msg_id collisions impossible).
+    # the dry_run preview matches.
     seen_summary: set = field(default_factory=set)
+    # The memory axes of the same preview problem. The source's UNIQUE indexes would
+    # make intra-batch content/msg_id collisions impossible, but their creation is best
+    # effort (bug-349): on a database where it failed the source can hold two identical
+    # rows, the real run skips the second against its own uncommitted copy, and a
+    # preview that remembers nothing counted both as merged.
+    seen_msgid: set = field(default_factory=set)
+    seen_content: set = field(default_factory=set)
+    # The episode dedup gate, read once for the target rather than once per row.
+    episode_keys: _EpisodeSummaryIndex = field(default_factory=_EpisodeSummaryIndex)
     # bug-218/bug-222: the SOURCE ids this merge actually copied. mode='move' deletes
     # exactly these, so a row the copy pass skipped — a profile the target already holds
     # under the same user_id (profiles have no content-equivalence key, unlike the
@@ -3950,9 +4468,9 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
                 "SELECT id FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
                 (target_agent_id, project_id, msg_id),
             )
-            if existing:
+            if existing or (tally.dry_run and (project_id, msg_id) in tally.seen_msgid):
                 tally.skipped_memories += 1
-                tally.map_record("mem", src_id, existing[0][0])
+                tally.map_record("mem", src_id, existing[0][0] if existing else None)
                 continue
         # bug-349: the import twin, for the same reason -- strategy='skip' must not
         # depend on an index whose creation is allowed to fail. Measured on a database
@@ -3962,9 +4480,13 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
             "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
             (target_agent_id, project_id, channel, content),
         )
-        if dup:
+        if dup or (tally.dry_run and (project_id, channel, content) in tally.seen_content):
             tally.skipped_memories += 1
-            tally.map_record("mem", src_id, await _equal_memory_id(db, target_agent_id, project_id, channel, content))
+            tally.map_record(
+                "mem",
+                src_id,
+                await _equal_memory_id(db, target_agent_id, project_id, channel, content) if dup else None,
+            )
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -3994,6 +4516,10 @@ async def _merge_memory_page(db, rows, target_agent_id: str, tally: _MergeTally)
                 continue
             tally.copied_memory_ids.append(src_id)
             tally.queue_remote(f"mem:{cur.lastrowid}", content)
+        else:
+            if msg_id:
+                tally.seen_msgid.add((project_id, msg_id))
+            tally.seen_content.add((project_id, channel, content))
         tally.map_record("mem", src_id, None if tally.dry_run else cur.lastrowid)
         tally.merged_memories += 1
 
@@ -4046,17 +4572,14 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
         # the same summary text under ANY other project/channel bucket, and
         # mode='move' then deleted it with the source agent (permanent
         # cross-project data loss). The dry_run seen_summary key carries the same
-        # axes so the preview counts match a real run.
-        existing = await db.execute_fetchall(
-            "SELECT id FROM episodes WHERE agent_id = ? AND project_id = ? AND channel = ?"
-            " AND summary = ? LIMIT 1",
-            (target_agent_id, ep_project_id, ep_channel, summary),
-        )
-        if existing or (
+        # axes so the preview counts match a real run. The probe reads the target's
+        # episodes once (_EpisodeSummaryIndex) instead of scanning the bucket per row.
+        existing = await tally.episode_keys.find(db, target_agent_id, ep_project_id, ep_channel, summary)
+        if existing is not None or (
             tally.dry_run and (target_agent_id, ep_project_id, ep_channel, summary) in tally.seen_summary
         ):
             tally.skipped_episodes += 1
-            tally.map_record("ep", src_id, existing[0][0] if existing else None)
+            tally.map_record("ep", src_id, existing)
             continue
         if not tally.dry_run:
             cur = await db.execute(
@@ -4079,6 +4602,7 @@ async def _merge_episode_page(db, rows, target_agent_id: str, tally: _MergeTally
                 ),
             )
             tally.copied_episode_ids.append(src_id)
+            tally.episode_keys.add(target_agent_id, ep_project_id, ep_channel, summary, cur.lastrowid)
             tally.queue_remote(f"ep:{cur.lastrowid}", summary)
         else:
             tally.seen_summary.add((target_agent_id, ep_project_id, ep_channel, summary))
@@ -4096,11 +4620,15 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
     did not edit. The import path, which takes content from outside this DB and
     does overwrite, goes through the seam instead.
     """
+    # updated_at rides along like created_at does on the memory (bug-131) and episode
+    # (bug-219) passes, and as the import path keeps it (bug-223): stamping the merge
+    # time made a long-stale profile look current, and deep_stale_profile, which reads
+    # nothing else, stayed silent about it for its whole window.
     rows = await db.execute_fetchall(
-        "SELECT id, user_id, content, project_id FROM profiles WHERE agent_id = ?",
+        "SELECT id, user_id, content, project_id, updated_at FROM profiles WHERE agent_id = ?",
         (source_agent_id,),
     )
-    for src_id, user_id, content, prof_project_id in rows:
+    for src_id, user_id, content, prof_project_id, updated_at in rows:
         if not content:
             continue
         # bug-218: this probe is pure existence on (agent_id, user_id) — profiles have
@@ -4117,8 +4645,8 @@ async def _merge_profile_rows(db, source_agent_id: str, target_agent_id: str, ta
         if not tally.dry_run:
             await db.execute(
                 "INSERT INTO profiles (agent_id, project_id, user_id, content, updated_at)"
-                " VALUES (?, ?, ?, ?, datetime('now'))",
-                (target_agent_id, prof_project_id, user_id, content),
+                " VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                (target_agent_id, prof_project_id, user_id, content, updated_at),
             )
             tally.copied_profile_ids.append(src_id)
         tally.profile_copied = True
@@ -4336,6 +4864,9 @@ async def do_merge_memories(
     # Outside the transaction: no rollback covers this. A preview arrives with
     # an empty queue by construction — see _MergeTally.queue_remote.
     await vector.remote_index_upsert(target_agent_id, tally.remote_items)
+    # The copies are new rows with no blocks or nodes of their own (and a move's
+    # delete trigger has dropped the source's); queue them as store would.
+    await _queue_derived_builds(target_agent_id, tally.remote_items, key)
     move_result = None
     if move_counts is not None:
         # bug-218/bug-222: the agent-level teardown (its calibration, its remote

@@ -122,12 +122,15 @@ NOTICE_SESSION_CAP = 256
 # Concurrency: the mutators contain no `await` between read and write, so they
 # run atomically between awaits under the asyncio single thread — the same
 # argument health.py makes for its own module state, and the reason there is no
-# Lock here.
+# Lock here. `apply` relies on the same property to claim its single slot.
 
 _verdict: dict | None = None
 _checked_at: str | None = None
 _told_sessions: dict[str, None] = {}
 _notice_emitted: bool = False
+# The running `apply`, kept so a second one can be refused and so the task is
+# not garbage-collected while its caller is gone (see `apply`).
+_apply_task: asyncio.Task | None = None
 
 # Test seam: an httpx transport used instead of a real connection. Set by the
 # suite (httpx.MockTransport) so every path below — including the client's own
@@ -560,9 +563,18 @@ async def refresh() -> dict:
     # not the arrival time is what orders two answers.
     fetched_at = _now().isoformat()
     payload = await _fetch_index()
-    if payload is None:
-        return _store(_verdict_dict(STATE_UNKNOWN, __version__, None, None, None), _checked_at)
-    verdict = _decide(payload, __version__)
+    verdict = _decide(payload, __version__) if payload is not None else None
+    if verdict is None or verdict["state"] == STATE_UNKNOWN:
+        # A failed fetch -- or a document nobody can read, which rule 2 makes the
+        # same answer -- learned nothing about the index, so it must not replace
+        # what a completed check found: `unknown` means "no check has completed",
+        # and storing it over a known verdict drops a yank warning the moment the
+        # host goes offline. Nor is it ordered against a fresher answer, so a late
+        # failure would otherwise erase one (bug-375's race, on this branch). It
+        # is not cached either: an outage is not an answer worth a day.
+        if _verdict is not None:
+            return _verdict
+        return _store(_verdict_dict(STATE_UNKNOWN, __version__, None, None, None), None)
     if not _superseded_by(fetched_at):
         # The cache file is checked separately because it is written first, and
         # a stale write there would outlive the process that declined it.
@@ -807,6 +819,42 @@ def _package_dir() -> str | None:
     return os.path.dirname(os.path.abspath(path))
 
 
+_COMMIT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def _head_is_detached(repo_dir: str) -> bool:
+    """Is this working tree parked on a commit rather than a branch?
+
+    Answered by reading the HEAD file, never by running git: this is called
+    while rendering a ``recall`` notice and a ``check_health`` report, and
+    neither may pay for a subprocess. A HEAD that is a commit id is detached; a
+    symbolic ``ref:`` line is a branch. ``.git`` may be a file naming the git
+    directory (a linked worktree or a submodule), and HEAD is per-worktree, so
+    it is read from there.
+
+    Anything unreadable answers False, which keeps the pull form: ``apply``
+    asks git itself before running it, so a wrong guess here costs a command
+    that reports what it finds, never an install.
+    """
+    git_path = os.path.join(repo_dir, ".git")
+    try:
+        if os.path.isfile(git_path):
+            with open(git_path, encoding="utf-8") as handle:
+                line = handle.readline(4096).strip()
+            if not line.startswith("gitdir:"):
+                return False
+            git_dir = line[len("gitdir:") :].strip()
+            if not os.path.isabs(git_dir):
+                git_dir = os.path.join(repo_dir, git_dir)
+        else:
+            git_dir = git_path
+        with open(os.path.join(git_dir, "HEAD"), encoding="utf-8") as handle:
+            head = handle.read(256).strip()
+    except (OSError, ValueError):
+        return False
+    return bool(_COMMIT_ID.match(head))
+
+
 def detect_install(available: str | None = None) -> dict:
     """How this process was installed, and the command that would update it.
 
@@ -855,32 +903,37 @@ def detect_install(available: str | None = None) -> dict:
             ["git", "-C", repo_dir, "pull"],
             [*_installer_prefix(), repo_dir],
         ]
+        # Built HERE rather than in `apply` because `version_ok` is the one gate
+        # that keeps a string that arrived over the network out of text that
+        # reads as a command, and one gate is easier to keep than two.
+        detached_command = " && ".join(
+            [
+                f"git -C {repo_dir} fetch --tags",
+                f"git -C {repo_dir} checkout v{available}"
+                if version_ok
+                else f"git -C {repo_dir} checkout <the release tag>",
+                " ".join([*_installer_prefix(), repo_dir]),
+            ]
+        )
+        pull_command = " && ".join(" ".join(step) for step in steps)
         return {
             "method": METHOD_CHECKOUT,
             # Spelled with the directory in both halves rather than `pip install .`
             # so the command means the same thing wherever it is pasted — and so
             # the text shown is exactly the argv executed below, with nothing
-            # carried by an unstated working directory.
-            "command": " && ".join(" ".join(step) for step in steps),
+            # carried by an unstated working directory. A tree parked at a tag is
+            # shown the tag form instead: `git pull` refuses on a detached HEAD
+            # and the `&&` then skips the install, so the pull form is a command
+            # that cannot work there (and `apply` refuses that tree anyway).
+            "command": detached_command if _head_is_detached(repo_dir) else pull_command,
             "argv_steps": steps,
             "note": "",
             "restart_required": True,
             # Internal (dropped by `_public_install`): what `apply` needs to
             # tell an operator whose tree is not on a branch what to run
-            # instead. Built HERE rather than there because `version_ok` is the
-            # one gate that keeps a string that arrived over the network out of
-            # text that reads as a command, and one gate is easier to keep than
-            # two.
+            # instead.
             "repo_dir": repo_dir,
-            "detached_command": " && ".join(
-                [
-                    f"git -C {repo_dir} fetch --tags",
-                    f"git -C {repo_dir} checkout v{available}"
-                    if version_ok
-                    else f"git -C {repo_dir} checkout <the release tag>",
-                    " ".join([*_installer_prefix(), repo_dir]),
-                ]
-            ),
+            "detached_command": detached_command,
         }
 
     steps = [[*_installer_prefix(), "--upgrade", spec]]
@@ -921,9 +974,11 @@ async def apply() -> dict:
       next. This one is a check on the repository's STATE, not on the install
       method, which is why it lives here and not in the empty ``argv_steps``
       that answers "is there something to execute": state cannot be read
-      without running a command, and :func:`detect_install` is free of I/O on
+      without running a command, and :func:`detect_install` runs none on
       purpose — it is also called while rendering a ``recall`` notice and a
-      ``check_health`` report, and neither may pay for a subprocess.
+      ``check_health`` report, and neither may pay for a subprocess. (It reads
+      the HEAD file to choose the command it SHOWS; this probe asks git itself
+      before anything is run.)
 
     A probe that cannot answer (no git, not a repository) is NOT a refusal: it
     proceeds, and the ``git pull`` step reports what it finds. Refusing on a
@@ -940,7 +995,45 @@ async def apply() -> dict:
     protect a caller would kill honest installs, and killing an install partway
     through is worse than a slow answer. This is the one call on this surface
     that can take a long time, which is why it is opt-in.
+
+    Single-flight per process. Two installers over one environment are not
+    safe, and a call can be cancelled (a client's request timeout) while its
+    child keeps running -- the child is never killed, for the reason above. So
+    the run lives in a task that outlives a cancelled caller, a second apply is
+    refused until that task has finished, and cancelling still means "start
+    nothing more": the step already running completes, the next never starts.
     """
+    global _apply_task
+    if _apply_task is not None and not _apply_task.done():
+        return {
+            "applied": False,
+            "reason": (
+                "an update is already running in this process (an earlier apply, "
+                "possibly one whose call was cancelled); wait for it to finish, "
+                "then check again"
+            ),
+            "install": _public_install(detect_install(current().get("available"))),
+        }
+    # Claimed with no await between the check above and this assignment, so
+    # two calls cannot both pass the check.
+    stop = asyncio.Event()
+    _apply_task = asyncio.ensure_future(_apply(stop))
+    _apply_task.add_done_callback(_consume_result)
+    try:
+        return await asyncio.shield(_apply_task)
+    except asyncio.CancelledError:
+        stop.set()
+        raise
+
+
+def _consume_result(task: asyncio.Task) -> None:
+    # Retrieve the outcome so a run whose caller was cancelled does not log
+    # "exception was never retrieved"; nobody is left to report it to.
+    if not task.cancelled():
+        task.exception()
+
+
+async def _apply(stop: asyncio.Event) -> dict:
     verdict = current()
     install = detect_install(verdict.get("available"))
     if not verdict.get("available"):
@@ -969,6 +1062,8 @@ async def apply() -> dict:
     output: list[str] = []
     exit_code = 0
     for step in install["argv_steps"]:
+        if stop.is_set():
+            break
         exit_code, text = await _run_step(step)
         output.append(f"$ {' '.join(step)}")
         output.extend(text.splitlines())
@@ -1017,6 +1112,11 @@ async def _run_step(argv: list[str]) -> tuple[int, str]:
     try:
         process = await asyncio.create_subprocess_exec(
             *argv,
+            # Never the server's own stdin: under the stdio transport fd 0 is
+            # the client's JSON-RPC stream, and a step that prompts (pip asking
+            # for index credentials) would consume requests meant for the
+            # server. An empty stdin turns any prompt into an immediate EOF.
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -1064,8 +1164,9 @@ def _public_install(install: dict) -> dict:
 
 def _reset() -> None:
     """Test-only: restore module state to its initial values."""
-    global _verdict, _checked_at, _notice_emitted, _transport
+    global _verdict, _checked_at, _notice_emitted, _transport, _apply_task
     _verdict = None
+    _apply_task = None
     _checked_at = None
     _notice_emitted = False
     _told_sessions.clear()

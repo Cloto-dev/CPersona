@@ -12,12 +12,13 @@ corpus.
 
 So creation goes through here, and the modes below are asked for at the moment
 the inode appears rather than repaired afterwards — there is no window in which
-the corpus exists world-readable. Three primitives, one per way this package
+the corpus exists world-readable. Four primitives, one per way this package
 brings a path into being:
 
 ``open_private``      a file this process writes itself.
 ``create_private``    a file another library will open by name (SQLite).
-``makedirs_private``  the directory either of those needs.
+``open_lock``         a lock file this process holds a descriptor on.
+``makedirs_private``  the directory any of those needs.
 
 Two things are deliberately NOT here. Files that already exist keep the mode
 they have: an operator who widened one meant it, and this module only decides
@@ -145,6 +146,18 @@ def create_private(path: str) -> bool:
     return True
 
 
+def open_lock(path: str) -> int:
+    """Open ``path`` for an advisory lock, creating it owner-only; return the descriptor.
+
+    For a sidecar that exists only to be locked: nothing is written to it, so
+    the descriptor is all a caller needs, and an existing file keeps the mode it
+    has like every other file here. A symlink at the final component is refused
+    for the reason ``open_private`` refuses one -- the lock would be taken on,
+    and the create would land at, a file this process did not choose.
+    """
+    return os.open(path, os.O_RDWR | os.O_CREAT | _BINARY | _NOFOLLOW, PRIVATE_FILE_MODE)
+
+
 def temp_beside(path: str, tag: str = ".tmp") -> str:
     """Create a new, empty, owner-only temp file next to ``path``; return its name.
 
@@ -229,7 +242,7 @@ def owned_paths() -> list[OwnedPath]:
     """
     import glob as _glob
 
-    from cpersona import config, update_check, vector_index
+    from cpersona import block_index, coarse_index, config, update_check, vector_index
 
     db = config.DB_PATH
     if db == ":memory:":
@@ -248,6 +261,14 @@ def owned_paths() -> list[OwnedPath]:
         OwnedPath(vector_index.index_path(table), "file", f"an embedding of every {table} row")
         for table in ("memories", "episodes")
     ]
+    # The one-bit indexes beside it hold the sign bits of every embedding and the
+    # agent / project / channel codes of every row, so they are as private as the
+    # vectors they were cut from.
+    out += [
+        OwnedPath(coarse_index.index_path(table), "file", f"the embedding sign bits of every {table} row")
+        for table in ("memories", "episodes")
+    ]
+    out.append(OwnedPath(block_index.index_path(), "file", "the embedding sign bits of every block row"))
     # Written by _back_up_calibration_sidecar under a name it mints, so the
     # pattern is the only way to name them; it is the one the pruner uses.
     out += [

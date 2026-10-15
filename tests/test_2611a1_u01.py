@@ -330,8 +330,12 @@ async def test_a_file_without_graph_records_imports_as_before(db, tmp_path):
     lines = [
         {"_type": "header", "version": "cpersona-export/1.0", "memory_count": 1, "episode_count": 1,
          "profile_count": 0},
-        {"_type": "memory", "id": 1, "agent_id": SRC, "content": "an old backup row"},
-        {"_type": "episode", "id": 1, "agent_id": SRC, "summary": "an old backup episode"},
+        # A file from before the graph was exported still carries the project and
+        # channel axes, which every export has written since they were first exported.
+        {"_type": "memory", "id": 1, "agent_id": SRC, "content": "an old backup row",
+         "project_id": "", "channel": ""},
+        {"_type": "episode", "id": 1, "agent_id": SRC, "summary": "an old backup episode",
+         "project_id": "", "channel": ""},
     ]
     path.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
     imp = await admin_handlers.do_import_memories(str(path), "", False)

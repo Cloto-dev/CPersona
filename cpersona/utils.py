@@ -4,9 +4,11 @@ No global mutable state; all functions are pure or depend only on imported
 config constants.
 """
 
+import bisect
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -64,6 +66,22 @@ _MEMORY_ANNOTATION_PATTERN = re.compile(r"\[Memory from [^\]]+\]\s*")
 EXCLUDE_PREFIX_MIN_CHARS = 32
 
 
+class ExcludeSet(frozenset):
+    """The entries ``_content_excluded`` tests rows against, indexed once per recall.
+
+    The list is the caller's (``exclude_contents``, or every ``external_context``
+    entry), and testing a row by walking it made one recall cost candidate rows x
+    entries of synchronous work on the event loop. Here an exact match is a set
+    lookup, and the entries at or above the prefix floor are kept sorted, so a row
+    is answered by a few bisections whatever the list's length.
+    """
+
+    def __new__(cls, entries=()):
+        self = super().__new__(cls, entries)
+        self.prefix_entries = sorted(e for e in self if len(e) >= EXCLUDE_PREFIX_MIN_CHARS)
+        return self
+
+
 def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     """Check if content matches any excluded string (starts-with, normalized).
 
@@ -72,6 +90,9 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     starts_with check in both directions accounts for this — but only for entries
     of at least ``EXCLUDE_PREFIX_MIN_CHARS`` (bug-217); a shorter entry has to be
     an exact (case-insensitive) match to exclude anything.
+
+    A caller testing many rows passes an ``ExcludeSet`` built once; a plain set is
+    indexed on every call.
     """
     if not exclude_set:
         return False
@@ -82,13 +103,31 @@ def _content_excluded(content: str, exclude_set: set[str]) -> bool:
     # dedup hit — nothing meaningful to deduplicate against.
     if not normalized:
         return False
-    for excl in exclude_set:
-        if len(excl) < EXCLUDE_PREFIX_MIN_CHARS:
-            if normalized == excl:  # bug-217: exact match only below the floor
-                return True
-            continue
-        if normalized.startswith(excl) or excl.startswith(normalized):
+    index = exclude_set if isinstance(exclude_set, ExcludeSet) else ExcludeSet(exclude_set)
+    # An entry equal to the row excludes it at any length; below the floor that is
+    # the only way an entry excludes anything (bug-217).
+    if normalized in index:
+        return True
+    prefixed = index.prefix_entries
+    if not prefixed:
+        return False
+    # An entry that starts with the row: every such entry sorts at or right after it.
+    at = bisect.bisect_left(prefixed, normalized)
+    if at < len(prefixed) and prefixed[at].startswith(normalized):
+        return True
+    # An entry the row starts with. Take the greatest entry not above the row's
+    # head. When it is not a prefix of the head, no entry longer than their common
+    # prefix can be one (it would sort between the two), so the search goes on with
+    # that common prefix, which is strictly shorter than the head.
+    head = normalized
+    while len(head) >= EXCLUDE_PREFIX_MIN_CHARS:
+        at = bisect.bisect_right(prefixed, head) - 1
+        if at < 0:
+            return False
+        nearest = prefixed[at]
+        if head.startswith(nearest):
             return True
+        head = head[: len(os.path.commonprefix((head, nearest)))]
     return False
 
 
@@ -102,20 +141,95 @@ def _sanitize_with_cap(content: str, cap: int) -> tuple[str, bool]:
     and update_memory's description promises the flag marks a real cap hit. The
     decision belongs where the cut happens, so the flag is returned with it.
     """
-    content = _MEMORY_ANNOTATION_PATTERN.sub("", content)
+    content = _strip_annotations(content)
     content = content.strip()
     truncated = len(content) > cap
     if truncated:
-        content = content[:cap]
+        # The cut can expose whitespace the strip above already removed from the
+        # end; trimming it here keeps a second pass from shortening the text again.
+        content = content[:cap].rstrip()
     return content, truncated
+
+
+_ANNOTATION_OPEN = "[Memory from "
+
+
+def _strip_annotations(content: str) -> str:
+    """``content`` with every ``[Memory from ...]`` annotation removed, to a fixed point.
+
+    One ``sub`` pass can assemble a new annotation out of the text on either side
+    of the one it removed ('[Memory fr[Memory from a] om b] x' becomes
+    '[Memory from b] x'). A store keeps that one-pass text, and every later pass
+    over it -- an import re-sanitising a backup, the annotation repair -- changes it
+    again, so a round trip altered the text and a re-import missed the dedup probe
+    and added a second row. The result here holds no annotation, so sanitising it
+    again leaves it as it is.
+
+    Ordinary content is a fixed point after one pass and gets exactly that pass's
+    text. Otherwise the text is reduced in one left-to-right scan rather than by
+    repeating the pass: each repeat removes as little as one nested layer, which
+    makes the repetition quadratic in a text built of many layers.
+    """
+    original = content
+    content = _MEMORY_ANNOTATION_PATTERN.sub("", content)
+    if not _MEMORY_ANNOTATION_PATTERN.search(content):
+        return content
+    # An annotation ends at the first ']' after its opening, so the text is scanned
+    # one ']'-terminated piece at a time into `kept`. `region` is where the kept
+    # text after its last ']' begins: an annotation can only start there. That text
+    # never holds a whole opening, so one can only start in its last `reach`
+    # characters and run on into the next piece.
+    reach = len(_ANNOTATION_OPEN) - 1
+    kept: list[str] = []
+    region = 0
+    after_removal = False
+    pieces = original.split("]")
+    for i, piece in enumerate(pieces):
+        if after_removal:
+            # The pattern's trailing \s* goes with the annotation it follows.
+            piece = piece.lstrip()
+            after_removal = False
+        if i == len(pieces) - 1:
+            kept.extend(piece)
+            break
+        base = max(region, len(kept) - reach)
+        carried = len(kept) - base
+        look = "".join(kept[base:]) + piece
+        start = look.find(_ANNOTATION_OPEN)
+        if start != -1 and start + len(_ANNOTATION_OPEN) < len(look):
+            # The earliest opening with a non-empty body closes at this ']':
+            # drop it and everything after it up to here.
+            if start < carried:
+                del kept[base + start:]
+            else:
+                kept.extend(piece[: start - carried])
+            after_removal = True
+        else:
+            kept.extend(piece)
+            kept.append("]")
+            region = len(kept)
+    return "".join(kept)
+
+
+def content_cap() -> int:
+    """The memory/episode cap ``sanitize_content_with_flag`` cuts at.
+
+    A message about a cut quotes this rather than the kept text's length: the cut
+    trims the whitespace it exposes, so the kept text can be shorter than the cap.
+    """
+    # The server refuses a non-positive cap at startup; this keeps a library
+    # caller from storing every text emptied or shortened under one.
+    return require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
+
+
+def profile_cap() -> int:
+    """The profile cap ``sanitize_profile_with_flag`` cuts at (see content_cap)."""
+    return require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
 
 
 def sanitize_content_with_flag(content: str) -> tuple[str, bool]:
     """Sanitize a memory/episode write, and report whether the cap cut anything."""
-    # The server refuses a non-positive cap at startup; this keeps a library
-    # caller from storing every text emptied or shortened under one.
-    cap = require_positive_cap("CPERSONA_MAX_CONTENT_LENGTH", MAX_CONTENT_LENGTH)
-    return _sanitize_with_cap(content, cap)
+    return _sanitize_with_cap(content, content_cap())
 
 
 def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
@@ -126,8 +240,7 @@ def sanitize_profile_with_flag(profile: str) -> tuple[str, bool]:
     and is never preview-trimmed (bug-117), so its bound cannot be inherited from
     a constant that a later line intends to relax; see config.MAX_PROFILE_LENGTH.
     """
-    cap = require_positive_cap("CPERSONA_MAX_PROFILE_LENGTH", MAX_PROFILE_LENGTH)
-    return _sanitize_with_cap(profile, cap)
+    return _sanitize_with_cap(profile, profile_cap())
 
 
 def _sanitize_content(content: str) -> str:
@@ -477,6 +590,31 @@ def error_response(message: str, **extra) -> dict:
     caller (``episode_id=None``, an ``errors`` list, a rollback flag).
     """
     return {"ok": False, "error": message, **extra}
+
+
+def lone_surrogate_issue(**fields: object) -> str | None:
+    """The refusal for the first text field holding a lone UTF-16 surrogate, else None.
+
+    A client that cuts a string by UTF-16 code units can send half of a surrogate
+    pair (JSON ``"\\udfff"``), and JSON decoding hands it over as a code point no
+    UTF-8 encoder accepts. SQLite binds text as UTF-8, so the value raised out of
+    the first statement that bound it -- the dedup probe, the search, the INSERT --
+    and the tool answered with a bare error instead of its own refusal shape. A
+    whole pair decodes to one ordinary character and passes. Fields that are not
+    strings are left to the caller's other checks.
+    """
+    for name, value in fields.items():
+        if not isinstance(value, str):
+            continue
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            return (
+                f"{name} holds a lone UTF-16 surrogate (U+{ord(value[exc.start]):04X} at "
+                f"position {exc.start}), half of a character that cannot be stored or "
+                "searched; send the whole character"
+            )
+    return None
 
 
 def _try_parse_json(s: str) -> dict:

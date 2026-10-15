@@ -33,6 +33,7 @@ pass scans, and as one byte per dimension, which re-ranks what that pass ranked
 highest (§4b).
 """
 
+import asyncio
 import bisect
 import logging
 import re
@@ -573,12 +574,25 @@ async def records_without_current_blocks(db, iso) -> list[tuple[str, int, str, t
             (kind, *iso.params),
         ):
             bounds.setdefault(parent_id, []).append(end_char)
-        for row_id, text in records:
-            node_bounds = tuple(bounds.get(row_id, ()))
-            if not text or block_set_is_current(sets.get(row_id, []), len(text), keys, node_bounds):
-                continue
-            if len(segment(text, node_bounds=node_bounds)) > 1:
-                out.append((kind, row_id, text, node_bounds))
+        # The divider is pure Python, per character, and runs on every record
+        # without a current set -- every one-block record on every run, and the
+        # whole corpus after a model change. In the event loop that held every
+        # other request for the length of a check_health; in a worker thread the
+        # loop keeps its turns. The thread reads only these local values.
+        out.extend(await asyncio.to_thread(_divisible, kind, records, sets, bounds, keys))
+    return out
+
+
+def _divisible(kind: str, records, sets: dict, bounds: dict, keys) -> list[tuple[str, int, str, tuple[int, ...]]]:
+    """The records of one kind that divide into more than one block and hold no
+    current set (see :func:`records_without_current_blocks`)."""
+    out: list[tuple[str, int, str, tuple[int, ...]]] = []
+    for row_id, text in records:
+        node_bounds = tuple(bounds.get(row_id, ()))
+        if not text or block_set_is_current(sets.get(row_id, []), len(text), keys, node_bounds):
+            continue
+        if len(segment(text, node_bounds=node_bounds)) > 1:
+            out.append((kind, row_id, text, node_bounds))
     return out
 
 

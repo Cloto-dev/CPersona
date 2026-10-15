@@ -39,6 +39,30 @@ import time
 
 from cpersona import fileperms
 
+if os.name == "nt":
+    import msvcrt
+
+    def _lock(fd: int) -> None:
+        # Byte 0 of the lock file stands for the whole ledger. LK_LOCK retries
+        # for ten seconds before raising; the section it guards takes
+        # milliseconds.
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 logger = logging.getLogger(__name__)
 
 #: The reserved prefix. Every alias the ledger issues starts with it, the boot
@@ -251,6 +275,18 @@ class AliasLedger:
         # one. The re-read is strict: a file that no longer parses must not be
         # overwritten from these rows. It is also what keeps the freshly minted
         # alias from colliding with one only the file knows.
+        #
+        # The re-read alone did not make the rewrite safe against the second
+        # process: one that minted and renamed between this re-read and this
+        # rename had its row erased by a file built from a read that predates
+        # it, after it had already answered its subject with that alias. So the
+        # re-read, the mint and the rename happen under the ledger's lock file,
+        # which every server process takes for the same span.
+        with self._locked():
+            return self._issue_locked(issuer, subject)
+
+    def _issue_locked(self, issuer: str, subject: str) -> tuple[str, bool]:
+        """The re-read, mint and persist of ``resolve_or_issue``; the lock is held."""
         self._refresh(strict=True)
         existing = self._aliases.get(issuer, {}).get(subject)
         if existing is not None:
@@ -303,14 +339,49 @@ class AliasLedger:
         )
         return alias, True
 
+    @contextlib.contextmanager
+    def _locked(self):
+        """Hold the ledger's lock file, ``<ledger>.lock``, for the block.
+
+        An advisory lock on a sidecar rather than on the ledger itself: the
+        ledger is replaced by a rename, so a lock on it would be held on an
+        inode the next writer no longer opens. The sidecar is never replaced
+        and holds nothing. It excludes other server processes, which all take
+        it; an operator's hand edit takes no lock and is caught by the
+        fingerprint re-read instead.
+
+        A lock that cannot be taken refuses the issuance like a write that
+        cannot be made: proceeding without it is the race it exists to close.
+        """
+        lock_path = self._path + ".lock"
+        try:
+            fd = fileperms.open_lock(lock_path)
+        except OSError as e:
+            raise AliasLedgerError(f"alias ledger lock {lock_path!r} could not be opened: {e}") from e
+        try:
+            try:
+                _lock(fd)
+            except OSError as e:
+                raise AliasLedgerError(f"alias ledger lock {lock_path!r} could not be taken: {e}") from e
+            try:
+                yield
+            finally:
+                # flock releases on close either way; the Windows locking API
+                # asks for a region to be unlocked before its file is closed.
+                with contextlib.suppress(OSError):
+                    _unlock(fd)
+        finally:
+            os.close(fd)
+
     def _persist(self) -> None:
         """Write the whole ledger atomically (temp file + rename), mode 0600.
 
         The write is wholesale, so it is only correct directly after the
-        re-read in ``resolve_or_issue`` — that is where a second writer's rows
-        are picked up, and this method must not be called from anywhere that
-        has not just done it. The written file's fingerprint is remembered, so
-        the next read does not mistake this process's own write for an edit.
+        re-read in ``resolve_or_issue``, under the same hold of the lock file
+        — that is where a second writer's rows are picked up, and this method
+        must not be called from anywhere that has not just done it. The
+        written file's fingerprint is remembered, so the next read does not
+        mistake this process's own write for an edit.
 
         The ledger maps identities rather than secrets, but it decides whose
         memory space a request reaches, so it gets the same file hygiene the

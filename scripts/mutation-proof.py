@@ -160,9 +160,9 @@ MUTATIONS: list[Mutation] = [
         # `if not dry_run:` appears six times; anchor on the memory-record body
         # that follows it so the match is unambiguous.
         find="""    if not tally.dry_run:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
         replace="""    if True:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
         # This entry has been classified three times, and the history is the
         # useful part — it is a record of an invariant gaining a layer.
         #
@@ -212,9 +212,9 @@ MUTATIONS: list[Mutation] = [
         also=(
             (
                 """    if not tally.dry_run:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
                 """    if True:
-        # json.loads above reads NaN / Infinity / 1e999 into non-finite floats;""",
+        # bug-016: carry the project_id / channel γ-axes, the locked""",
             ),
         ),
         breaks="dry_run both runs on the WRITE seam AND executes its INSERTs — the preview commits real rows",
@@ -650,12 +650,12 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_associations_reconstruct.py",),
         target="associative invariant 1 — recall does not read the graph",
         file="cpersona/memory_handlers.py",
-        find="    exclude_set: set[str] = set()\n    if exclude_contents:",
+        find="    exclude_set: ExcludeSet = ExcludeSet()\n    if exclude_contents:",
         replace=(
             "    if lexical_terms is None:\n"
             "        from cpersona import associations as _a\n"
             "        lexical_terms = (await _a.query_terms(agent_id, query, project_id=project_id, channel=channel))[0] or None\n"
-            "    exclude_set: set[str] = set()\n    if exclude_contents:"
+            "    exclude_set: ExcludeSet = ExcludeSet()\n    if exclude_contents:"
         ),
         breaks="recall expands declared aliases on its own, so the flat contract changes with every declaration",
         expect="test_associations_reconstruct.py::test_recall_is_unchanged_by_a_populated_graph",
@@ -2186,8 +2186,8 @@ MUTATIONS += [
         tests=('tests/test_config_parsing.py',),
         target='config — block reach is on by default (2.6.0)',
         file='cpersona/config.py',
-        find='BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "true").lower() == "true"\n',
-        replace='BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "false").lower() == "true"\n',
+        find='BLOCK_BUILD_ENABLED = _parse_bool("CPERSONA_BLOCK_BUILD_ENABLED", True)\n',
+        replace='BLOCK_BUILD_ENABLED = _parse_bool("CPERSONA_BLOCK_BUILD_ENABLED", False)\n',
         breaks='a deployment that sets nothing ships without block reach',
         expect='test_config_parsing.py::test_block_reach_is_on_by_default',
     ),
@@ -2196,8 +2196,8 @@ MUTATIONS += [
         tests=('tests/test_config_parsing.py',),
         target='config — the reader follows construction when it is not set',
         file='cpersona/config.py',
-        find='        "CPERSONA_BLOCK_RETRIEVAL_ENABLED", "true" if BLOCK_BUILD_ENABLED else "false"\n',
-        replace='        "CPERSONA_BLOCK_RETRIEVAL_ENABLED", "true"\n',
+        find='BLOCK_RETRIEVAL_ENABLED = _parse_bool("CPERSONA_BLOCK_RETRIEVAL_ENABLED", BLOCK_BUILD_ENABLED)\n',
+        replace='BLOCK_RETRIEVAL_ENABLED = _parse_bool("CPERSONA_BLOCK_RETRIEVAL_ENABLED", True)\n',
         breaks='turning construction off alone becomes a startup error',
         expect='test_config_parsing.py::test_turning_construction_off_alone_turns_the_reader_off_too',
     ),
@@ -2235,8 +2235,8 @@ MUTATIONS += [
         tests=('tests/test_vector_index_rebuild_while_loaded.py',),
         target='vector_index — the Windows read path reads each array at its own offset (bug-503)',
         file='cpersona/vector_index.py',
-        find='        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)\n',
-        replace='        return np.fromfile(src, dtype=dtype, count=items, offset=0).reshape(shape)\n',
+        find='        fh.seek(offset)\n',
+        replace='        fh.seek(0)\n',
         breaks='on Windows every array is read from the start of the file: the index loads garbage',
         expect='test_vector_index_rebuild_while_loaded.py::test_read_mode_loads_the_same_arrays_and_maps_nothing',
     ),
@@ -2637,8 +2637,8 @@ MUTATIONS += [
         tests=('tests/test_embedding_model_label.py',),
         target='embedding_model label — update_memory rewrites the label with the vector',
         file='cpersona/admin_handlers.py',
-        find='            "UPDATE memories SET content = ?, embedding = ?, embedding_model = ? WHERE id = ? AND locked = 0",\n',
-        replace='            "UPDATE memories SET content = ?, embedding = ?, embedding_model = COALESCE(NULLIF(?, \'\'), embedding_model) WHERE id = ? AND locked = 0",\n',
+        find='                "UPDATE memories SET content = ?, embedding = ?, embedding_model = ? WHERE id = ? AND locked = 0",\n',
+        replace='                "UPDATE memories SET content = ?, embedding = ?, embedding_model = COALESCE(NULLIF(?, \'\'), embedding_model) WHERE id = ? AND locked = 0",\n',
         breaks="a NULLed vector keeps the old vector's label",
         expect='test_embedding_model_label.py::test_update_memory_relabels_the_new_vector_and_clears_a_lost_one',
     ),
@@ -3097,8 +3097,8 @@ MUTATIONS += [
         tests=('tests/test_coarse_index_health.py',),
         target='coarse_index health — the tail threshold is strict',
         file='cpersona/checks.py',
-        find='        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", all_axes, changed)\n        if index.count and read_exactly > INDEX_TAIL_RATIO * index.count:\n',
-        replace='        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", all_axes, changed)\n        if index.count and read_exactly >= INDEX_TAIL_RATIO * index.count:\n',
+        find='        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", iso, changed)\n        if index.count and read_exactly > INDEX_TAIL_RATIO * index.count:\n',
+        replace='        read_exactly = await vector_index.rows_read_exactly(db, index, "memories", iso, changed)\n        if index.count and read_exactly >= INDEX_TAIL_RATIO * index.count:\n',
         breaks='a tail exactly at the ratio is reported as overdue',
         expect='test_coarse_index_health.py::test_a_tail_inside_the_ratio_says_nothing',
     ),
@@ -3290,8 +3290,8 @@ MUTATIONS += [
         tests=('tests/test_cue_coarse_auto.py',),
         target='coarse suggestion — reconstruct forwards it',
         file='cpersona/reconstruct.py',
-        find='    for notice in ("advisory", "update", "suggestion", "time_cue"):\n',
-        replace='    for notice in ("advisory", "update", "time_cue"):\n',
+        find='    for notice in _NOTICES:\n        if notice in recall_result:\n',
+        replace='    for notice in (n for n in _NOTICES if n != "suggestion"):\n        if notice in recall_result:\n',
         breaks='a reconstruct caller never hears the suggestion its recall consumed',
         expect='test_cue_coarse_auto.py::test_a_recall_carries_the_suggestion_once_and_reconstruct_forwards_it',
     ),
@@ -3412,6 +3412,15 @@ MUTATIONS += [
         file='cpersona/reconstruct.py',
         find='        if before and governed[before - 1][1] > start:\n            continue\n        bisect.insort(governed, (start, end))\n',
         replace='        bisect.insort(governed, (start, end))\n',
+        # A block inside a taken range is skipped before its range is computed, which
+        # alone keeps a range that governs two blocks from being offered twice; both go.
+        also=(
+            (
+                '        before = bisect.bisect_left(governed, (row[2],))\n'
+                '        if before and governed[before - 1][1] > row[1]:\n            continue\n',
+                '',
+            ),
+        ),
         breaks='the same text is offered twice, so a quote repeats itself and the budget pays for it twice',
         expect='test_reconstruct_evidence_sequence.py::test_two_blocks_governed_by_one_range_give_one_passage',
     ),
@@ -3596,8 +3605,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_lite.py',),
         target='lite — the lite budget when the caller names none',
         file='cpersona/reconstruct.py',
-        find='    if mode == MODE_LITE and budget is None:\n        budget = LITE_BUDGET\n',
-        replace='    if False:\n        budget = LITE_BUDGET\n',
+        find='    mode_budget = LITE_BUDGET if mode == MODE_LITE else None\n',
+        replace='    mode_budget = None\n',
         breaks='lite answers at the default budget, as large as a plain call',
         expect='test_reconstruct_lite.py::test_lite_through_do_reconstruct',
     ),
@@ -3860,7 +3869,7 @@ MUTATIONS += [
         tests=('tests/test_keyword_rare_phrases.py',),
         target='a failing shortcut falls back to the whole expression',
         file='cpersona/memory_handlers.py',
-        find='                    except sqlite3.OperationalError as e:\n                        # The shortcut failing',
+        find='                    except Exception as e:\n                        # The shortcut failing',
         replace='                    except ZeroDivisionError as e:\n                        # The shortcut failing',
         breaks='the keyword arm drops to the LIKE fallback while the whole expression would have worked',
         expect='test_keyword_rare_phrases.py::test_a_failing_shortcut_ranks_on_the_whole_expression_not_like',

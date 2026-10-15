@@ -164,8 +164,19 @@ The loader maps each array with `np.memmap`, except on Windows, where it reads
 them into memory. Windows refuses to replace a file that is still mapped, and a
 server keeps the index it loaded for as long as it runs, so a mapped index made
 every rebuild fail with `PermissionError` while a server that had searched was
-running. Reading the arrays costs about what the scan already touches on every
-query, and it leaves no handle open on the file a rebuild replaces.
+running. Reading the arrays leaves no handle open on the file a rebuild
+replaces, and it is not free: the whole file, every agent's rows and the
+float32 matrix included, stays resident for as long as the server keeps the
+index, where the scan it stands in for holds one chunk of one agent's window at
+a time. At one million rows of 1,024 dimensions that is about 4.1 GB. A reload
+after a rebuild lets go of the old copy before it reads the new one, so the two
+are never resident together.
+
+Either way the loader opens the file once and takes the header, the size check
+and every array from that one handle. A rebuild moves its new file over the same
+path, and a loader that reopened the path for each array would, when the move
+landed between two of them, read the new file's bytes at the old header's
+offsets.
 
 ## 5. Freshness: the watermark
 

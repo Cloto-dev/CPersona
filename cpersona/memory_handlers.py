@@ -75,6 +75,7 @@ from cpersona.config import (
 from cpersona import config # for runtime-mutable VECTOR_MIN_SIMILARITY access
 from cpersona.database import beside, connection, transaction
 from cpersona.utils import (
+    ExcludeSet,
     _clamp_limit,
     _compute_confidence,
     _content_excluded,
@@ -87,6 +88,7 @@ from cpersona.utils import (
     _try_parse_json,
     error_response,
     json_dumps_finite,
+    lone_surrogate_issue,
     normalize_source,
 )
 from cpersona.vector import _search_vector
@@ -196,6 +198,83 @@ def _declared_source_id(source) -> str | None:
     return None if value is None else str(value)
 
 
+async def _store_dedup_answer(
+    db,
+    agent_id: str,
+    project_id: str,
+    channel: str,
+    msg_id: str,
+    content: str,
+    own_source_id: str | None,
+    *,
+    beyond_bucket: bool = False,
+) -> dict | None:
+    """What the dedup probes answer a store with, or None when it is to be written.
+
+    bug-106: the probes check the γ-VISIBLE scope, matching read semantics. A
+    bucket write ('X') collides with an identical row in the global pool —
+    recall('X') surfaces X ∪ '' and would return both copies — while a global
+    write probes the global pool only (a bucket copy must not hide the row from
+    every other bucket). Same shape on the channel axis. Import/merge keep
+    exact-bucket probes deliberately: a restore/merge must reconstruct legacy
+    corpora faithfully across buckets (bug-044/076 precedent). The v12 UNIQUE
+    indexes stay exact-bucket as the TOCTOU backstop.
+
+    ``beyond_bucket`` leaves the writer's own bucket out of the probes: that is
+    the part of the scope the unique indexes already guard, which is all a probe
+    repeated under the write lock needs to add to them.
+    """
+    proj_scope = (project_id, "") if project_id else ("",)
+    chan_scope = (channel, "") if channel else ("",)
+    # Deduplicate by msg_id if provided (γ-project-scoped — the same msg_id in
+    # two sibling buckets stays legitimately distinct, bug-044). Its unique index
+    # is per project, so the bucket it leaves out is the writer's project.
+    msg_scope = tuple(p for p in proj_scope if not (beyond_bucket and p == project_id))
+    if msg_id and msg_scope:
+        row = await db.execute_fetchall(
+            f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({','.join('?' * len(msg_scope))})"
+            " AND msg_id = ? LIMIT 1",
+            (agent_id, *msg_scope, msg_id),
+        )
+        if row:
+            # v2.5.2 additive: echo the existing row's id so callers can chain
+            # (e.g. update_memory) without a second lookup.
+            return _store_skipped("duplicate msg_id", row[0][0])
+
+    if beyond_bucket and not project_id and not channel:
+        # A global write sees only its own bucket.
+        return None
+    # Deduplicate by exact content match (γ-visible scope), per source id.
+    # A copy under another source id is a different principal's memory, so
+    # it does not answer this write: a skip tells the caller its text is
+    # already where its own source_id-scoped recall finds it, and the id it
+    # echoes is the row the lock and association riders act on. The probe
+    # reads every visible copy (one per exact bucket at most, so four rows)
+    # and decides from their sources.
+    outside = " AND NOT (project_id = ? AND channel = ?)" if beyond_bucket else ""
+    existing = await db.execute_fetchall(
+        f"SELECT id, source, project_id, channel FROM memories WHERE agent_id = ?"
+        f" AND project_id IN ({','.join('?' * len(proj_scope))})"
+        f" AND channel IN ({','.join('?' * len(chan_scope))}) AND content = ?{outside}",
+        (agent_id, *proj_scope, *chan_scope, content, *((project_id, channel) if beyond_bucket else ())),
+    )
+    for row_id, row_source, _row_project, _row_channel in existing:
+        if _declared_source_id(row_source) == own_source_id:
+            # v2.5.2 additive: same id echo as the msg_id branch above.
+            return _store_skipped("duplicate content", row_id)
+    if any(row[2] == project_id and row[3] == channel for row in existing):
+        # The unique index allows one copy of a text per exact bucket, so
+        # this caller's copy cannot be written beside the other source's.
+        # Refused, not skipped: nothing was stored under this source, and a
+        # skip would have reported the write as harmlessly done.
+        return _store_rejected(
+            "this content is already stored under a different source id in the "
+            "same agent, project and channel; one copy is kept per bucket, so it "
+            "was not stored for this source"
+        )
+    return None
+
+
 async def do_store(
     agent_id: str,
     message: dict,
@@ -222,7 +301,13 @@ async def do_store(
             {"ok": True, "result": "skipped", "id": 0, "embedded": False}, "store", key
         )
 
-    msg_id = message.get("id", "")
+    # A key given as None is a key left out. Every value the INSERT below binds
+    # into a NOT NULL column is settled before it, because that INSERT is OR
+    # IGNORE and IGNORE skips a row that breaks NOT NULL as readily as one that
+    # breaks UNIQUE: a None reaching it was dropped and answered as a duplicate.
+    msg_id = message.get("id")
+    if msg_id is None:
+        msg_id = ""
     raw_content = message.get("content", "")
     # 2.5.2: normalize known legacy source shapes at the write seam.
     # Unknown shapes are stored verbatim so the health check still surfaces them
@@ -234,10 +319,17 @@ async def do_store(
     # SQLite rejects as JSON, and the invalid_json repair would then blank the
     # whole object.
     source = json_dumps_finite(normalized_source if normalized_source is not None else {})
-    timestamp = message.get("timestamp", datetime.now(timezone.utc).isoformat())
+    timestamp = message.get("timestamp")
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc).isoformat()
     metadata = json_dumps_finite(message.get("metadata", {}))
     project_id = coerce_for_write(project_id)
+    # channel is the other isolation axis, so a non-string is the default channel
+    # by the same rule.
+    channel = coerce_for_write(channel)
 
+    if agent_id is None:
+        return _store_rejected("agent_id is required")
     if not raw_content:
         return _store_rejected("empty content")
 
@@ -251,6 +343,14 @@ async def do_store(
     # left to the invalid_timestamp check, which owns those rows.
     if isinstance(timestamp, str) and len(timestamp) > MAX_TIMESTAMP_LENGTH:
         return _store_rejected(f"timestamp too long ({len(timestamp)} chars, max {MAX_TIMESTAMP_LENGTH})")
+    # Before anything binds them: the first statement to do so (the future-stamp
+    # verdict, the dedup probe) would raise instead of answering with a result.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, content=raw_content, id=msg_id, channel=channel,
+        project_id=project_id, timestamp=timestamp,
+    )
+    if surrogate:
+        return _store_rejected(surrogate)
 
     # audit C12: content has been capped since 2.1, its JSON sidecars never were.
     # A field that cannot be truncated (valid JSON has no valid prefix) and is not
@@ -308,58 +408,11 @@ async def do_store(
                 f"(allowance {future_timestamp['allowance_seconds']}s)"
             )
 
-    # bug-106: the dedup probes check the γ-VISIBLE scope, matching read semantics.
-    # A bucket write ('X') collides with an identical row in the global pool —
-    # recall('X') surfaces X ∪ '' and would return both copies — while a global
-    # write probes the global pool only (a bucket copy must not hide the row from
-    # every other bucket). Same shape on the channel axis. Import/merge keep
-    # exact-bucket probes deliberately: a restore/merge must reconstruct legacy
-    # corpora faithfully across buckets (bug-044/076 precedent). The v12 UNIQUE
-    # indexes stay exact-bucket as the TOCTOU backstop.
-    proj_scope = (project_id, "") if project_id else ("",)
-    chan_scope = (channel, "") if channel else ("",)
-    proj_in = ",".join("?" * len(proj_scope))
-    chan_in = ",".join("?" * len(chan_scope))
+    own_source_id = _declared_source_id(normalized_source)
     async with connection() as db:
-        # Deduplicate by msg_id if provided (γ-project-scoped — the same msg_id in
-        # two sibling buckets stays legitimately distinct, bug-044).
-        if msg_id:
-            row = await db.execute_fetchall(
-                f"SELECT id FROM memories WHERE agent_id = ? AND project_id IN ({proj_in}) AND msg_id = ? LIMIT 1",
-                (agent_id, *proj_scope, msg_id),
-            )
-            if row:
-                # v2.5.2 additive: echo the existing row's id so callers can chain
-                # (e.g. update_memory) without a second lookup.
-                return _store_skipped("duplicate msg_id", row[0][0])
-
-        # Deduplicate by exact content match (γ-visible scope), per source id.
-        # A copy under another source id is a different principal's memory, so
-        # it does not answer this write: a skip tells the caller its text is
-        # already where its own source_id-scoped recall finds it, and the id it
-        # echoes is the row the lock and association riders act on. The probe
-        # reads every visible copy (one per exact bucket at most, so four rows)
-        # and decides from their sources.
-        existing = await db.execute_fetchall(
-            f"SELECT id, source, project_id, channel FROM memories WHERE agent_id = ?"
-            f" AND project_id IN ({proj_in}) AND channel IN ({chan_in}) AND content = ?",
-            (agent_id, *proj_scope, *chan_scope, content),
-        )
-        own_source_id = _declared_source_id(normalized_source)
-        for row_id, row_source, _row_project, _row_channel in existing:
-            if _declared_source_id(row_source) == own_source_id:
-                # v2.5.2 additive: same id echo as the msg_id branch above.
-                return _store_skipped("duplicate content", row_id)
-        if any(row[2] == project_id and row[3] == channel for row in existing):
-            # The unique index allows one copy of a text per exact bucket, so
-            # this caller's copy cannot be written beside the other source's.
-            # Refused, not skipped: nothing was stored under this source, and a
-            # skip would have reported the write as harmlessly done.
-            return _store_rejected(
-                "this content is already stored under a different source id in the "
-                "same agent, project and channel; one copy is kept per bucket, so it "
-                "was not stored for this source"
-            )
+        answer = await _store_dedup_answer(db, agent_id, project_id, channel, msg_id, content, own_source_id)
+    if answer is not None:
+        return answer
 
     # Overflow tree (docs/OVERFLOW_TREE_DESIGN.md §3): whether this text runs past
     # the embedding window decides whether its nodes are queued. Asked alongside the
@@ -392,12 +445,25 @@ async def do_store(
     # transaction (and vice versa). The remote-index push below stays outside the
     # seam (network I/O, not a DB commit).
     async with transaction() as db:
-        cursor = await db.execute(
-            """INSERT OR IGNORE INTO memories
-               (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, embedding_model, channel)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, embedding_label, channel),
+        # The indexes are exact-bucket, and the probe above is wider: a bucket
+        # write is also answered by a copy in the global pool. A copy committed
+        # there since the probe ran is invisible to both, so the bucket copy was
+        # written beside it and a recall in the bucket returned the text twice.
+        # Under the write lock nothing can commit between this probe and the
+        # INSERT, so only the part of the scope the indexes cannot see is probed
+        # again; a copy in the writer's own bucket is still the index's to absorb.
+        answer = await _store_dedup_answer(
+            db, agent_id, project_id, channel, msg_id, content, own_source_id, beyond_bucket=True
         )
+        if answer is None:
+            cursor = await db.execute(
+                """INSERT OR IGNORE INTO memories
+                   (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding, embedding_model, channel)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, embedding_label, channel),
+            )
+    if answer is not None:
+        return answer
     if cursor.rowcount == 0:
         # v2.5.2 additive asymmetry: the msg_id / content branches echo the
         # existing row's id from their SELECT probe. The OR IGNORE fallback fires
@@ -421,11 +487,11 @@ async def do_store(
     local_embedded = embedding_blob is not None
     remote_embedded = False
 
-    if VECTOR_SEARCH_MODE == "remote" and vector._embedding_client and vector._embedding_client._http_url:
+    index_url = vector.remote_route("index") if VECTOR_SEARCH_MODE == "remote" else None
+    if index_url is not None:
         try:
-            base_url = vector._embedding_client._http_url.rsplit("/", 1)[0]
             resp = await vector._embedding_client._client.post(
-                f"{base_url}/index",
+                index_url,
                 json={
                     "namespace": f"cpersona:{agent_id}",
                     "items": [{"id": f"mem:{mem_id}", "text": content}],
@@ -733,8 +799,9 @@ async def _mark_single_arm_rows(db, lexical: list[tuple[tuple, dict]], query_emb
     if not lexical:
         return
     client = vector._embedding_client
-    # The predicate _search_vector_remote gates on, read from the same module.
-    remote_armed = bool(vector.VECTOR_SEARCH_MODE == "remote" and client and client._http_url)
+    # The predicate _search_vector_remote gates on, read from the same module. A URL
+    # that names no search route sends nothing, so that service cannot have answered.
+    remote_armed = vector.VECTOR_SEARCH_MODE == "remote" and vector.remote_route("search") is not None
     if not client or (not query_embedded and not remote_armed):
         for _rid, r in lexical:
             r["_rrf_single_arm"] = True
@@ -1950,15 +2017,18 @@ async def _propagation_seat_rows(
                 wanted[(kind, "memories" if kind == "mem" else "episodes")].append(r["id"])
             blobs: dict[tuple, bytes] = {}
             for (kind, table), ids in wanted.items():
-                if not ids:
-                    continue
-                marks = ",".join("?" * len(ids))
-                async with db.execute(
-                    f"SELECT id, embedding FROM {table} WHERE agent_id = ? AND id IN ({marks})",
-                    (agent_id, *ids),
-                ) as cur:
-                    for row_id, blob in await cur.fetchall():
-                        blobs[(kind, row_id)] = blob
+                # Split at the width every other id read on this recall uses: the
+                # candidates follow the deeper ranking's depth, which the depth floor
+                # can raise as far as the library ceiling, and one statement over all
+                # of them passed SQLite's variable limit and failed the whole recall.
+                found = await vector._fetch_rows_by_id(
+                    db,
+                    f"SELECT id, embedding FROM {table} WHERE id IN ({{ph}}) AND agent_id = ?",
+                    ids,
+                    (agent_id,),
+                )
+                for row_id, row in found.items():
+                    blobs[(kind, row_id)] = row[1]
             # A vector another model wrote is not compared (reject): absent, like a NULL blob.
             for rid in await vector.rejected_rids(db, blobs):
                 blobs.pop(rid)
@@ -2366,6 +2436,14 @@ async def do_recall(
     embedded, so the caller need not embed the query again; and a cue the caller
     already read, which is not read a second time. Library arguments, not tool ones.
     """
+    # Half of a surrogate pair cannot be bound as text. Whether a recall survived
+    # one depended on which arm reached SQLite with it first, so it is refused
+    # here, in the recall's own failure shape, the same way every time.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, query=query, channel=channel, project_id=project_id, source_id=source_id
+    )
+    if surrogate:
+        return error_response(surrogate, messages=[])
     propagation_seat = _propagation_applies(propagation_seat, query)
     try:
         ledger = budget.Ledger.for_recall(
@@ -2556,9 +2634,10 @@ async def _do_recall(
     # is observed at the embedding boundary in vector._search_vector. See health.py.
     health.observe_config()
 
-    exclude_set: set[str] = set()
+    # Indexed once here, because every candidate row of every arm is tested against it.
+    exclude_set: ExcludeSet = ExcludeSet()
     if exclude_contents:
-        exclude_set = {c.strip().lower() for c in exclude_contents if c.strip()}
+        exclude_set = ExcludeSet(c.strip().lower() for c in exclude_contents if c.strip())
 
     # Filled by whichever fusion ran, with the one vector it embedded. Empty
     # wherever no local vector was produced -- no client, a remote search that
@@ -3268,7 +3347,6 @@ async def _do_recall(
             # non-fatal. bug-042/043: serialise the write behind the shared lock so
             # its commit cannot flush another handler's partial transaction.
             try:
-                placeholders = ",".join("?" * len(returned_ids))
                 # scope_stats_neutral: the statement below touches neither the row
                 # count nor a `timestamp` column — it increments recall_count and
                 # writes last_recalled_at on rows that already exist — so it cannot
@@ -3278,11 +3356,22 @@ async def _do_recall(
                 # exactly the configuration it exists for. The claim is about THESE
                 # statements; adding an INSERT/DELETE, or a `timestamp` update, to
                 # this body means dropping the keyword.
+                #
+                # Chunked at the width the recall-count read on this pass uses: the
+                # credited ids are bounded only by the caller's limit, and one
+                # statement over all of them failed past the variable ceiling as a
+                # whole, crediting no row. The chunks share one transaction, so a
+                # recall is still credited all or nothing; the ids are made unique
+                # first, as one IN (...) made them, so no row is credited twice.
+                unique_ids = list(dict.fromkeys(returned_ids))
                 async with transaction(scope_stats_neutral=True) as db:
-                    await db.execute(
-                        f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
-                        returned_ids,
-                    )
+                    for start in range(0, len(unique_ids), vector._ID_FETCH_CHUNK):
+                        chunk = unique_ids[start : start + vector._ID_FETCH_CHUNK]
+                        placeholders = ",".join("?" * len(chunk))
+                        await db.execute(
+                            f"UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = datetime('now') WHERE id IN ({placeholders})",
+                            chunk,
+                        )
             except Exception as e:
                 logger.warning("recall_count bump failed (non-fatal): %s", e)
 
@@ -3496,11 +3585,13 @@ async def do_recall_with_context(
     session_key: str = "",
     context_mode: str | None = None,
     excerpt_chars: int = 0,
+    query_vec_out: list | None = None,
 ) -> dict:
     """Recall memories and merge with external conversation context.
 
     project_id (v2.4.17): γ filter — passed through to do_recall.
     source_id (v2.4.20): per-user source filter — passed through to do_recall.
+    query_vec_out: passed through to do_recall (a library argument, not a tool one).
     """
     ctx = external_context or []
 
@@ -3538,7 +3629,12 @@ async def do_recall_with_context(
         source_id=source_id,
         session_key=session_key,
         excerpt_chars=excerpt_chars,
+        **({"query_vec_out": query_vec_out} if query_vec_out is not None else {}),
     )
+    if recall_result.get("ok") is False:
+        # A refused recall has no messages to merge, and answering with the
+        # context alone would read as a recall that matched nothing.
+        return recall_result
     messages = recall_result.get("messages", [])
 
     for entry in ctx:
@@ -3849,6 +3945,9 @@ async def do_get_contents(agent_id: str, refs: list) -> dict:
     """
     if not agent_id:
         return error_response("agent_id is required")
+    surrogate = lone_surrogate_issue(agent_id=agent_id)
+    if surrogate:
+        return error_response(surrogate)
     if not isinstance(refs, list) or not refs:
         return error_response("refs must be a non-empty list of 'mem:<id>' / 'ep:<id>' refs or range objects")
     if len(refs) > GET_CONTENTS_MAX_REFS:
@@ -4045,6 +4144,16 @@ COMMON_PHRASE_BOUND = _BM25_IDF_FLOOR * (_BM25_K1 + 1)
 _BM25_SUM_ROUNDING = 1e-9
 # How many indexed rows hold one phrase: the n_i of FTS5's own idf.
 _PHRASE_ROWS_SQL = "SELECT count(*) FROM memories_fts WHERE memories_fts MATCH ?"
+# The most distinct trigrams _common_phrases counts, one statement each. The query's
+# length is the caller's, so without a bound a pasted passage issued one statement per
+# trigram on the connection every recall's lexical arms share, and then ran the whole
+# expression anyway whenever no phrase was common. A question of up to 66 CJK
+# characters stays under it; a longer query is ranked on the whole expression, which
+# is the answer the shortcut is only allowed to reproduce.
+COMMON_PHRASE_MAX_COUNTS = 64
+# SQLITE_MAX_LIKE_PATTERN_LENGTH as SQLite ships it: the longest LIKE pattern, in
+# bytes, that the keyword arm's fallback hands to SQLite.
+_LIKE_PATTERN_MAX_BYTES = 50_000
 
 
 async def _common_phrases(db, phrases: list[str]) -> set[str]:
@@ -4055,7 +4164,8 @@ async def _common_phrases(db, phrases: list[str]) -> set[str]:
     query, which the query builder cuts into trigrams. An ASCII phrase is counted in
     lower case, as the trigram tokenizer folds it, so "The" and "the" are counted once;
     any other script is left unclassified. An unclassified phrase stays in the ranking,
-    which is always safe.
+    which is always safe. A query with more than ``COMMON_PHRASE_MAX_COUNTS`` distinct
+    trigrams to count is left unclassified as a whole, for the same reason.
 
     The rows holding a phrase are counted with the phrase itself, one count per trigram,
     which is the n_i FTS5's bm25 counts. They were read from an fts5vocab table before,
@@ -4073,7 +4183,7 @@ async def _common_phrases(db, phrases: list[str]) -> set[str]:
             candidates[phrase] = word.lower()
         elif all(_CJK_RE.match(ch) for ch in word):
             candidates[phrase] = word
-    if not candidates:
+    if not candidates or len(set(candidates.values())) > COMMON_PHRASE_MAX_COUNTS:
         return set()
     n_rows = (await db.execute_fetchall("SELECT count(*) FROM memories_fts_docsize"))[0][0]
     if not n_rows:
@@ -4081,7 +4191,11 @@ async def _common_phrases(db, phrases: list[str]) -> set[str]:
     held: dict[str, int] = {}
     for term in sorted(set(candidates.values())):
         quoted = '"' + term.replace('"', '""') + '"'
-        held[term] = (await db.execute_fetchall(_PHRASE_ROWS_SQL, (quoted,)))[0][0]
+        # Each count is its own statement, so rows any agent commits after the row
+        # count above are counted here and not there. A phrase held by more rows than
+        # were counted is held by all of them, and the idf below would otherwise take
+        # the log of a negative ratio.
+        held[term] = min(n_rows, (await db.execute_fetchall(_PHRASE_ROWS_SQL, (quoted,)))[0][0])
     return {
         phrase
         for phrase, term in candidates.items()
@@ -4157,16 +4271,25 @@ async def _search_episodes_fts(
     # episodes are never orphaned once recall starts filtering by concrete channel.
     iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="e")
 
-    rows = await db.execute_fetchall(
-        f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts), e.created_at
-           FROM episodes_fts f
-           JOIN episodes e ON f.rowid = e.id
-           WHERE episodes_fts MATCH ?
-           AND {iso.clause}{_EPISODE_IN_WINDOW if window is not None else ""}
-           ORDER BY rank
-           LIMIT ?""",
-        (fts_query, *iso.params, *(window or ()), limit),
-    )
+    try:
+        rows = await db.execute_fetchall(
+            f"""SELECT e.id, e.summary, e.start_time, e.resolved, bm25(episodes_fts), e.created_at
+               FROM episodes_fts f
+               JOIN episodes e ON f.rowid = e.id
+               WHERE episodes_fts MATCH ?
+               AND {iso.clause}{_EPISODE_IN_WINDOW if window is not None else ""}
+               ORDER BY rank
+               LIMIT ?""",
+            (fts_query, *iso.params, *(window or ()), limit),
+        )
+    except sqlite3.OperationalError as e:
+        # The memory keyword arm's guard (bug-326), for the episode index: an absent
+        # episodes_fts (its triggers survive the table, so FTS_ENABLED stays true) or
+        # an expression FTS5 cannot parse -- a U+0000 inside a token ends a quoted
+        # phrase early -- took the whole recall down. Episodes have no LIKE fallback,
+        # so the arm answers nothing, as it does with FTS disabled.
+        logger.warning("Episode FTS search unavailable, searching no episodes by keyword (episodes_fts): %s", e)
+        return []
 
     return [
         {
@@ -4264,9 +4387,11 @@ async def _search_memories_keyword(
                         rows, report = await _rank_on_rare_phrases(
                             db, _fts_recall_phrases(query, extra_terms), keyword_sql, (*iso_m.params, *src_params_m), limit
                         )
-                    except sqlite3.OperationalError as e:
+                    except Exception as e:
                         # The shortcut failing is no reason to lose the whole expression,
-                        # which the except below would turn into the LIKE fallback.
+                        # which the except below would turn into the LIKE fallback, or,
+                        # for anything but an OperationalError, into a failed recall: the
+                        # shortcut only saves time, so any failure of it ranks as before.
                         logger.debug("Rare-phrase ranking unavailable, ranking on the whole expression: %s", e)
                         rows, report = None, None
                     rec = recall_trace.current()
@@ -4293,18 +4418,32 @@ async def _search_memories_keyword(
     scan_limit = min(MAX_MEMORIES, max(limit * 5, 50))
     patterns = [_like_escape_contains(query)]
     patterns += [_like_escape_contains(t) for t in dict.fromkeys(extra_terms or ()) if t.strip() and t != query]
+    # SQLite refuses the whole statement when one LIKE pattern is longer than its
+    # pattern limit ("LIKE or GLOB pattern too complex"), and the query's length is
+    # the caller's. Such a pattern could never run, so leaving it out loses no row
+    # the statement could have returned, and the others still match.
+    patterns = [p for p in patterns if len(p.encode("utf-8")) <= _LIKE_PATTERN_MAX_BYTES]
+    if not patterns:
+        return []
     like_clause = " OR ".join("content LIKE ? ESCAPE '\\'" for _ in patterns)
     if len(patterns) > 1:
         like_clause = f"({like_clause})"
-    rows = await db.execute_fetchall(
-        f"""SELECT id, msg_id, content, source, timestamp
-           FROM memories
-           WHERE {iso.clause}{src_clause_bare}
-           AND {like_clause}
-           ORDER BY created_at DESC, id DESC
-           LIMIT ?""",
-        (*iso.params, *src_params_bare, *patterns, scan_limit),
-    )
+    try:
+        rows = await db.execute_fetchall(
+            f"""SELECT id, msg_id, content, source, timestamp
+               FROM memories
+               WHERE {iso.clause}{src_clause_bare}
+               AND {like_clause}
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?""",
+            (*iso.params, *src_params_bare, *patterns, scan_limit),
+        )
+    except sqlite3.OperationalError as e:
+        # A build with a lower pattern limit than the default refuses a pattern the
+        # filter above let through. The keyword channel finding nothing is an empty
+        # arm, as it is for the FTS branch above (bug-326), not a failed recall.
+        logger.warning("Keyword LIKE search unavailable, the arm returns no rows: %s", e)
+        return []
     return [{"id": r[0], "msg_id": r[1], "content": r[2], "source": r[3], "timestamp": r[4], "_bm25": None} for r in rows[:limit]]
 
 
@@ -4352,6 +4491,48 @@ async def do_archive_episode(
     too_long = _key_field_too_long(channel=channel, project_id=project_id)
     if too_long:
         return {"ok": False, "episode_id": None, "error": too_long}
+    # The two history stamps the row will hold, chosen as _prepare_episode_row
+    # chooses them, so what is judged below is what would be written.
+    start_time, end_time = _history_span(history)
+    # Half of a surrogate pair cannot be bound as text, and the INSERT raised
+    # after the embedding had been paid for, with no episode_id in the answer.
+    surrogate = lone_surrogate_issue(
+        agent_id=agent_id, summary=summary, keywords=keywords, channel=channel, project_id=project_id
+    )
+    for stamp in (start_time, end_time):
+        surrogate = surrogate or lone_surrogate_issue(timestamp=stamp)
+    if surrogate:
+        return {"ok": False, "episode_id": None, "error": surrogate}
+    # A history stamp ahead of the clock costs an episode what do_store's note on
+    # the same verdict says it costs a memory: the span is what the episode is
+    # scored, windowed and merged by, so it would read as this instant and never
+    # age. The same verdict, setting and answers as store; the end goes first
+    # because it is the later of the two whenever either one parses.
+    future_timestamp = next(
+        (issue for stamp in (end_time, start_time) if stamp and (issue := future_timestamp_issue(stamp))),
+        None,
+    )
+    future_mode = config.FUTURE_TIMESTAMP_MODE
+    if future_timestamp and future_mode != "off":
+        logger.warning(
+            "archive_episode: history timestamp %r is %.0fs ahead of this clock, past the %ss "
+            "CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS allowance. Raise the allowance if "
+            "this client is legitimate, or set CPERSONA_FUTURE_TIMESTAMP_MODE=reject to "
+            "refuse it.",
+            future_timestamp["timestamp"],
+            future_timestamp["ahead_by_seconds"],
+            future_timestamp["allowance_seconds"],
+        )
+        if future_mode == "reject":
+            return {
+                "ok": False,
+                "episode_id": None,
+                "error": (
+                    f"history timestamp {future_timestamp['timestamp']!r} is "
+                    f"{future_timestamp['ahead_by_seconds']:.0f}s ahead of this clock "
+                    f"(allowance {future_timestamp['allowance_seconds']}s)"
+                ),
+            }
 
     row = await _prepare_episode_row(
         agent_id, history, summary, keywords, resolved, project_id, channel
@@ -4369,6 +4550,8 @@ async def do_archive_episode(
         agent_id, [{"id": f"ep:{episode_id}", "text": row[2]}]
     )
     result = {"ok": True, "episode_id": episode_id}
+    if future_timestamp and future_mode == "warn":
+        result["timestamp_ahead_of_clock"] = future_timestamp
     # Overflow tree (§3). Measured on row[2] for the same reason as the index push:
     # the stored summary is the text the nodes will span.
     if await nodes.runs_past_window(row[2]):
@@ -4396,6 +4579,45 @@ async def do_archive_episode(
     if sanitize_content_with_flag(summary)[1] or keywords_truncated:
         result["truncated"] = True
     return result
+
+
+def _history_span(history: list) -> tuple[str | None, str | None]:
+    """The (start_time, end_time) an episode stores for ``history``: the caller's own
+    strings, chosen by instant. Shared by the prepare seam that writes them and by
+    do_archive_episode, which judges them before anything is paid for."""
+    # bug-299: the sibling of bug-291, on the write side rather than the read one.
+    # A history entry carries the same declared string fields an external_context
+    # entry does, and a non-string `timestamp` reached min()/max() unnormalised --
+    # so a list mixing an epoch int (or a dict) with an ISO string raised TypeError
+    # out of the whole call, BEFORE the embed and the INSERT. The episode was lost,
+    # not merely stamped poorly. `_ctx_string` reads such a value as absent, which
+    # is the ruling bug-291 already made for the read side: a stamp that is not a
+    # string names no instant, and coercing one invents a position in the
+    # chronology. Homogeneous epochs used to sort among themselves and be stored,
+    # but what they stored was an int in a column every other row fills with an ISO
+    # string -- a span that cannot be compared with its neighbours (the shape
+    # bug-286 is about). Absent is the honest answer for both.
+    timestamps = [stamp for msg in history if (stamp := _ctx_string(msg, "timestamp"))]
+    # bug-369: the two ends are chosen by parsed instant, and the ORIGINAL strings
+    # are what gets stored. min()/max() over the raw strings is byte order, and
+    # byte order equals chronological order only while every stamp carries the
+    # same offset -- a history whose first entry is an hour earlier in a different
+    # offset stored a start after its own end. Unlike the read-side ordering
+    # defects, this value is written into the row and never recomputed: it is what
+    # the confidence scoring and the content expansion read afterwards, so the
+    # episode is ranked and displayed at the wrong instant for the rest of its life.
+    # A stamp nobody can parse names no instant, so it takes no part in choosing
+    # the ends -- the same ruling _ctx_string already makes for a non-string one --
+    # and if none of them parse the span falls back to byte order rather than
+    # becoming absent, because two unparseable ends still bound the same history.
+    parseable = [(instant, stamp) for stamp in timestamps if (instant := _parse_timestamp_utc(stamp))]
+    if parseable:
+        start_time = min(parseable, key=lambda pair: pair[0])[1]
+        end_time = max(parseable, key=lambda pair: pair[0])[1]
+    else:
+        start_time = min(timestamps) if timestamps else None
+        end_time = max(timestamps) if timestamps else None
+    return start_time, end_time
 
 
 async def _prepare_episode_row(
@@ -4439,39 +4661,10 @@ async def _prepare_episode_row(
     keywords = _sanitize_content(keywords) if isinstance(keywords, str) else ""
     resolved = bool(resolved)
     project_id = coerce_for_write(project_id)
-
-    # bug-299: the sibling of bug-291, on the write side rather than the read one.
-    # A history entry carries the same declared string fields an external_context
-    # entry does, and a non-string `timestamp` reached min()/max() unnormalised --
-    # so a list mixing an epoch int (or a dict) with an ISO string raised TypeError
-    # out of the whole call, BEFORE the embed and the INSERT. The episode was lost,
-    # not merely stamped poorly. `_ctx_string` reads such a value as absent, which
-    # is the ruling bug-291 already made for the read side: a stamp that is not a
-    # string names no instant, and coercing one invents a position in the
-    # chronology. Homogeneous epochs used to sort among themselves and be stored,
-    # but what they stored was an int in a column every other row fills with an ISO
-    # string -- a span that cannot be compared with its neighbours (the shape
-    # bug-286 is about). Absent is the honest answer for both.
-    timestamps = [stamp for msg in history if (stamp := _ctx_string(msg, "timestamp"))]
-    # bug-369: the two ends are chosen by parsed instant, and the ORIGINAL strings
-    # are what gets stored. min()/max() over the raw strings is byte order, and
-    # byte order equals chronological order only while every stamp carries the
-    # same offset -- a history whose first entry is an hour earlier in a different
-    # offset stored a start after its own end. Unlike the read-side ordering
-    # defects, this value is written into the row and never recomputed: it is what
-    # the confidence scoring and the content expansion read afterwards, so the
-    # episode is ranked and displayed at the wrong instant for the rest of its life.
-    # A stamp nobody can parse names no instant, so it takes no part in choosing
-    # the ends -- the same ruling _ctx_string already makes for a non-string one --
-    # and if none of them parse the span falls back to byte order rather than
-    # becoming absent, because two unparseable ends still bound the same history.
-    parseable = [(instant, stamp) for stamp in timestamps if (instant := _parse_timestamp_utc(stamp))]
-    if parseable:
-        start_time = min(parseable, key=lambda pair: pair[0])[1]
-        end_time = max(parseable, key=lambda pair: pair[0])[1]
-    else:
-        start_time = min(timestamps) if timestamps else None
-        end_time = max(timestamps) if timestamps else None
+    # The other isolation axis, by the same rule as do_store: a None channel is
+    # the default channel, not a NOT NULL failure out of the INSERT.
+    channel = coerce_for_write(channel)
+    start_time, end_time = _history_span(history)
 
     embedding_blob = None
     embedding_label = ""

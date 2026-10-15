@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:cfc18e4b103de5c50e5cd6d4fd5210d58ec0b9ca -->
+<!-- i18n-source: docs/SESSION_IDENTITY_DESIGN.md@blob:ea512ed0c78ed5771709f347d3d51fdd1e3e39c5 -->
 
 # 申告型セッション同一性 (`session_key`)
 
@@ -199,6 +199,12 @@ ephemeral な意図は、それに先行して積まれた作業に優先する�
 判定します。プロセス再起動を生き延びた行は帰属を失い、transport バケットに fallback
 します。これは正しい挙動です。再起動をまたいで生き残るセッションも、存在しないからです。
 
+派生作業はキューに積まれた write ではなく、どの pause もそれを捨てません。ブロックの
+backfill sweep とブロック索引の build はサーバー自身の作業で、どのセッションにも属しません。
+レコードのノード・ブロックの build は、pause より前に保存されたレコードに続くものです。
+どちらを捨てても守られる write は無く、保存済みのレコードが派生層を持たないまま残り、
+プロセス起動ごとに 1 度だけ積まれる sweep は再起動まで戻りませんでした。
+
 ### 対象外 { #out-of-scope }
 
 セッション単位の findings probe (「このセッションが触って pending のまま残した記録」。
@@ -395,8 +401,9 @@ Current tier のライン内で許容するものだ、というものでした 
   一致しないようにする。
 - キューの帰属: ある key で投入されたタスクは、その key が pause した時に捨てられ、別の
   key が pause した時には捨てられない。帰属の無い行は transport バケットで判定される。
-  そして、キューの外で — 実際に削除を行う handler によって — 消された行は、次の drain
-  パスの後に帰属を残していない。
+  キューの外で — 実際に削除を行う handler によって — 消された行は、次の drain
+  パスの後に帰属を残していない。そして派生作業 (backfill sweep・ブロック索引の build・
+  レコードのノード / ブロックの build) は、どの pause の下でも実行される。
 - 変異証明: `strip()` の除去・空文字ガードの除去・advisory の追い出し上限の除去・pause の
   マップの上限到達時の拒否の除去・pause 参照の per-session 分岐の除去・skip 応答の TTL
   差し替えの除去・キューの帰属参照の除去・キューの突き合わせパスの除去が、それぞれ欠陥を

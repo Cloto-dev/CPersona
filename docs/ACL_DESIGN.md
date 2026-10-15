@@ -150,7 +150,9 @@ schema also stays untouched, which is a 2.5.x line invariant.
     error: those principals name a client or a transport, never a person, so
     the policy could never apply.
 - File permissions: the loader warns when the file is group- or world-readable
-  (the same posture as the DB file).
+  (the same posture as the DB file). Only where permission bits are the access
+  control: on Windows the file's ACL decides, the mode `os.stat` reports is
+  synthesised, and there is nothing to warn about.
 
 ### 4.1 Two-stage default (backward compatibility)
 

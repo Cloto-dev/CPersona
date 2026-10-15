@@ -241,8 +241,16 @@ class MemoryTaskQueue:
                 # happens to be paused while the worker runs. A parallel session's
                 # pause must not discard work it never asked for, which is exactly
                 # what a single global flag did.
+                #
+                # Derived work is not a queued write, so no pause drops it. The
+                # backfill sweep and the block index build belong to no session:
+                # they are queued keyless, so the shared bucket's pause deleted
+                # them, and the sweep is queued once per process start. A node or
+                # block build follows a record that was stored before the pause;
+                # dropping it protects nothing and leaves that record without its
+                # derived layers until an operator repairs it.
                 task_session_key = self._session_for(task_id)
-                if session.is_paused_for(task_session_key):
+                if task_type not in derived and session.is_paused_for(task_session_key):
                     logger.info(
                         "MemoryTaskQueue: skipping task %d (%s) under no-persist mode",
                         task_id,
@@ -442,21 +450,27 @@ class MemoryTaskQueue:
         The row keeps its payload, its type and its retry count plus one; only its
         place changes, by taking the next id. Its session attribution moves with it,
         so the pause that governed it still does.
+
+        The row may be gone already: agent-data deletion, a move-mode merge and the
+        stale-queue repair delete queue rows without going through the queue. Then
+        nothing moved, and the tail row is some other task; its id is never read
+        as this one's, or this row's session would govern that task.
         """
         # The queue is one global FIFO, so the tail is read across every agent.
         iso_all = isolation_where(agent_id=None)
         async with transaction() as db:
-            await db.execute(
+            cursor = await db.execute(
                 "UPDATE pending_memory_tasks SET retries = retries + 1, "
                 "id = (SELECT MAX(id) + 1 FROM pending_memory_tasks) WHERE id = ?",
                 (task_id,),
             )
+            moved = cursor.rowcount > 0
             rows = await db.execute_fetchall(
                 f"SELECT MAX(id) FROM pending_memory_tasks{iso_all.where}", iso_all.params
             )
         new_id = rows[0][0]
         key = self._task_sessions.pop(task_id, None)
-        if key is not None and new_id is not None:
+        if moved and key is not None and new_id is not None:
             self._remember_session(new_id, key)
 
     async def _increment_retry(self, task_id: int):

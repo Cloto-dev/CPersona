@@ -207,6 +207,13 @@ enqueued it, and gates each task on that key. A row that survives a process
 restart loses its attribution and falls back to the transport bucket, which is
 correct: no session survives a restart either.
 
+Derived work is not a queued write, and no pause drops it. The block backfill
+sweep and the block index build are the server's own work and belong to no
+session; a record's node or block build follows a record that was stored before
+the pause. Dropping either protected no write: it left stored records without
+their derived layers, and the sweep, queued once per process start, did not
+come back until a restart.
+
 ### Out of scope
 
 A session-scoped findings probe — "records this session touched and left
@@ -422,8 +429,10 @@ Two consequences follow, and neither is optional.
   built by concatenation, so the test cannot satisfy its own pattern.
 - Queue attribution: a task enqueued under one key is dropped when that key
   pauses and kept when a different key does; an unattributed row is gated on the
-  transport bucket; and a row deleted out of band — by the handler that really
-  deletes it — leaves no attribution behind after the next drain pass.
+  transport bucket; a row deleted out of band — by the handler that really
+  deletes it — leaves no attribution behind after the next drain pass; and
+  derived work (the backfill sweep, the block index build, a record's node or
+  block build) runs under any pause.
 - Mutation proof: removing the `strip()`, the empty-string guard, the advisory
   eviction cap, the pause map's refusal at the cap, the per-session branch of
   the pause lookup, the TTL substitution in the skipped-write reason, the

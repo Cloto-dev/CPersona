@@ -735,7 +735,9 @@ async def test_apply_runs_an_argv_list_never_a_shell(monkeypatch):
         (sys.executable, "-m", "pip", "install", "--upgrade", "cpersona==2.5.11")
     ]
     for _, kwargs in seen:
-        assert set(kwargs) == {"stdout", "stderr"}, kwargs
+        # stdin is closed off on purpose: under stdio it is the client's stream.
+        assert set(kwargs) == {"stdin", "stdout", "stderr"}, kwargs
+        assert kwargs["stdin"] == asyncio.subprocess.DEVNULL
     assert any("Successfully installed" in line for line in result["output_tail"])
 
 

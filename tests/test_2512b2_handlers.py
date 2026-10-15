@@ -2981,19 +2981,26 @@ def test_the_pairwise_switch_is_derived_from_the_acl(monkeypatch, tmp_path, clie
 async def test_startup_activates_the_alias_ledger_for_a_per_subject_acl(
     monkeypatch, tmp_path, clients, ledger_expected
 ):
-    """Drive main() through startup and stop before it serves: an unknown transport
-    raises after the wiring block, which is the window this needs."""
+    """Drive main() through startup and stop before it serves: a transport that
+    raises in place of serving stops it after the wiring block, which is the window
+    this needs. (An unknown transport name used to be that vehicle; it is now
+    refused before startup begins.)"""
     previous_config, previous_ledger = acl.active_config(), acl.active_ledger()
     acl.activate(None)
     acl.activate_ledger(None)
     try:
         monkeypatch.setenv("CPERSONA_ACL_FILE", str(_acl_config_file(tmp_path, clients)))
         monkeypatch.setenv("CPERSONA_ALIAS_LEDGER_PATH", str(tmp_path / "alias_ledger.json"))
-        monkeypatch.setenv("CPERSONA_TRANSPORT", "definitely-not-a-transport")
+        monkeypatch.setenv("CPERSONA_TRANSPORT", "stdio")
         monkeypatch.setattr(server, "install_mgp_validation_filter", lambda: None)
 
         async def _noop():
             pass
+
+        async def _stop_instead_of_serving():
+            raise ValueError("Unknown transport: stopped in place of serving")
+
+        monkeypatch.setattr(server, "_run_stdio_server", _stop_instead_of_serving)
 
         monkeypatch.setattr(server, "init_db", _noop)
         monkeypatch.setattr(server, "close_db", _noop)

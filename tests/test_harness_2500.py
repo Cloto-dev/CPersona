@@ -220,21 +220,32 @@ async def test_failed_migration_withholds_stamp_and_retries_next_boot(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_import_mid_file_fault_rolls_back_everything(clean_db, tmp_path):
-    """A poison record mid-file (bind-incompatible content) aborts the restore:
-    rows imported before the fault must be rolled back, the handler reports the
-    abort, and the shared write lock is released."""
+async def test_import_mid_file_fault_rolls_back_everything(clean_db, tmp_path, monkeypatch):
+    """A fault mid-file aborts the restore: rows imported before the fault must be
+    rolled back, the handler reports the abort, and the shared write lock is
+    released.
+
+    The fault is injected. A record value that cannot be bound (content that is
+    an object, say) used to be this fault, but it is now refused for its own line
+    and the restore goes on, so it no longer reaches the rollback this pins."""
     db = clean_db
     dump = tmp_path / "restore.jsonl"
     lines = [
         {"_type": "header", "version": 1},
         {"_type": "memory", "agent_id": "imp", "content": "good row one", "timestamp": "t"},
         {"_type": "episode", "agent_id": "imp", "summary": "good episode"},
-        # Poison: content is truthy but not bindable as a SQLite parameter.
-        {"_type": "memory", "agent_id": "imp", "content": {"nested": "dict"}, "timestamp": "t"},
+        {"_type": "memory", "agent_id": "imp", "content": "poison row", "timestamp": "t"},
     ]
     dump.write_text("\n".join(json.dumps(rec) for rec in lines) + "\n", encoding="utf-8")
 
+    real_decode = admin_handlers._decode_embedding
+
+    def _fault_on_poison(record, *args, **kwargs):
+        if record.get("content") == "poison row":
+            raise RuntimeError("simulated mid-file fault")
+        return real_decode(record, *args, **kwargs)
+
+    monkeypatch.setattr(admin_handlers, "_decode_embedding", _fault_on_poison)
     result = await admin_handlers.do_import_memories(str(dump))
 
     assert result["ok"] is False

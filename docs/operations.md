@@ -39,7 +39,10 @@ Recommended, in order:
    declared associations (entities, aliases, mentions and relations) as well
    as the records, and a restore points them at the records it restores. A
    file written by an earlier version has no associations in it and still
-   imports as it always did. An import refuses a file larger than
+   imports as it always did. A file written by 2.4.37 or earlier also has no
+   project or channel axis: its rows are restored into the global pool, where
+   every project reads them, and the import says how many in `errors`. An
+   import refuses a file larger than
    `CPERSONA_MAX_IMPORT_BYTES` (100 MiB by default), and an export has no such
    cap: compare the size of each backup file with it, and raise it
    ([configuration](configuration.md#export-and-import)) before a restore needs

@@ -92,14 +92,20 @@ async def test_the_empty_object_is_still_excluded(db):
 async def test_main_actually_calls_the_filter_installer(monkeypatch):
     """Behavioural, not textual: drive main() and watch the call happen.
 
-    An unknown transport makes main() raise after startup and before serving,
+    A transport that raises in place of serving stops main() after startup,
     which is the window this needs — the installer runs on the startup path, so
     a call that is present in the source but unreachable fails here and passes
-    every source-reading assertion.
+    every source-reading assertion. (An unknown transport name used to be that
+    vehicle; it is now refused before startup begins.)
     """
     called = []
-    monkeypatch.setenv("CPERSONA_TRANSPORT", "definitely-not-a-transport")
+    monkeypatch.setenv("CPERSONA_TRANSPORT", "stdio")
     monkeypatch.setattr(server, "install_mgp_validation_filter", lambda: called.append(True))
+
+    async def stop_instead_of_serving():
+        raise ValueError("Unknown transport: stopped in place of serving")
+
+    monkeypatch.setattr(server, "_run_stdio_server", stop_instead_of_serving)
 
     async def spy_init_db():
         pass

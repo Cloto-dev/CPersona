@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:28ba03d9ce4df3d63e7b68848321aed3b98cbff3 -->
+<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:df3a1eb91b07fd4fe3960bc38d20488122183664 -->
 # 連想記憶 — 設計 { #associative-memory-design }
 
 状態: 2.6 系。宣言 (§1–2)、§3 の再構成の段、`traverse` (§4) は実装済みです。
@@ -189,6 +189,8 @@ walk は 1 つの関数 — 候補プールとスコープ内の関係が入り�
 entity ごとに挙げる ref の数の両方を抑えます; 切ったものは数で示します。関係は両端が返される時に
 挙げます。記録は、recall と同じプロジェクト・チャンネル・source の絞り込みの下で呼び出しが読める時
 だけ挙げます。`max_hops` の既定は 1、上限は 5; `limit` の既定は 20、上限は 100 です。
+展開する近傍は walk と同じく有界で (§9「展開も有界」)、その上限を超えた時の
+`entities_omitted` は、上限の内側で見つかった entity の数です。
 
 ## 5. 不変条件 { #5-invariants }
 
@@ -277,6 +279,12 @@ recall 側の拡張と reconstruct 側の拡張の間でホップ予算が複利
   — 1 本の関係の内側で切り詰めが既に使っている順序 — です。それより多い entity があれば、
   応答は `bounds.reached` に `max_evidence` を挙げます: 上限に達しており、その先に何があるかは
   分かりません。
+- **展開も有界。** ホップ上限が抑えるのは深さであって幅ではありません: 連結したグラフでは
+  5 ホップでほぼすべての entity に届き、ハブからの関係 1 本はその先のすべてに届きます。そこで
+  1 回の walk や traverse が展開する entity は、ホップ上限が何を許しても、起点を含めて最大 256 です。
+  この上限に掛かったホップで展開は止まり、最も新しく宣言された関係が到達した entity — 切り詰めが
+  既に使っている順序 — を残します; その先の関係は辿られず、`max_hops` と同じく `bounds.omitted`
+  で報告されます。上限より下では何も変わりません。
 - **`why` と独立性。** 宣言関係が束ねた行は `why: "relation:<predicate>"` を持ち、`hops` を
   持ちません; walk が到達した行は同じものに `hops` を持ちます。関係が作ったクラスタの
   `independence_reason` は `"cluster:relation"` です。

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ACL_DESIGN.md@blob:a4be0c9ea9cec76ce406ddcf7b11f412406d50dc -->
+<!-- i18n-source: docs/ACL_DESIGN.md@blob:7639603b32fd47b282242f41f06ac93d6d972b88 -->
 
 # クライアント別ケーパビリティ / ACL 設計
 
@@ -151,7 +151,9 @@ class IdentityResolver(Protocol):
     です。それらの principal はクライアントかトランスポートを指すものであって、
     人を指すことは決してなく、このポリシーが適用され得ないからです。
 - ファイルパーミッション: ファイルがグループや全体から読める場合、ローダーが警告
-  します (DB ファイルと同じ構え)。
+  します (DB ファイルと同じ構え)。対象はパーミッションビットがアクセス制御である
+  プラットフォームだけです。Windows ではファイルの ACL が決め、`os.stat` が返す
+  モードは合成されたものなので、警告すべきことはありません。
 
 ### 4.1 2 段階の既定 (後方互換性) { #41-two-stage-default-backward-compatibility }
 

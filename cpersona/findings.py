@@ -103,6 +103,10 @@ _TIER_KINDS: dict[str, str] = {
     # correct because recall falls back, so it is not critical, but it was invisible on
     # this surface, which is the whole reason the check exists.
     "embedding_backend_unreachable": "warn",
+    # The other state the runner stamps warn: no request ever left the process
+    # because of the embedding settings. Recall is degraded exactly as when the
+    # backend does not answer, so it is delivered at the same severity.
+    "embedding_backend_misconfigured": "warn",
     # Not a probe — a probe that could not run (see module docstring).
     "check_crashed": "warn",
 }

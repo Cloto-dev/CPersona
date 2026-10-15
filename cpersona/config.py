@@ -41,6 +41,38 @@ def _parse_choice(env_key: str, default: str, allowed: tuple[str, ...]) -> str:
     return default
 
 
+# The same contract for an on/off setting. Read as `value.lower() == "true"`,
+# every other spelling was off: `1`, `yes` and `on` turned a default-on feature
+# off -- the opposite of what was asked -- and nothing said so. The usual
+# spellings of both answers are accepted; anything else keeps the documented
+# default and says so, and empty is unset, as for every setting here.
+_TRUE_WORDS = ("true", "1", "yes", "on")
+_FALSE_WORDS = ("false", "0", "no", "off")
+
+
+def _parse_bool(env_key: str, default: bool, unreadable: bool | None = None) -> bool:
+    """The setting as on or off. ``unreadable`` is what a value that is neither
+    answer means, when that is not the default: a switch whose "on" opens an
+    outbound connection reads an unreadable value as off, because the operator
+    who wrote one was trying to say something other than the default."""
+    raw = os.environ.get(env_key)
+    if raw is None or raw == "":
+        return default
+    val = raw.strip().lower()
+    if val in _TRUE_WORDS:
+        return True
+    if val in _FALSE_WORDS:
+        return False
+    fallback = default if unreadable is None else unreadable
+    logger.warning(
+        "invalid value for %s=%r; expected true/false (or 1/0, yes/no, on/off), using %r",
+        env_key,
+        raw,
+        "true" if fallback else "false",
+    )
+    return fallback
+
+
 # An optional override (unset means "no override") has no number to fall back to:
 # substituting one turns a typo into an active override for every call. So a value
 # that does not parse is ignored, as if unset, and the warning says so.
@@ -106,7 +138,22 @@ MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # bounds vector-recall reach: rows older than the window are invisible to the
 # vector retriever, so the default must comfortably exceed a real corpus.
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
+#
+# A window below one row is not a window, so it falls back to the default and
+# says so, the bug-133 rule for a value that cannot mean what it was set for.
+# Taken as written, 0 ranked nothing, and a negative value -- SQLite's "no
+# limit", which reads like "scan everything" -- became a scan position the coarse
+# supplier refuses, so every time-cued recall raised; it also put the reach's
+# default of 0 above the window and switched the far list on. Not clamped to 1:
+# a one-row window would honour the setting by making vector recall useless.
 MAX_MEMORIES = _parse_int("CPERSONA_MAX_MEMORIES", 10000)
+if MAX_MEMORIES < 1:
+    logger.warning(
+        "invalid value for CPERSONA_MAX_MEMORIES=%r; the scan window must be at least 1 "
+        "row, using default 10000",
+        MAX_MEMORIES,
+    )
+    MAX_MEMORIES = 10000
 # The vector retriever's REACH: how many of the newest rows its arm may look at
 # IN TOTAL. `0` (the default) means "the same as the window", and the far list
 # below does not exist -- with the default set, none of that code runs.
@@ -205,16 +252,14 @@ RECALL_DEPTH_FLOOR = max(0, _parse_int("CPERSONA_RECALL_DEPTH_FLOOR", 0))
 # the second record is often admitted just below the cut. Off by default: off,
 # no deeper ranking runs and the recall is the one it was before, bit for bit.
 # On, a recall also ranks at propagation.DEPTH and may return one more row.
-RECALL_PROPAGATION_SEAT = (
-    os.environ.get("CPERSONA_RECALL_PROPAGATION_SEAT", "false").lower() == "true"
-)
+RECALL_PROPAGATION_SEAT = _parse_bool("CPERSONA_RECALL_PROPAGATION_SEAT", False)
 
 # 2.6.2: far seats (docs/BINARY_COARSE_SEARCH_DESIGN.md §5, cpersona/far_seats.py).
 # Two places held after the block reservation for records past the scan window
 # that the coarse search finds by meaning. Off by default: off, the far scan does
 # not run and the recall is the one it was before, bit for bit. On, a recall may
 # return up to two more rows, and they displace none of the rows it returned.
-FAR_SEATS_ENABLED = os.environ.get("CPERSONA_FAR_SEATS_ENABLED", "false").lower() == "true"
+FAR_SEATS_ENABLED = _parse_bool("CPERSONA_FAR_SEATS_ENABLED", False)
 
 # 2.6.2: the cue arm's remainder (docs/BINARY_COARSE_SEARCH_DESIGN.md §6). The vector
 # half of a time cue ranks at most CPERSONA_MAX_MEMORIES of the period's records, the
@@ -229,10 +274,18 @@ FAR_SEATS_ENABLED = os.environ.get("CPERSONA_FAR_SEATS_ENABLED", "false").lower(
 # was not searched whole. "true" keeps the 2.6.2 meaning: through the index, or
 # without one through the live store, which returns the same records at a cost that
 # grows with the store. Anything else is off, as every value but "true" was before.
+# Off is kept for an unknown value -- `1` or `yes` read as on would start reading the
+# live store for an operator who set them before 2.6.4 -- but no longer silently.
 def _cue_coarse_mode(raw: str | None) -> str:
     value = (raw or "").strip().lower()
     if value in ("", "auto"):
         return "auto"
+    if value not in ("true", "false"):
+        logger.warning(
+            "invalid value for CPERSONA_CUE_COARSE_ENABLED=%r; expected auto, true or false, "
+            "the remainder search is off",
+            raw,
+        )
     return "on" if value == "true" else "off"
 
 
@@ -299,8 +352,13 @@ RECONSTRUCT_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_QUOTE_CHARS", 
 # quotes, and quoting the rest at half the size kept the evidence shown while the
 # quoted text fell by about 30%. Setting the tail equal to RECONSTRUCT_QUOTE_CHARS
 # quotes every item alike, as before.
+# Left unset the tail follows the quote size down, as the default count follows the
+# maximum: a tail above the head is refused at startup, and a configuration that
+# lowered only the quote size started before the tail setting existed.
 RECONSTRUCT_FULL_QUOTES = max(0, _parse_int("CPERSONA_RECONSTRUCT_FULL_QUOTES", 5))
-RECONSTRUCT_TAIL_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS", 400))
+RECONSTRUCT_TAIL_QUOTE_CHARS = max(
+    0, _parse_int("CPERSONA_RECONSTRUCT_TAIL_QUOTE_CHARS", min(400, RECONSTRUCT_QUOTE_CHARS))
+)
 # 2.6.5a1 (docs/EVIDENCE_ALLOCATION_DESIGN.md sections 3-4): the payload sequence the
 # budget cuts. "items" is section 7's: every head in item order, then each item's excerpts
 # in turn. "evidence" places every passage of the items' head records in one order across
@@ -312,8 +370,8 @@ RECONSTRUCT_TAIL_QUOTE_CHARS = max(0, _parse_int("CPERSONA_RECONSTRUCT_TAIL_QUOT
 # head quotes are filled (CPERSONA_RECONSTRUCT_QUOTE_CHARS above 0).
 RECONSTRUCT_SEQUENCES = ("items", "evidence", "whole")
 RECONSTRUCT_SEQUENCE = _parse_choice("CPERSONA_RECONSTRUCT_SEQUENCE", "items", RECONSTRUCT_SEQUENCES)
-RECONSTRUCT_DEFAULT_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", 4000)
-RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", 20000)
+# RECONSTRUCT_DEFAULT_BUDGET and RECONSTRUCT_MAX_BUDGET are read below
+# RECALL_PREVIEW_CHARS, whose excerpt their unset defaults must hold.
 RECONSTRUCT_FORCED_BUDGET = _parse_optional_int("CPERSONA_RECONSTRUCT_FORCED_BUDGET")
 
 
@@ -337,10 +395,12 @@ def validate_reconstruct_counts() -> None:
         )
     # The budget has the same rule, plus a floor: below one preview-tier excerpt
     # the first item could not fit, and section 7 guarantees that it does.
+    # The maximum is checked first: an unset default follows it down, so when
+    # both are below the floor the maximum is the value the operator wrote.
     floor = RECALL_PREVIEW_CHARS if RECALL_PREVIEW_CHARS > 0 else 1
     for name, value in (
-        ("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", RECONSTRUCT_DEFAULT_BUDGET),
         ("CPERSONA_RECONSTRUCT_MAX_BUDGET", RECONSTRUCT_MAX_BUDGET),
+        ("CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", RECONSTRUCT_DEFAULT_BUDGET),
         ("CPERSONA_RECONSTRUCT_FORCED_BUDGET", RECONSTRUCT_FORCED_BUDGET),
     ):
         if value is not None and value < floor:
@@ -642,7 +702,7 @@ FUTURE_TIMESTAMP_MODE = _parse_choice(
     "CPERSONA_FUTURE_TIMESTAMP_MODE", "warn", ("warn", "reject", "off")
 )
 
-FTS_ENABLED = os.environ.get("CPERSONA_FTS_ENABLED", "true").lower() == "true"
+FTS_ENABLED = _parse_bool("CPERSONA_FTS_ENABLED", True)
 
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the
 # generic key shared across Cloto MCP servers (matches the CScheduler convention
@@ -735,9 +795,9 @@ def embedding_timeout_secs() -> int:
 # instead of silently serving keyword/FTS-only recall. On by default; opting out records
 # an operator who accepts a supported-but-not-recommended standalone deployment, and it
 # stops the report rather than the degradation. See health.py + DEGRADED_ADVISORY_DESIGN.
-DEGRADED_ADVISORY_ENABLED = os.environ.get("CPERSONA_DEGRADED_ADVISORY", "true").lower() == "true"
+DEGRADED_ADVISORY_ENABLED = _parse_bool("CPERSONA_DEGRADED_ADVISORY", True)
 
-TASK_QUEUE_ENABLED = os.environ.get("CPERSONA_TASK_QUEUE_ENABLED", "true").lower() == "true"
+TASK_QUEUE_ENABLED = _parse_bool("CPERSONA_TASK_QUEUE_ENABLED", True)
 
 # New-release detection (cpersona/update_check.py). On by default: a memory
 # server is installed once and then left alone, so the process answering
@@ -754,8 +814,10 @@ TASK_QUEUE_ENABLED = os.environ.get("CPERSONA_TASK_QUEUE_ENABLED", "true").lower
 # on any surface, and check_update answers `state=disabled`. That is the switch
 # for an air-gapped or egress-controlled deployment, and for an operator who
 # wants no outbound connection they did not ask for. Updating is never
-# automatic either way.
-UPDATE_CHECK_ENABLED = os.environ.get("CPERSONA_UPDATE_CHECK", "true").lower() == "true"
+# automatic either way. A value that is neither answer turns it off: before the
+# flag accepted `0` / `no` / `off`, every value but `true` was off, and an
+# operator who wrote `disabled` to stop the request must not start sending it.
+UPDATE_CHECK_ENABLED = _parse_bool("CPERSONA_UPDATE_CHECK", True, unreadable=False)
 # How long a fetched verdict stays usable. A release is not news twice a day,
 # and the sidecar makes a restart loop cost one request rather than one per
 # start.
@@ -768,7 +830,7 @@ UPDATE_CHECK_INTERVAL_SECONDS = _parse_int("CPERSONA_UPDATE_CHECK_INTERVAL_SECON
 # scan on every call. On by default; turning it off recomputes every time, which
 # is the pre-cache behaviour and the reference an equivalence run compares
 # against.
-SCOPE_STATS_CACHE_ENABLED = os.environ.get("CPERSONA_SCOPE_STATS_CACHE", "true").lower() == "true"
+SCOPE_STATS_CACHE_ENABLED = _parse_bool("CPERSONA_SCOPE_STATS_CACHE", True)
 # How long a cached entry may outlive a write made by ANOTHER process on the same
 # file (this process's own writes invalidate exactly, by generation). It bounds
 # staleness rather than preventing it: the cached values scale a confidence curve
@@ -777,7 +839,7 @@ SCOPE_STATS_CACHE_ENABLED = os.environ.get("CPERSONA_SCOPE_STATS_CACHE", "true")
 # 0 disables reuse entirely (every lookup recomputes).
 SCOPE_STATS_TTL_SECONDS = _parse_float("CPERSONA_SCOPE_STATS_TTL_SECONDS", 60.0)
 
-CONFIDENCE_ENABLED = os.environ.get("CPERSONA_CONFIDENCE_ENABLED", "false").lower() == "true"
+CONFIDENCE_ENABLED = _parse_bool("CPERSONA_CONFIDENCE_ENABLED", False)
 COSINE_FLOOR = _parse_float("CPERSONA_COSINE_FLOOR", 0.20)
 COSINE_CEIL = _parse_float("CPERSONA_COSINE_CEIL", 0.75)
 DECAY_RATE = _parse_float("CPERSONA_DECAY_RATE", 0.005)
@@ -798,7 +860,7 @@ TASK_RETRY_DELAY = _parse_int("CPERSONA_TASK_RETRY_DELAY", 30)
 # answered more questions than the same one without them. Off still means no
 # embedding calls, no rows and no queue work rather than "built but unread", so
 # a deployment that does not want the backfill sets this one switch to false.
-BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "true").lower() == "true"
+BLOCK_BUILD_ENABLED = _parse_bool("CPERSONA_BLOCK_BUILD_ENABLED", True)
 
 # The other half (§7): whether the block arm runs during recall. Split from
 # construction because one switch would charge a deployment for the half it is
@@ -807,12 +869,7 @@ BLOCK_BUILD_ENABLED = os.environ.get("CPERSONA_BLOCK_BUILD_ENABLED", "true").low
 # with both on by default, turning construction off alone would otherwise ask
 # to read an index nothing fills, which validate_block_gates() refuses at
 # startup. Set explicitly, it is taken as written and that refusal stands.
-BLOCK_RETRIEVAL_ENABLED = (
-    os.environ.get(
-        "CPERSONA_BLOCK_RETRIEVAL_ENABLED", "true" if BLOCK_BUILD_ENABLED else "false"
-    ).lower()
-    == "true"
-)
+BLOCK_RETRIEVAL_ENABLED = _parse_bool("CPERSONA_BLOCK_RETRIEVAL_ENABLED", BLOCK_BUILD_ENABLED)
 
 
 # 2.6.7: the block arm reads its rows from a file beside the database instead of
@@ -823,7 +880,7 @@ BLOCK_RETRIEVAL_ENABLED = (
 # registered run over 100,000 memories found recall faster with every answer
 # unchanged, and the log adding under 1% to a block build
 # (benchmarks/measurements/results-recall-latency-block-index-file.md).
-BLOCK_INDEX_ENABLED = os.environ.get("CPERSONA_BLOCK_INDEX", "true").lower() == "true"
+BLOCK_INDEX_ENABLED = _parse_bool("CPERSONA_BLOCK_INDEX", True)
 
 
 def validate_block_gates() -> None:
@@ -863,7 +920,7 @@ REMOTE_SEARCH_TIMEOUT_SECS = _parse_float("CPERSONA_REMOTE_SEARCH_TIMEOUT_SECS",
 # work server-side, and a failure here is non-fatal (embedded=false) rather than
 # a fallback to another retriever.
 REMOTE_INDEX_TIMEOUT_SECS = _parse_float("CPERSONA_REMOTE_INDEX_TIMEOUT_SECS", 10.0)
-STORE_BLOB = os.environ.get("CPERSONA_STORE_BLOB", "true").lower() == "true"
+STORE_BLOB = _parse_bool("CPERSONA_STORE_BLOB", True)
 
 
 def local_blobs_stored(vector_search_mode: str, store_blob: bool) -> bool:
@@ -882,7 +939,7 @@ def local_blobs_stored(vector_search_mode: str, store_blob: bool) -> bool:
     """
     return vector_search_mode == "local" or store_blob
 
-AUTO_CALIBRATE = os.environ.get("CPERSONA_AUTO_CALIBRATE", "false").lower() == "true"
+AUTO_CALIBRATE = _parse_bool("CPERSONA_AUTO_CALIBRATE", False)
 CALIBRATE_SAMPLE_SIZE = _parse_int("CPERSONA_CALIBRATE_SAMPLE_SIZE", 200)
 # bug-053: hard upper bound on the calibration sample. sample_size is a
 # caller-supplied MCP tool parameter that feeds both a LIMIT scan and an O(n^2)
@@ -941,7 +998,7 @@ CALIBRATE_TEMPORAL_WINDOW_MIN = _parse_float("CPERSONA_CALIBRATE_TEMPORAL_WINDOW
 # live corpus dimension differs from the persisted one, the threshold is recomputed
 # at startup even if AUTO_CALIBRATE is off. Catches silent jina(768d)->bge-m3(1024d)
 # style swaps that would otherwise leave a stale, mis-scaled threshold in place.
-CALIBRATE_ON_MODEL_CHANGE = os.environ.get("CPERSONA_CALIBRATE_ON_MODEL_CHANGE", "true").lower() == "true"
+CALIBRATE_ON_MODEL_CHANGE = _parse_bool("CPERSONA_CALIBRATE_ON_MODEL_CHANGE", True)
 
 # v2.4.26 — post-fusion quality-gate calibration. The fused-score
 # (RSF/RRF) quality gate is calibrated by simulate-query separation: sample stored
@@ -950,7 +1007,7 @@ CALIBRATE_ON_MODEL_CHANGE = os.environ.get("CPERSONA_CALIBRATE_ON_MODEL_CHANGE",
 # This replaces the pool-size heuristic _adaptive_min_score, which never used the
 # calibrated distribution and so left rsf/rrf precision uncalibrated. Falls back to
 # the heuristic when disabled or when too few samples exist.
-FUSED_GATE_ENABLED = os.environ.get("CPERSONA_FUSED_GATE_ENABLED", "true").lower() == "true"
+FUSED_GATE_ENABLED = _parse_bool("CPERSONA_FUSED_GATE_ENABLED", True)
 # Number of pseudo-queries sampled at calibration time (each runs one fusion recall,
 # so this bounds calibration cost — an offline / startup event, not per-recall).
 FUSED_GATE_SAMPLE_QUERIES = max(1, _parse_int("CPERSONA_FUSED_GATE_SAMPLE_QUERIES", 40))
@@ -984,7 +1041,7 @@ FUSED_GATE_BETA = _parse_float(
 )
 
 # Autocut (v2.4 / v2.4.13: relative gap ratio, enabled by default)
-AUTOCUT_ENABLED = os.environ.get("CPERSONA_AUTOCUT_ENABLED", "true").lower() == "true"
+AUTOCUT_ENABLED = _parse_bool("CPERSONA_AUTOCUT_ENABLED", True)
 AUTOCUT_MIN_GAP_RATIO = _parse_float("CPERSONA_AUTOCUT_MIN_GAP_RATIO", 0.15)
 # v2.4.25: minimum result count before autocut engages. RSF min-max normalization
 # forces the lowest-scoring row to 0.0, so any small result set carries an
@@ -1004,7 +1061,7 @@ AUTOCUT_MIN_RESULTS = max(2, _parse_int("CPERSONA_AUTOCUT_MIN_RESULTS", 3))
 # doubled how often the record holding the answer came first. Public benchmarks
 # never create episodes, so they could not see this. Deployments that want the
 # cross-session damping opt in with CPERSONA_EPISODE_PENALTY_ENABLED=true.
-EPISODE_PENALTY_ENABLED = os.environ.get("CPERSONA_EPISODE_PENALTY_ENABLED", "false").lower() == "true"
+EPISODE_PENALTY_ENABLED = _parse_bool("CPERSONA_EPISODE_PENALTY_ENABLED", False)
 EPISODE_DECAY_RATE = _parse_float("CPERSONA_EPISODE_DECAY_RATE", 0.01)
 EPISODE_DECAY_FLOOR = _parse_float("CPERSONA_EPISODE_DECAY_FLOOR", 0.5)
 
@@ -1044,6 +1101,19 @@ RECALL_PREVIEW_CHARS = _parse_int("CPERSONA_RECALL_PREVIEW_CHARS", 500)
 # 260 of 500 questions, an excerpt filled to 800 characters answered 341, and the
 # full records 351. Boundary-layer only, like the preview. 0 disables it.
 RECALL_EXCERPT_CHARS = _parse_int("CPERSONA_RECALL_EXCERPT_CHARS", 800)
+
+# The reconstruct payload budget's default and maximum (see the reconstruct
+# settings above). validate_reconstruct_counts refuses a budget below one
+# preview-tier excerpt, so left unset both follow the preview tier up -- and the
+# default also follows the maximum down -- the way the default count follows its
+# maximum: an operator who raises only the preview tier, or lowers only the
+# maximum, is not refused at startup for a default nobody set. A value set
+# explicitly is taken as written and the refusal stands.
+_BUDGET_FLOOR = RECALL_PREVIEW_CHARS if RECALL_PREVIEW_CHARS > 0 else 1
+RECONSTRUCT_MAX_BUDGET = _parse_int("CPERSONA_RECONSTRUCT_MAX_BUDGET", max(20000, _BUDGET_FLOOR))
+RECONSTRUCT_DEFAULT_BUDGET = _parse_int(
+    "CPERSONA_RECONSTRUCT_DEFAULT_BUDGET", min(max(4000, _BUDGET_FLOOR), RECONSTRUCT_MAX_BUDGET)
+)
 
 # 2.6 time cue (docs/RECALL_PROCESS_DESIGN.md §2.5): the one revision -- widening the
 # cue's period and running the cue arm again -- is skipped once the recall has taken
@@ -1096,8 +1166,26 @@ OAUTH_JWKS_URI = os.environ.get("CPERSONA_OAUTH_JWKS_URI", "")
 # `monkeypatch.setenv`. A module constant would freeze the import-time value and
 # make every one of them silently test the default.
 def transport() -> str:
-    """The configured transport name, unvalidated (``main`` rejects unknown ones)."""
+    """The configured transport name, unvalidated (``main`` rejects unknown ones
+    at startup, through :func:`validate_transport`)."""
     return os.environ.get("CPERSONA_TRANSPORT", "stdio")
+
+
+TRANSPORTS = ("stdio", "streamable-http")
+
+
+def validate_transport() -> None:
+    """Refuse an unknown transport name before anything expensive starts.
+
+    The name is all the check needs. Checked where it is used, at the end of
+    startup, a typo such as ``streamable_http`` first opened and migrated the
+    database, scheduled the calibration and the update check and started the
+    queue, and under ``Restart=always`` paid all of that on every restart to
+    reach a refusal an environment variable decides.
+    """
+    name = transport()
+    if name not in TRANSPORTS:
+        raise ValueError(f"Unknown transport: {name} (expected one of {', '.join(TRANSPORTS)})")
 
 
 def shared_transport() -> bool:

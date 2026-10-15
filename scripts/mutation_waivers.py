@@ -103,6 +103,18 @@ def load_registry(path: Path = DEFAULT_REGISTRY) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _waiver_list(registry: object) -> list | None:
+    """The registry's waivers, or None when the file has no list to read.
+
+    A missing or misspelt key, or a value that is not a list, is a malformed
+    registry. Reading it as ``[]`` made it indistinguishable from a registry
+    with no waivers: verification passed, even under --strict, while every
+    approved waiver silently stopped applying.
+    """
+    waivers = registry.get("waivers") if isinstance(registry, dict) else None
+    return waivers if isinstance(waivers, list) else None
+
+
 def _waived_line(repo: Path, waiver: dict) -> str | None:
     """The line this waiver's ``code_context_hash`` still matches, or None.
 
@@ -136,7 +148,21 @@ def verify(repo: Path, registry: dict, today: date) -> list[dict]:
     problems: list[dict] = []
     seen_ids: set[str] = set()
     seen_fps: set[str] = set()
-    for w in registry.get("waivers", []):
+    waivers = _waiver_list(registry)
+    if waivers is None:
+        found = registry.get("waivers") if isinstance(registry, dict) else registry
+        problems.append({
+            "id": "<registry>", "severity": "hard", "kind": "no_waiver_list",
+            "detail": f"the registry needs a top-level 'waivers' list, found {type(found).__name__}",
+        })
+        return problems
+    for w in waivers:
+        if not isinstance(w, dict):
+            problems.append({
+                "id": "<no-id>", "severity": "hard", "kind": "bad_entry",
+                "detail": f"a waiver must be an object, got {w!r}",
+            })
+            continue
         wid = w.get("id", "<no-id>")
 
         def add(kind: str, detail: str, severity: str = "hard") -> None:
@@ -212,7 +238,10 @@ def active_waivers(repo: Path, registry: dict, today: date) -> dict[str, dict]:
     human-approved, unexpired, right tool version, and whose code still exists.
     A pending (approved_by=null) or stale waiver is silently inactive."""
     out: dict[str, dict] = {}
-    for w in registry.get("waivers", []):
+    for w in _waiver_list(registry) or []:
+        # A malformed registry suppresses nothing; verify() reports it.
+        if not isinstance(w, dict):
+            continue
         if w.get("approved_by") != "human":
             continue
         if w.get("tool_version") != TOOL_VERSION:
@@ -241,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
 
     hard = [p for p in problems if p["severity"] == "hard"]
     soft = [p for p in problems if p["severity"] == "soft"]
-    total = len(registry.get("waivers", []))
+    total = len(_waiver_list(registry) or [])
     active = len(active_waivers(repo, registry, date.today()))
     print(f"mutation-waivers: {total} waivers ({active} active/suppressing), {len(hard)} hard + {len(soft)} soft problems")
     for p in problems:
