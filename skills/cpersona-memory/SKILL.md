@@ -452,8 +452,10 @@ of the whole site is at <https://cloto-dev.github.io/CPersona/llms.txt>.
   penalty is off unless `CPERSONA_EPISODE_PENALTY_ENABLED=true`. If a deployment
   has turned it on, the penalty keys on the newest episode's timestamp, so
   bulk-importing history penalizes everything older; keep it off for the import.
-- **`CPERSONA_MAX_MEMORIES` is the vector scan window, not a cap** — raise it
-  via env for large corpora; FTS/keyword reach the full history regardless.
+- **`CPERSONA_MAX_MEMORIES` is the vector scan window, not a cap** — FTS/keyword
+  reach the full history regardless. To reach older rows by meaning, set
+  `CPERSONA_VECTOR_REACH` above it or set `CPERSONA_FAR_SEATS_ENABLED=true`;
+  widening the window costs recall on recent memories.
 - **Backup is not `cp`**: the DB runs WAL — use
   `sqlite3 /absolute/path/cpersona.db ".backup 'b.db'"` (or `VACUUM INTO`) —
   substitute the path you set as `CPERSONA_DB_PATH` in the client config, which

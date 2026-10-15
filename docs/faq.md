@@ -76,8 +76,10 @@ rank-fusion scores, and disabling the fused gate entirely is a last resort.
 
 Nothing is deleted and nothing breaks. The constant is the *vector scan
 window*, not a storage cap. Rows older than the window stay reachable through
-the FTS and keyword channels. For a large corpus, raise the environment
-variable — that is the supported knob, and no archival routine is needed.
+the FTS and keyword channels, and no archival routine is needed. To reach
+them by meaning as well, set `CPERSONA_VECTOR_REACH` above the window or turn
+on the far seats (`CPERSONA_FAR_SEATS_ENABLED`). Raising the window itself is a knob with a price: measured,
+it cost 20 NDCG@10 points on recent answers to gain 5 on old ones.
 → [Contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)
 
 ### How often should `archive_episode` run, and does bulk backfill hurt?

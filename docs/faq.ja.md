@@ -74,8 +74,10 @@ fused gate 全体の無効化は、最後の手段です。
 ### コーパスが `CPERSONA_MAX_MEMORIES` を超えたらどうなりますか？ { #what-happens-when-the-corpus-grows-past-cpersona_max_memories }
 
 何も削除されず、何も壊れません。この定数は*ベクトル走査窓*であって、保存上限では
-ありません。窓より古い行も FTS・keyword 経路からは届きます。大規模コーパスでは
-env で窓を上げてください。それが想定された使い方で、アーカイブ運用は不要です。
+ありません。窓より古い行も FTS・keyword 経路からは届き、アーカイブ運用は不要です。
+意味でも届かせたいときは、`CPERSONA_VECTOR_REACH` を窓より大きく設定するか、
+窓の外の席 (`CPERSONA_FAR_SEATS_ENABLED`) を有効にしてください。窓そのものを上げるのは値段の付いたつまみです:
+実測では、新しい答えで NDCG@10 を 20 ポイント失い、古い答えで 5 ポイント得ました。
 → [契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)
 
 ### `archive_episode` はどの頻度で？過去分の一括投入は害がありますか？ { #how-often-should-archive_episode-run-and-does-bulk-backfill-hurt }

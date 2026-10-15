@@ -134,9 +134,10 @@ EXPORT_DIR = os.environ.get("CPERSONA_EXPORT_DIR", "")
 MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
 # bug-085: MAX_MEMORIES is the vector retriever's SCAN WINDOW — how many of the
 # newest rows it fetches and cosine-ranks per recall — not a response size (that
-# is the per-call `limit`, clamped in the handlers). It is the single knob that
-# bounds vector-recall reach: rows older than the window are invisible to the
-# vector retriever, so the default must comfortably exceed a real corpus.
+# is the per-call `limit`, clamped in the handlers). Rows older than the window
+# are invisible to the near list; VECTOR_REACH below and the far seats are what
+# rank them by meaning. Widening the window instead is not free: it also removes
+# the recency prior the window provides (the measurement under VECTOR_REACH).
 # Benchmarks on larger corpora raise it via the env var instead of patching code.
 #
 # A window below one row is not a window, so it falls back to the default and

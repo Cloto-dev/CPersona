@@ -376,11 +376,8 @@ Codex はサーバーごとにツールを拒否リストにできます (同じ
   動作し、劣化している旨を報告します。
 - `EMBEDDING_MODE` / `EMBEDDING_HTTP_URL` は `CPERSONA_EMBEDDING_MODE` /
   `CPERSONA_EMBEDDING_URL` の汎用エイリアスです。両方設定された場合は接頭辞つきが
-  優先されます。[設定リファレンス](configuration.md) は手を伸ばしそうな設定を扱っていますが、
-  完全な一覧ではありません。いくつかの変数 (`CPERSONA_STORE_BLOB`、
-  `CPERSONA_FTS_ENABLED`、`CPERSONA_EMBEDDING_API_KEY`、`CPERSONA_CALIBRATE_*` の
-  2 つ、ほか数個) は、サーバーが読むにもかかわらずそこに載っていません。完全な
-  一覧は `cpersona/config.py` です。
+  優先されます。[設定リファレンス](configuration.md) は、サーバーが読む変数を
+  既定値とともにすべて載せています。
 
 ## 4. 動作を確認する { #4-verify-it-works }
 

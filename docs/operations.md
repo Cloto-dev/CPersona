@@ -301,10 +301,15 @@ has no ledger to corrupt and no drift mode.
 ## Scale
 
 Growth needs no archival or thinning routine. The vector layer scans a recency
-window (`CPERSONA_MAX_MEMORIES`, default 10,000 — raise it via env for large
-corpora; [contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)).
-The FTS and keyword channels reach the full history, and old rows sink through
-windows and decay rather than being deleted.
+window (`CPERSONA_MAX_MEMORIES`, default 10,000). The FTS and keyword channels
+reach the full history, and old rows sink through windows and decay rather than
+being deleted.
+
+To let the vector arm reach rows past the window, set `CPERSONA_VECTOR_REACH`
+above it or turn on the far seats (`CPERSONA_FAR_SEATS_ENABLED`). Widening the
+window itself also removes the recency prior it provides: measured, it cost 20
+NDCG@10 points on recent answers to gain 5 on old ones
+([contract §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories)).
 
 ## The contiguous vector index
 

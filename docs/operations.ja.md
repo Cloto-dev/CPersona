@@ -297,10 +297,14 @@ skip** であること ([契約 §5](behavior-contracts.md#5-dedup-semantics-ski
 ## スケール { #scale }
 
 成長にアーカイブや間引きの定期処理は不要です。ベクトル層は新しい順のウィンドウ
-(`CPERSONA_MAX_MEMORIES`、既定 10,000。大きなコーパスでは環境変数で上げて
-ください。[契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories))
-を走査します。FTS と keyword のチャネルは全履歴に届き、古い行は削除されるのでは
-なく、ウィンドウと減衰によって沈んでいきます。
+(`CPERSONA_MAX_MEMORIES`、既定 10,000) を走査します。FTS と keyword のチャネルは
+全履歴に届き、古い行は削除されるのではなく、ウィンドウと減衰によって沈んでいきます。
+
+ベクトルの腕をウィンドウより先の行に届かせるには、`CPERSONA_VECTOR_REACH` を
+ウィンドウより大きく設定するか、窓の外の席 (`CPERSONA_FAR_SEATS_ENABLED`) を
+有効にしてください。ウィンドウ自体を広げると、それが与えている新しさの事前分布も
+失われます: 実測では、新しい答えで NDCG@10 を 20 ポイント失い、古い答えで 5 ポイント
+得ました ([契約 §4](behavior-contracts.md#4-the-vector-scan-window-cpersona_max_memories))。
 
 ## 連続ベクトル索引 { #the-contiguous-vector-index }
 
