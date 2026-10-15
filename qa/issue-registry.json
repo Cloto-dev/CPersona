@@ -8844,13 +8844,14 @@
       "severity": "MEDIUM",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/memory_handlers.py",
-      "pattern": "and \\(_rid_of\\(r\\) in passed_gate or _gate_score\\(r\\)\\[1\\] == \"rrf\"\\)",
+      "file": "docs/behavior-contracts.md",
+      "pattern": "An alias adds a keyword vote",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Decide the contract: either exclude rows whose only lexical match came from alias cue terms from keyword-seat eligibility, or amend behavior-contracts section 11, ASSOCIATIVE_MEMORY_DESIGN section 9 and the tool description to say an alias-only match can take the keyword seat under a mode. Pin the chosen behavior with a test.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The fix needs a contract decision before code or docs change."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The fix needs a contract decision before code or docs change.",
+      "fix_note": "Contract follows the code (maintainer decision): an alias is a keyword vote, gated like any other keyword match, so a record found only through it comes back when the match clears the gate (under rsf a lone keyword match can) and can take a mode's keyword seat. behavior-contracts section 11, ASSOCIATIVE_MEMORY_DESIGN invariant 3 and section 9, the keyword-seat policy in RELIABLE_RECALL_2_6 and the bundled skill say so, in English and Japanese. The rsf scale that admits a lone match stays with bug-247."
     },
     {
       "id": "bug-591",
@@ -9085,12 +9086,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/acl.py",
-      "pattern": "response: dict = \\{\"ok\": False, \"error\": \"permission_denied\", \"tool\": tool\\}",
+      "pattern": "response\\[\"result\"\\] = \"rejected\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Decide which contract wins: either the denial for store carries `result: \"rejected\"` (and the ACL design doc's example is updated), or the store description narrows its promise to responses the tool itself produces.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The fix changes a published response contract, so it needs a contract decision first. Related: bug-232."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The fix changes a published response contract, so it needs a contract decision first. Related: bug-232.",
+      "fix_note": "The ACL guard builds every denial through _refusal, which adds result:'rejected' to a denial of store or declare_associations. Pinned by tests/test_acl.py::test_a_denied_store_or_declaration_answers_like_its_own_refusals and the two documented-shape tests; making _refusal add nothing turns all three red."
     },
     {
       "id": "bug-607",
@@ -10121,12 +10123,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "remaining = max\\(0, limit - len\\(results\\)\\)",
+      "pattern": "remaining = max\\(0, limit - sum\\(1 for r in results if r.get\\(\"id\"\\) != -1\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Decide the contract for unscored and empty-query recall: either append the profile after the keyword stage in `_recall_cascade` so it is cut by `limit` and placed worst, as the profile contract says, or document that empty-query and cascade recalls reserve a slot for the profile.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The fix needs a contract decision about where an unscored profile row belongs before code changes."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The fix needs a contract decision about where an unscored profile row belongs before code changes.",
+      "fix_note": "Contract rewritten plus a small fix (maintainer decision): the cascade's keyword stage no longer counts the profile row against limit, so a scope too small for the profile to pass the gate lists limit memories; where the profile passes, the cut to limit drops the extra keyword row and the listing is unchanged (limit - 1 memories, profile last). behavior-contracts sections 1 and 7 and architecture.md describe the empty-query listing. Pinned by tests/test_docs_behavioural_claims.py::test_the_profile_row_takes_no_memory_place_in_a_listing; counting the profile again turns it red."
     },
     {
       "id": "bug-672",
@@ -10501,12 +10504,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "docs/RELIABLE_RECALL_2_6.md",
-      "pattern": "a paraphrase, a fragment of one record",
+      "pattern": "Content sameness is not judged: two",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Either narrow invariant 8 and the section 7 sentence to 'one cluster is one item; content sameness is not judged', or add a cheap deterministic content-identity cluster key (casefold, collapse whitespace, strip trailing punctuation) ahead of the existing keys, which is normalisation rather than semantic judgement.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The fix needs a contract decision: narrow the documented invariant or add a content-identity bundling key."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The fix needs a contract decision: narrow the documented invariant or add a content-identity bundling key.",
+      "fix_note": "Contract follows the code (maintainer decision): invariant 8 now reads one cluster is one item and content sameness is not judged, and the section 7 shortfall sentence says a shortfall is never filled by splitting a cluster. The page is a design page whose released tool descriptions take precedence; no runtime change."
     },
     {
       "id": "bug-696",
@@ -10689,12 +10693,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "n = tokens\\.count_json\\(out\\)",
+      "pattern": "graph = None if mode else await associations.walk_graph\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Either word the contract to say that walked evidence consumes a mode's token cap, or leave walked claims out of the prefix choice (for example, settle the prefix on items without walked claims and then trim walked claims to fit).",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. The fix needs a contract decision: change the documented guarantee or change the cap accounting."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. The fix needs a contract decision: change the documented guarantee or change the cap accounting.",
+      "fix_note": "Under a mode reconstruct follows no entity walk (maintainer decision), so walked evidence can no longer take the mode's token cap from the items, and invariant 9 (a larger cap never removes an excerpt) is kept. A call with no mode is unchanged. Pinned by tests/test_associations_reconstruct.py::test_under_a_mode_entity_relations_add_no_evidence_and_keep_the_items (lite and pro); walking under a mode again turns both red. Contract text: behavior-contracts section 11, ASSOCIATIVE_MEMORY_DESIGN invariant 3, the mode section of RELIABLE_RECALL_2_6, the reconstruct max_hops description and the skill."
     },
     {
       "id": "bug-708",
@@ -10911,12 +10916,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "same precision twice lands in the same state",
+      "pattern": "precision twice can leave a different gate: not idempotent, as calibrate_threshold\\.",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Annotate set_recall_precision `idempotentHint=False` (and correct the comment), or make the recalibration it triggers deterministic for an unchanged corpus, for example with a seeded sample.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The anchor is the comment that justifies the annotation, because the annotation line itself is shared verbatim by other tools. Related: bug-064."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The anchor is the comment that justifies the annotation, because the annotation line itself is shared verbatim by other tools. Related: bug-064.",
+      "fix_note": "set_recall_precision is annotated idempotentHint=False, matching calibrate_threshold: each call draws a new calibration sample and restamps the calibration time. Anchored on the comment because the annotation line is shared verbatim by other tools; tests/test_recall_precision.py::test_setting_the_same_precision_twice_recalibrates_twice_so_it_is_not_idempotent reads the annotation from tools/list and turns red if it says True again."
     },
     {
       "id": "bug-722",
@@ -11212,13 +11218,14 @@
       "severity": "LOW",
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
-      "file": "cpersona/utils.py",
-      "pattern": "content = _MEMORY_ANNOTATION_PATTERN\\.sub\\(\"\", content\\)",
+      "file": "cpersona/server.py",
+      "pattern": "annotation is removed anywhere in it, and text left empty",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Decide the contract: either strip only a leading annotation (and narrow the health check to match), or keep stripping anywhere but document it on store and report in the response that content was altered.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code and running the sanitizer directly; because stripping anywhere looks like the intended design, the fix needs a contract decision rather than a local change."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code and running the sanitizer directly; because stripping anywhere looks like the intended design, the fix needs a contract decision rather than a local change.",
+      "fix_note": "Contract follows the code (maintainer decision): the annotation is the stamp early versions put on recalled text, and an agent that stores recalled text back, several memories joined, carries it mid-text, so it is removed wherever it appears. store's content description and docs/tools.md (English and Japanese) now say so."
     },
     {
       "id": "bug-741",
@@ -11545,12 +11552,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "scripts/verify-issues.sh",
-      "pattern": "match_count=0$",
+      "pattern": "grep could not evaluate the pattern against",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Distinguish grep exit 1 (no match) from exit 2 or more (error) and count an error as an invalid row in `errors` instead of zero matches. Pass the pattern after `-e` (or `--`) so a leading `-` is never read as an option.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a copy of the script on a scratch registry. Related to bug-432 and bug-309 (other ways this gate passed rows it had not checked)."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced with a copy of the script on a scratch registry. Related to bug-432 and bug-309 (other ways this gate passed rows it had not checked).",
+      "fix_note": "The verifier separates grep's exit 1 (no match, a count of 0) from 2 or more (an error): an entry whose pattern cannot be evaluated is reported INVALID and counted as an error, -E is tried only when -P could not run, and the pattern follows -e. No current entry changes verdict (801 patterns compile under both engines and none starts with '-'). Pinned by three tests in tests/test_252a2_i6.py; reading an error as zero again, or dropping -e from both calls, turns them red. Changed with the maintainer's approval, the script being read-only infrastructure otherwise."
     },
     {
       "id": "bug-762",
@@ -11989,12 +11997,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/acl.py",
-      "pattern": "response: dict = \\{\\\"ok\\\": False, \\\"error\\\": \\\"permission_denied\\\", \\\"tool\\\": tool\\}",
+      "pattern": "_RESULT_TOOLS = frozenset\\(\\{\"store\", \"declare_associations\"\\}\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "response-shape",
       "fix_sketch": "Add result: \"rejected\" (and locked: false when the store asked to lock) to the denial for the tools whose responses carry them.",
-      "note": "Found while fixing bug-711 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-711 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "Fixed with bug-606 in the one place denials are built: store and declare_associations denials carry result:'rejected', and a store sent with lock:true also carries locked:false. tests/test_acl.py::test_a_denied_store_or_declaration_answers_like_its_own_refusals turns red if the lock rider is removed."
     },
     {
       "id": "bug-792",
@@ -12135,6 +12144,20 @@
       "category": "isolation",
       "fix_sketch": "Restore TZ before the last tzset: after the yield, set TZ back explicitly (or call monkeypatch.undo()) and then call time.tzset(), as the helper in tests/test_audit_2500b2.py now does.",
       "note": "Found while fixing bug-763 (a sibling the fix did not cover); confirmed by reading the fixture. The glibc effect is reasoned, not reproduced."
+    },
+    {
+      "id": "bug-802",
+      "summary": "(LOW) tests/test_docs_behavioural_claims.py::test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon fails when tests/test_recall_precision.py runs before it in the same process (reproduced on master cc4f9e3: `pytest tests/test_recall_precision.py tests/test_docs_behavioural_claims.py` gives 1 failed), and passes alone or in its own module. The full suite runs the files in alphabetical order, so CI never takes that order and the leak stays hidden. Saving and restoring vector's calibration globals (agent betas, fused gates, global gate and signal, agent thresholds) around the precision module's autouse fixture did not remove the failure, so the leaked state is something else; the cause is not established.",
+      "severity": "LOW",
+      "discovered": "2026-10-15T00:00:00Z",
+      "version": "2.6.11a2",
+      "file": "tests/test_recall_precision.py",
+      "pattern": "^def _reset_state\\(\\):",
+      "expected": "present",
+      "status": "open",
+      "category": "isolation",
+      "fix_sketch": "Find the process-global state the precision module leaves (diff cpersona.* module attributes before and after the module, as the behaviour-golden harness does) and restore it in the module's fixture; then add a test that runs the two modules in this order.",
+      "note": "Found while testing the contract decisions of 2026-10-15; reproduced on unmodified master."
     }
   ]
 }
