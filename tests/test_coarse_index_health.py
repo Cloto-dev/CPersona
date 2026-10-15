@@ -270,9 +270,29 @@ def test_the_repair_is_declared_cross_agent_and_the_guard_demands_every_agent():
 
 
 @pytest.mark.asyncio
-async def test_stamped_states_deliver_as_degraded_and_the_tail_as_the_check(db):
+async def test_stamped_states_deliver_as_degraded_and_the_tail_as_the_check(db, monkeypatch):
     await _insert(db, WINDOW + 20)
     issues, _ = await checks.run_health_checks(db, agent_id=AGENT, fix=False, checks=["coarse_index"])
     assert [findings.finding_kind(i) for i in issues] == ["coarse_index_degraded"]
     assert findings.severity_for_kind("coarse_index_degraded") == "warn"
     assert findings.severity_for_kind("coarse_index") == "info"
+
+    # The same absence when only the time cue's default mode reads the file: no
+    # recall pays the live store's price, so it is unstamped and is not degraded.
+    monkeypatch.setattr(config, "FAR_SEATS_ENABLED", False)
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "auto")
+    issues, _ = await checks.run_health_checks(db, agent_id=AGENT, fix=False, checks=["coarse_index"])
+    assert [(i["type"], i["severity"]) for i in issues] == [("coarse_index_absent", "info")]
+    assert [findings.finding_kind(i) for i in issues] == ["coarse_index"]
+
+    # The tail, which the name of this test promises: a built index whose
+    # unindexed rows grew past the ratio is an observation, delivered under the
+    # check's own kind.
+    monkeypatch.setattr(config, "FAR_SEATS_ENABLED", True)
+    monkeypatch.setattr(config, "CUE_COARSE_MODE", "off")
+    await vector_index.start_logging()
+    assert (await coarse_index.build_coarse_index(db, "memories"))["built"]
+    await _insert(db, 10, start=500)  # 10 > 30 * INDEX_TAIL_RATIO
+    issues, _ = await checks.run_health_checks(db, agent_id=AGENT, fix=False, checks=["coarse_index"])
+    assert [(i["type"], i["severity"]) for i in issues] == [("coarse_index_tail_grown", "info")]
+    assert [findings.finding_kind(i) for i in issues] == ["coarse_index"]

@@ -10,6 +10,9 @@ structural-gate substring/interpolation blindness (bug-120), and empty-content
 exclude-filter drops (bug-121).
 """
 import ast
+import contextlib
+import os
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -55,12 +58,48 @@ def test_parse_timestamp_aware_unchanged():
     assert dt_z == datetime(2026, 7, 16, 8, 0, 0, tzinfo=timezone.utc)
 
 
+@contextlib.contextmanager
+def _host_timezone(name):
+    """Run the block with the process's local timezone set to ``name``.
+
+    Yields whether the zone could be pinned: ``time.tzset`` does not exist on
+    Windows, where the block runs in the host's own zone as it always did. The
+    environment is restored before the final ``tzset()``, so the zone does not
+    outlive the block: the C library keeps what ``tzset()`` last read.
+    """
+    if not hasattr(time, "tzset"):
+        yield False
+        return
+    saved = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield True
+    finally:
+        if saved is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = saved
+        time.tzset()
+
+
 def test_format_timestamp_naive_matches_aware_utc():
     # The display helper must treat a naive value and its explicit-UTC twin
-    # identically, whatever the host timezone is.
-    assert _format_memory_timestamp("2026-07-16 08:00:00") == _format_memory_timestamp(
-        "2026-07-16T08:00:00+00:00"
-    )
+    # identically, whatever the host timezone is. On a UTC host both readings of
+    # a naive value agree, so the comparison only has power under a zone with an
+    # offset: pinned to JST (UTC+9, no daylight saving) rather than inherited
+    # from the host, which in CI is UTC.
+    host = os.environ.get("TZ")
+    with _host_timezone("Asia/Tokyo") as pinned:
+        assert _format_memory_timestamp("2026-07-16 08:00:00") == _format_memory_timestamp(
+            "2026-07-16T08:00:00+00:00"
+        )
+        if pinned:
+            # Both are the UTC instant shown in local time, not the naive digits
+            # relabelled as local.
+            assert _format_memory_timestamp("2026-07-16 08:00:00") == "2026-07-16 17:00 JST"
+    # The pin ends with the test: later tests run in the zone they started in.
+    assert os.environ.get("TZ") == host
 
 
 # ---------------------------------------------------------------------------

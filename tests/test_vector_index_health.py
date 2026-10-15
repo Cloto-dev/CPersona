@@ -181,9 +181,10 @@ async def test_a_short_tail_stays_quiet(db):
 
 
 @pytest.mark.asyncio
-async def test_the_findings_surface_separates_the_two_severities(db):
+async def test_the_findings_surface_separates_the_two_severities(db, monkeypatch):
     """The kinds have to differ, or a reader routing on severity sees `info` for
-    an index that stopped working."""
+    an index that stopped working -- and an observation must not be delivered
+    as a defect, or every corpus without an index reads as degraded."""
     await _insert(db, 50)
     await vector_index.start_logging()
     await vector_index.build_index(db, "memories")
@@ -194,15 +195,29 @@ async def test_the_findings_surface_separates_the_two_severities(db):
 
     await _insert(db, 20, start=500)
     _clean_index()
+    # Seventy rows are far below the size at which a missing index is worth a
+    # line, so without this the check says nothing and there is no unstamped
+    # observation to route.
+    monkeypatch.setattr(checks, "INDEX_MATTERS_ROWS", 70)
     quiet = None
     for issue in await _run(db):
         quiet = issue | {"check": "vector_index"}
 
     assert findings.finding_kind(degraded) == "vector_index_degraded"
     assert findings.severity_for_kind("vector_index_degraded") == "warn"
-    if quiet is not None:
-        assert findings.finding_kind(quiet) == "vector_index"
-        assert findings.severity_for_kind("vector_index") == "info"
+    assert quiet is not None and quiet["type"] == "vector_index_absent", quiet
+    assert "severity" not in quiet
+    assert findings.finding_kind(quiet) == "vector_index"
+    assert findings.severity_for_kind("vector_index") == "info"
+
+    # The other unstamped state: a built index whose tail grew past the rebuild
+    # threshold. Delivered as the runner hands it on, with the registry default
+    # stamped in, it is still the check's own kind.
+    assert (await vector_index.build_index(db, "memories"))["built"]
+    await _insert(db, 20, start=900)  # past INDEX_TAIL_RATIO of the 70 indexed rows
+    issues, _ = await checks.run_health_checks(db, agent_id=AGENT, fix=False, checks=["vector_index"])
+    assert [(i["type"], i["severity"]) for i in issues] == [("vector_index_tail_grown", "info")]
+    assert [findings.finding_kind(i) for i in issues] == ["vector_index"]
 
 
 @pytest.mark.asyncio

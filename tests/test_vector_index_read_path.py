@@ -21,6 +21,7 @@ proving nothing:
 
 import os
 
+import aiosqlite
 import numpy as np
 import pytest
 import pytest_asyncio
@@ -291,6 +292,28 @@ _TAIL_READ = "length(embedding)"
 _TAIL_PROBE = "SELECT EXISTS"
 
 
+def _record_fetchall(monkeypatch, conn, entry):
+    """Record ``entry(sql, parameters)`` for every ``execute_fetchall`` issued on ``conn``.
+
+    Patched on the class and filtered by connection, never set on the connection
+    itself: get_db() hands every test in the process the same connection, and
+    undoing a patch set on an instance puts the old bound method back as an
+    attribute of that instance. It then shadows the class, so a spy a later test
+    installs on ``aiosqlite.Connection`` no longer sees what this connection runs
+    -- and a spy asserting that a read did not happen passes without looking.
+    """
+    seen: list = []
+    real = aiosqlite.Connection.execute_fetchall
+
+    async def recording(self, sql, parameters=None, *args, **kwargs):
+        if self is conn:
+            seen.append(entry(sql, () if parameters is None else parameters))
+        return await real(self, sql, parameters, *args, **kwargs)
+
+    monkeypatch.setattr(aiosqlite.Connection, "execute_fetchall", recording)
+    return seen
+
+
 @pytest.fixture
 def statements(monkeypatch, corpus):
     """Every statement the read path issues on this connection, in order.
@@ -299,15 +322,7 @@ def statements(monkeypatch, corpus):
     only ever skips a statement that could not have returned a row — so the
     answer cannot show whether it fired. The statement list can.
     """
-    seen: list[str] = []
-    real = corpus.execute_fetchall
-
-    async def recording(sql, *args, **kwargs):
-        seen.append(sql)
-        return await real(sql, *args, **kwargs)
-
-    monkeypatch.setattr(corpus, "execute_fetchall", recording)
-    return seen
+    return _record_fetchall(monkeypatch, corpus, lambda sql, parameters: sql)
 
 
 @pytest.mark.asyncio
@@ -631,15 +646,7 @@ def tail_calls(monkeypatch, corpus):
     cap on named holes turns into a correctness question: a placeholder per id
     makes the hole list a list of SQL variables too.
     """
-    seen: list[tuple[str, tuple]] = []
-    real = corpus.execute_fetchall
-
-    async def recording(sql, params=(), *args, **kwargs):
-        seen.append((sql, tuple(params)))
-        return await real(sql, params, *args, **kwargs)
-
-    monkeypatch.setattr(corpus, "execute_fetchall", recording)
-    return seen
+    return _record_fetchall(monkeypatch, corpus, lambda sql, parameters: (sql, tuple(parameters)))
 
 
 def _with_holes(index, holes):
