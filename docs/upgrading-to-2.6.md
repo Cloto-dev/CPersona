@@ -44,7 +44,7 @@ recorded as done, so it is retried on the next start.
 | 17 | 2.6.0a6 | `record_block_vectors`: one vector per block | Built with the blocks |
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
 | 19 | 2.6.7a2 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **Built for you** on the queue, unless you turn the file off ([below](#the-block-index-file-is-on-by-default)) |
-| 20 | 2.6.11 | `vector_log_clock`, `record_vector_changes`: the log of which rows held by the vector index files changed, kept only while one of those files exists ([design §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **Yes, if you build the vector index**: build it again ([below](#build-the-vector-index-again)) |
+| 20 | 2.6.11a2 | `vector_log_clock`, `record_vector_changes`: the log of which rows held by the vector index files changed, kept only while one of those files exists ([design §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **Yes, if you build the vector index**: build it again ([below](#build-the-vector-index-again)) |
 
 2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1, 2.6.7, 2.6.8a1, 2.6.8, 2.6.9a1, 2.6.9, 2.6.10a1, 2.6.10a2, 2.6.10a3, 2.6.10a4, 2.6.10 and 2.6.11a1 changed no schema.
 
