@@ -236,6 +236,45 @@ def _restore_db_path():
 
 
 @pytest.fixture(autouse=True)
+def _no_files_left_beside_the_shared_database():
+    """Remove the files a test left beside ``config.DB_PATH``.
+
+    The index files and the calibration sidecar live beside that path
+    (``<db>.blocks.blockindex``, ``<db>.<table>.vecindex``,
+    ``<db>.calibration.json``). Most tests point ``database.DB_PATH`` at a
+    scratch database and leave ``config.DB_PATH`` on the one this file pins for
+    the whole process, so what they build lands beside that shared path: 145
+    tests did, 138 of them leaving a block index. The next test to read it found
+    an index built from another test's database. The suite's own order hid
+    that; in another order a golden scenario recorded the stale file's refusal
+    reason instead of ``no_file``, and one test passed only because an earlier
+    test had left a file behind (alone, it failed).
+
+    Removed rather than reported, like the path above: building those files is
+    what these tests exercise, so there is no culprit to name -- only a location
+    shared by accident. Files present before the test are left alone.
+    """
+    from cpersona import config
+
+    folder = os.path.dirname(config.DB_PATH) or "."
+    prefix = os.path.basename(config.DB_PATH) + "."
+
+    def beside() -> set[str]:
+        try:
+            return {name for name in os.listdir(folder) if name.startswith(prefix)}
+        except FileNotFoundError:
+            return set()
+
+    before = beside()
+    yield
+    for name in beside() - before:
+        try:
+            os.remove(os.path.join(folder, name))
+        except FileNotFoundError:
+            pass
+
+
+@pytest.fixture(autouse=True)
 def _no_leaked_mgp_log_filter():
     """Fail the test that leaves an MGP validation filter on a live log handler.
 

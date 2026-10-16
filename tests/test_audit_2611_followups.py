@@ -126,3 +126,39 @@ def test_bug802_a_recall_test_after_the_precision_module_still_passes():
     )
     assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
     assert " passed" in run.stdout and " failed" not in run.stdout, run.stdout[-1000:]
+
+
+# ==========================================================================
+# bug-804: no test reads a file another test left beside the shared database
+# ==========================================================================
+
+_LEAVES_A_BLOCK_INDEX = "tests/test_blocks_retrieval.py::test_hydrating_the_hits_stops_at_its_bound"
+_READS_BESIDE_THE_SHARED_PATH = (
+    "tests/test_equivalence_252.py::test_behaviour_matches_the_pre_refactor_golden[m1-recall-cue-sure-rrf-trace]"
+)
+_PASSED_ON_A_LEFTOVER = "tests/test_blocks_retrieval.py::test_changing_the_count_alone_leaves_the_examined_set_unchanged"
+
+
+def _child_pytest(*node_ids: str) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CPERSONA_")}
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *node_ids],
+        cwd=_REPO, env=env, capture_output=True, text=True, timeout=50,
+    )
+
+
+def test_bug804_a_golden_scenario_after_a_test_that_built_a_block_index_still_passes():
+    """The order a narrowed run takes: the first test builds a block index beside
+    the process's shared database path, and the golden scenario then reads that
+    path. With the file left there, it recorded `logging_off` where the golden
+    holds `no_file`."""
+    run = _child_pytest(_LEAVES_A_BLOCK_INDEX, _READS_BESIDE_THE_SHARED_PATH)
+    assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
+    assert "2 passed" in run.stdout, run.stdout[-1000:]
+
+
+def test_bug804_the_count_invariant_holds_without_a_leftover_index():
+    """Alone, with no earlier test's file to fall back past."""
+    run = _child_pytest(_PASSED_ON_A_LEFTOVER)
+    assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
+    assert "1 passed" in run.stdout, run.stdout[-1000:]
