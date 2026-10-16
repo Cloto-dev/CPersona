@@ -1316,6 +1316,12 @@ def test_every_runtime_dependency_carries_an_upper_bound():
 _LAST_VULNERABLE = {
     # Key-confusion and token-parsing advisories against 2.13.0 and earlier, fixed in 2.14.0.
     "pyjwt": "2.13.0",
+    # Session accumulation in stateful Streamable HTTP (1.8.0 to 1.29.1), fixed in 1.30.0.
+    # The transport here is stateless, so the advisory does not reach it, but the floor has
+    # to clear 1.28.1 regardless: that is the last release without the
+    # max_request_body_size argument the transport passes (bug-805), and pip keeps an
+    # installed mcp that satisfies the floor.
+    "mcp": "1.29.1",
 }
 
 
