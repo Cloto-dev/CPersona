@@ -27,12 +27,19 @@ from cpersona.database import get_db # noqa: E402
 def _reset_state():
     """Isolate every calibration global this module touches (the sidecar round-trip tests
     call _restore_calibration_state, which mutates the fused-gate signal / gates too), so
-    nothing leaks into a later test file's do_recall quality gate."""
+    nothing leaks into a later test file's do_recall quality gate.
+
+    bug-802: the restore also writes the global threshold (config.VECTOR_MIN_SIMILARITY)
+    and claims every axis it restored. Neither was put back, so a recall test that ran
+    after this module in the same process scored against a 0.5 floor instead of 0.3,
+    and `deep` could no longer admit the weak matches it exists to admit."""
     saved_global = config.FUSED_GATE_BETA
+    saved_threshold = config.VECTOR_MIN_SIMILARITY
     _clear()
     yield
     _clear()
     config.FUSED_GATE_BETA = saved_global
+    config.VECTOR_MIN_SIMILARITY = saved_threshold
 
 
 def _clear():
@@ -41,6 +48,7 @@ def _clear():
     vector._global_fused_gate = None
     vector._fused_gate_signal = None
     vector._agent_thresholds.clear()
+    vector._reset_calibration_authority()
 
 
 # ---- beta resolver -------------------------------------------------------------

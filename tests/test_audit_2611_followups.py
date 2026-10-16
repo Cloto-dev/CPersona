@@ -5,12 +5,20 @@
            not JSON made every source-scoped scan raise "malformed JSON" and the
            whole call fail. Such rows exist: the JSON repair leaves locked ones
            alone. bug-743 guarded the same read in the index builder.
+  bug-802  tests/test_recall_precision.py restored a calibration sidecar whose
+           global threshold (0.5) stayed in config.VECTOR_MIN_SIMILARITY after
+           the module, so a recall test that ran after it in the same process
+           scored against the wrong floor. The full suite runs the files in
+           alphabetical order, which never takes that order.
 """
 
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
+from pathlib import Path
 
 os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "test_audit_2611_followups.db"))
 os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
@@ -95,3 +103,26 @@ async def test_bug794_an_unscoped_recall_still_returns_the_malformed_row(db):
     await _with_one_malformed_source(db)
     result = await memory_handlers.do_recall(AGENT, "", 10)
     assert "legacy home address note" in {m["content"] for m in result["messages"]}
+
+
+# ==========================================================================
+# bug-802: the precision module leaves no calibration state behind it
+# ==========================================================================
+
+_REPO = Path(__file__).resolve().parent.parent
+_AFTER_PRECISION = "tests/test_docs_behavioural_claims.py::test_deep_relaxes_the_quality_gate_rather_than_a_time_horizon"
+
+
+def test_bug802_a_recall_test_after_the_precision_module_still_passes():
+    """Run the order the alphabetical full suite never takes, in a fresh process.
+
+    The child gets no CPERSONA_* variable from this process: several test modules
+    set them at import, and the child must start the way a plain `pytest` does."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CPERSONA_")}
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "tests/test_recall_precision.py", _AFTER_PRECISION],
+        cwd=_REPO, env=env, capture_output=True, text=True, timeout=50,
+    )
+    assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
+    assert " passed" in run.stdout and " failed" not in run.stdout, run.stdout[-1000:]
