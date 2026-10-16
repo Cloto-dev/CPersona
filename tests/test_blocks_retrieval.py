@@ -458,7 +458,14 @@ async def test_changing_the_count_alone_leaves_the_examined_set_unchanged(
     monkeypatch, reading, lexical_off
 ):
     """Invariant 5. A cap or a reservation read off the response count would
-    make the search depend on how many rows the caller wanted."""
+    make the search depend on how many rows the caller wanted.
+
+    The spy watches the SQLite read, so the block index file is off: with it on
+    and current, the file answers and the spy sees nothing. This test used to
+    pass only after another test had left a stale file the arm could not use.
+    That the file answers as SQLite does is test_block_index's
+    test_search_reads_the_file_and_answers_as_sqlite_does."""
+    monkeypatch.setattr(config, "BLOCK_INDEX_ENABLED", False)
     async with _TempDB() as tmp:
         await _store(tmp, [LONG_RECORD, ECHO_RECORD])
         examined: list[list] = []

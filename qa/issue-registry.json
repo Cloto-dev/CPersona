@@ -12187,6 +12187,20 @@
       "category": "mutation-result-accounting",
       "fix_sketch": "Derive the per-mutant timeout from the unmutated suite the lane already times, as a multiple with the configured value as a floor, and run every cosmic-ray step under it; count timeout kills apart from test kills.",
       "fix_note": "The lane now runs the unmutated suite once, before `cosmic-ray init`: that timed run is the baseline (a red suite reports baseline-failed and starts nothing) and the price, bounded by the budget. It writes the run's config with timeout = max(the configured floor, 3x the measured time) and passes that config to init, both filters and exec, so the limit grows with the suite. `cosmic-ray baseline` is no longer called, which also saves one full suite per run; the `unpriced` status is gone with it. The report carries `timeout_seconds` and `killed_by_timeout`, and the summary names the kills the clock made. Pinned by tests/test_mutation_diff_timeout.py; 14 mutations of the change (the factor, max/min, each step's config, the rewrite, the bound, a second unmutated run, the status, the count and the summary line) each turn it red. Run end to end with cosmic-ray 8.4.6 locally: the suite was priced at 95.7 s and the run config carried timeout = 287.1."
+    },
+    {
+      "id": "bug-804",
+      "summary": "(LOW) Tests that point `database.DB_PATH` at a scratch database but leave `config.DB_PATH` on the path tests/conftest.py pins for the process build their index files beside that shared path, because the index and calibration files are named from `config.DB_PATH` (block_index.index_path, vector_index.index_path). Across the full suite 145 tests left such a file (138 block indexes, 7 calibration sidecars), and a later test reading the shared path found an index built from another test's database. Running tests/test_blocks_retrieval.py::test_hydrating_the_hits_stops_at_its_bound (or three other tests) before the golden scenario m1-recall-cue-sure-rrf-trace makes the scenario record `block_source.reason = logging_off` where the golden holds `no_file`. In the other direction, tests/test_blocks_retrieval.py::test_changing_the_count_alone_leaves_the_examined_set_unchanged failed alone and passed in its module only because an earlier test had left a stale file: its spy watches the SQLite read, which the block arm takes only when the file cannot answer. The alphabetical full-suite order hid both; a run narrowed to the tests that execute a set of changed lines exposed the first.",
+      "severity": "LOW",
+      "discovered": "2026-10-16T00:00:00Z",
+      "version": "2.6.11a3",
+      "file": "tests/conftest.py",
+      "pattern": "def _no_files_left_beside_the_shared_database\\(",
+      "expected": "present",
+      "status": "fixed",
+      "category": "isolation",
+      "fix_sketch": "Clear what a test leaves beside the shared database path after every test, and make the test that relied on a leftover file pin the read path it watches.",
+      "fix_note": "An autouse fixture in tests/conftest.py removes every file a test created beside `config.DB_PATH` (names starting with the database's file name and a dot, so the database and its -wal/-shm are untouched; files present before the test stay). Removed rather than reported, like the path restore beside it: building those files is what the tests exercise. The count-invariant test now turns the block index file off, since its spy watches the SQLite read; tests/test_block_index.py::test_search_reads_the_file_and_answers_as_sqlite_does already pins that the file answers as SQLite does. With the fixture in place the full suite passes, and no other test changed verdict. Pinned by tests/test_audit_2611_followups.py, which runs the leaking test before the golden scenario, and the count-invariant test alone, each in a fresh process: making the fixture non-autouse, making it remove nothing, or dropping the pin each turns one of them red."
     }
   ]
 }
