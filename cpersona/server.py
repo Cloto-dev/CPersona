@@ -25,6 +25,7 @@ import hmac
 import ipaddress
 import logging
 import os
+import sys
 from typing import NamedTuple
 from urllib.parse import urlparse
 
@@ -3589,13 +3590,39 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
     )
 
 
+# The SDK's own ceiling on a request body, set out of reach on purpose (bug-805).
+# From mcp 1.29.0 the session manager answers 413 to any body over 4 MiB before
+# the transport sees it. This server already budgets request bodies in
+# RequestBodyBudgetMiddleware, and a second, fixed limit behind it overrules
+# that setting: under the default `warn` a body over 4 MiB was refused while
+# the budget logged that it had been served in full, and a budget raised above
+# 4 MiB changed nothing. One limit decides, and it is the configurable one.
+_SDK_BODY_LIMIT = sys.maxsize
+
+
+def _http_session_manager():
+    """The session manager the streamable-HTTP transport serves through.
+
+    Stateless: each request gets a fresh transport and no session outlives it,
+    so the SDK's idle-session expiry and session cap have nothing to bound here.
+    Built in one place so the transport tests drive the construction production
+    serves, rather than a copy that keeps passing after this one changes.
+    """
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+    return StreamableHTTPSessionManager(
+        app=registry.server,
+        stateless=True,
+        max_request_body_size=_SDK_BODY_LIMIT,
+    )
+
+
 async def _run_http_server():
     """Run CPersona as a Streamable HTTP MCP server with Bearer token auth."""
     import contextlib
     from collections.abc import AsyncIterator
 
     import uvicorn
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
 
     auth_token = os.environ.get("CPERSONA_AUTH_TOKEN", "")
@@ -3616,10 +3643,7 @@ async def _run_http_server():
         # simply not handed to the middleware.
         auth_token = ""
 
-    session_manager = StreamableHTTPSessionManager(
-        app=registry.server,
-        stateless=True,
-    )
+    session_manager = _http_session_manager()
 
     async def mcp_endpoint(scope, receive, send):
         await session_manager.handle_request(scope, receive, send)

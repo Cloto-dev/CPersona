@@ -31,13 +31,9 @@ async def run_with_real_transport(acl_config, drive):
     ``session_manager.run()`` must be entered and exited by the same task, so
     this is a helper rather than a yielding fixture.
     """
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-
     acl.activate(acl_config)
     try:
-        session_manager = StreamableHTTPSessionManager(
-            app=server.registry.server, stateless=True
-        )
+        session_manager = server._http_session_manager()
 
         async def mcp_endpoint(scope, receive, send):
             await session_manager.handle_request(scope, receive, send)
@@ -53,8 +49,13 @@ async def run_with_real_transport(acl_config, drive):
         acl.activate(None)
 
 
-async def post_tool_call(app, token, tool, arguments):
-    """One real JSON-RPC tools/call POST through the full ASGI stack."""
+async def post_tool_call(app, token, tool, arguments, *, declare_length=False):
+    """One real JSON-RPC tools/call POST through the full ASGI stack.
+
+    ``declare_length`` sends an honest ``Content-Length``, as an HTTP client
+    does; without it the body arrives the way a chunked one would, and only a
+    count of the bytes can tell its size.
+    """
     body = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -69,6 +70,8 @@ async def post_tool_call(app, token, tool, arguments):
     ]
     if token:
         headers.append((b"authorization", b"Bearer " + token.encode()))
+    if declare_length:
+        headers.append((b"content-length", str(len(body)).encode()))
 
     messages = []
     scope = {
