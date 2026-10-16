@@ -98,6 +98,15 @@ ENGINE_VERSION = "8.4.6"
 NOT_SAMPLED_OUTPUT = "mutation-diff: not sampled (over the mutant limit)"
 DEFAULT_SEED = "cpersona-mutation-diff"
 
+# cosmic-ray records a test command it stopped at the timeout as KILLED, with this
+# as its output. A surviving mutant runs the whole command, so a survivor cut off
+# by the clock is counted as caught. The `timeout` in cosmic-ray.toml is
+# therefore only a floor: each run raises it to this multiple of the unmutated
+# command it has just timed, so the limit grows with the suite instead of the
+# suite growing into the limit.
+TIMEOUT_OUTPUT = "timeout"
+TIMEOUT_FACTOR = 3.0
+
 
 def run(cmd: list[str], *, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
     """Run a subprocess from the repo root. cosmic-ray tools are console scripts
@@ -129,26 +138,37 @@ def config_git_branch(config_path: Path) -> str:
     )
 
 
-def effective_config(config_path: Path, base: str, session_dir: Path) -> Path:
-    """cr-filter-git reads the base branch ONLY from the config. When the runtime
-    base differs from the file's value, emit a copy with just that one line
-    rewritten so the filter diffs against the same ref this script scanned. The
-    rewrite is a single controlled substitution on our own file — not a TOML
-    round-trip — so it cannot perturb any other field."""
-    if base == config_git_branch(config_path):
-        return config_path
+def effective_config(config_path: Path, base: str, session_dir: Path, timeout: float | None = None) -> Path:
+    """cr-filter-git reads the base branch ONLY from the config, and `cosmic-ray
+    exec` reads the per-mutant timeout from it. When the runtime base differs
+    from the file's value, or a timeout is given, emit a copy with just those
+    lines rewritten so the filter diffs against the same ref this script scanned
+    and every mutant runs under the timeout this run derived. Each rewrite is a
+    single controlled substitution on our own file — not a TOML round-trip — so
+    it cannot perturb any other field."""
     text = config_path.read_text()
-    pattern = re.compile(
-        r'(\[cosmic-ray\.filters\.git-filter\](?:[^\[]*?)\bbranch\s*=\s*)"[^"]*"',
-        re.DOTALL,
-    )
-    new_text, n = pattern.subn(rf'\1"{base}"', text)
-    if n != 1:
-        # Fail loud rather than silently diff against the wrong ref.
-        raise SystemExit(
-            f"could not rewrite git-filter branch in {config_path} "
-            f"(expected exactly one match, got {n})"
+    new_text = text
+    if base != config_git_branch(config_path):
+        pattern = re.compile(
+            r'(\[cosmic-ray\.filters\.git-filter\](?:[^\[]*?)\bbranch\s*=\s*)"[^"]*"',
+            re.DOTALL,
         )
+        new_text, n = pattern.subn(rf'\1"{base}"', new_text)
+        if n != 1:
+            # Fail loud rather than silently diff against the wrong ref.
+            raise SystemExit(
+                f"could not rewrite git-filter branch in {config_path} "
+                f"(expected exactly one match, got {n})"
+            )
+    if timeout is not None:
+        new_text, n = re.subn(r"(?m)^(timeout\s*=\s*)[0-9]+(?:\.[0-9]+)?[ \t]*$", rf"\g<1>{timeout:.1f}", new_text)
+        if n != 1:
+            # Fail loud rather than run every mutant under a limit nobody chose.
+            raise SystemExit(
+                f"could not rewrite timeout in {config_path} (expected exactly one match, got {n})"
+            )
+    if new_text == text:
+        return config_path
     out = session_dir / "cosmic-ray.effective.toml"
     out.write_text(new_text)
     return out
@@ -195,7 +215,25 @@ def config_test_command(config_path: Path) -> str:
     raise SystemExit(f"{config_path}: no test-command; cannot price a mutant")
 
 
-def measure_mutant_cost(config_path: Path) -> tuple[float | None, str]:
+def config_timeout(config_path: Path) -> float:
+    """The per-mutant timeout cosmic-ray.toml names: the floor of the one a run uses."""
+    with config_path.open("rb") as fh:
+        return float(tomllib.load(fh)["cosmic-ray"]["timeout"])
+
+
+def mutant_timeout(floor: float, unit_seconds: float) -> float:
+    """The per-mutant timeout for a run whose unmutated command took `unit_seconds`.
+
+    It must sit well above what a surviving mutant takes, which is the whole
+    command: a survivor stopped by the clock is recorded as KILLED. The same
+    command varies between runs (70-102 s on CI across two days), so the margin
+    is a multiple rather than a constant. It never goes below the configured
+    floor, which keeps a short command from being cut off by start-up noise.
+    """
+    return max(floor, TIMEOUT_FACTOR * unit_seconds)
+
+
+def measure_mutant_cost(config_path: Path, limit_seconds: float | None = None) -> tuple[float | None, str]:
     """Seconds one mutant can cost, measured rather than assumed.
 
     cosmic-ray runs the test command once per mutant, and the command carries
@@ -205,12 +243,20 @@ def measure_mutant_cost(config_path: Path) -> tuple[float | None, str]:
     that assumes mutants die early is an estimate that stops bounding exactly
     when the diff is weakly tested, which is when this lane has something to say.
 
+    This run is also the baseline: a mutation run over a suite that is red
+    without any mutant would count every mutant as killed.
+
     Returns (seconds, note). Seconds is None when the baseline run does not pass,
-    because then the number would price a broken suite rather than a mutant.
+    because then the number would price a broken suite rather than a mutant, and
+    when it does not finish within `limit_seconds`, because no mutant that costs
+    more than the whole budget can be afforded anyway.
     """
     command = config_test_command(config_path)
     start = time.monotonic()
-    proc = subprocess.run(command, shell=True, cwd=REPO, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(command, shell=True, cwd=REPO, capture_output=True, text=True, timeout=limit_seconds)
+    except subprocess.TimeoutExpired:
+        return None, f"baseline `{command}` did not finish within {limit_seconds:.0f}s"
     elapsed = time.monotonic() - start
     if proc.returncode != 0:
         return None, f"baseline `{command}` exited {proc.returncode} in {elapsed:.0f}s"
@@ -339,6 +385,7 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
     # result does not count as measurement.
     mutable_lines: set[tuple[str, int]] = set()
     measured_lines: set[tuple[str, int]] = set()
+    killed_by_timeout = 0
     for module_path, line, operator, function, worker, test, output in _read_session(session):
         w = (worker or "").upper()
         t = (test or "").upper()
@@ -357,6 +404,8 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
             counts["worker_error"] += 1
         elif t == "KILLED":
             counts["killed"] += 1
+            if output == TIMEOUT_OUTPUT:
+                killed_by_timeout += 1
         elif t == "SURVIVED":
             counts["survived"] += 1
             # Match the live survivor against approved waivers by content
@@ -404,6 +453,10 @@ def classify(session: Path, repo: Path, active: dict[str, dict]) -> dict:
             + counts["not_executed"]
         ),
         "survival_rate": survival_rate,
+        # Among the killed: the mutants stopped by the per-mutant timeout rather
+        # than by a failing test. cosmic-ray counts both as killed; only the
+        # second is evidence that a test noticed the change.
+        "killed_by_timeout": killed_by_timeout,
         "line_coverage": {
             "mutable_lines": len(mutable_lines),
             "measured_lines": len(measured_lines),
@@ -453,6 +506,13 @@ def write_summary(report: dict, path: str | None) -> None:
             f"| {c.get('worker_error', 0)} | {rate_s} |",
             "",
         ]
+        if report.get("killed_by_timeout"):
+            lines += [
+                f"**killed by the timeout:** {report['killed_by_timeout']} of the killed mutants were stopped at the "
+                f"{report.get('timeout_seconds')}s limit, not by a failing test — cosmic-ray counts them as killed, "
+                "but no test was seen to notice them.",
+                "",
+            ]
         cov = report.get("line_coverage") or {}
         if cov.get("mutable_lines"):
             lines += [
@@ -576,46 +636,41 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    # Baseline: the whole run is meaningless if the unmutated suite is red. Flag
-    # loudly, but still exit 0 — this lane never blocks.
-    baseline = run(["cosmic-ray", "baseline", str(config_path)], check=False)
-    if baseline.returncode != 0:
-        emit(
-            {**base_report, "status": "baseline-failed", "reason": "unmutated suite did not pass; mutation results would be uninterpretable"},
-            args.json_out,
-            summary_path,
-        )
-        return 0
-
-    run(["cosmic-ray", "init", "--force", str(config_path), str(session)])
-    run(["cr-filter-git", "--config", str(effective_config(config_path, base, session_dir)), str(session)])
-    run(["cr-filter-pragma", str(session)])
-    # operators-filter is a no-op while exclude-operators is empty; run it anyway
-    # so enabling exclusions later needs no wiring change. Note the positional
-    # arg order (session then config) — unlike cr-filter-git's --config flag.
-    run(["cr-filter-operators", str(session), str(config_path)], check=False)
-
-    pending = count_pending(session)
-
+    # One unmutated run answers two questions: whether mutation results would be
+    # interpretable at all (a red suite counts every mutant as killed), and what
+    # one mutant can cost. It used to be two runs, and the first was
+    # `cosmic-ray baseline` under the fixed per-mutant timeout, so once the suite
+    # outgrew that limit every run stopped here and measured nothing. Flag a red
+    # suite loudly, but still exit 0 — this lane never blocks.
+    #
     # bug-284: price the work before starting it. A count that fits a limit can
     # still exceed the job's ceiling — on 2026-09-01 a run inside the count cap
     # was killed at 20 minutes and reported nothing at all, so "the measurement
     # did not happen" and "nothing to report" looked the same to the reader.
-    unit_seconds, unit_note = measure_mutant_cost(config_path)
+    unit_seconds, unit_note = measure_mutant_cost(config_path, limit_seconds=args.budget_seconds)
     if unit_seconds is None:
         emit(
             {
                 **base_report,
-                "status": "unpriced",
-                "reason": f"cannot price a mutant: {unit_note}. Not executed — a run that cannot be bounded is not started.",
-                "in_scope": pending,
-                "counts": {},
-                "survivors": [],
+                "status": "baseline-failed",
+                "reason": f"{unit_note}; without a passing unmutated suite, mutation results would be uninterpretable",
             },
             args.json_out,
             summary_path,
         )
         return 0
+    timeout = mutant_timeout(config_timeout(config_path), unit_seconds)
+    run_config = effective_config(config_path, base, session_dir, timeout=timeout)
+
+    run(["cosmic-ray", "init", "--force", str(run_config), str(session)])
+    run(["cr-filter-git", "--config", str(run_config), str(session)])
+    run(["cr-filter-pragma", str(session)])
+    # operators-filter is a no-op while exclude-operators is empty; run it anyway
+    # so enabling exclusions later needs no wiring change. Note the positional
+    # arg order (session then config) — unlike cr-filter-git's --config flag.
+    run(["cr-filter-operators", str(session), str(run_config)], check=False)
+
+    pending = count_pending(session)
 
     affordable = int(args.budget_seconds // unit_seconds) if unit_seconds > 0 else pending
     limit = min(args.cap, affordable)
@@ -623,6 +678,7 @@ def main(argv: list[str] | None = None) -> int:
         **base_report,
         "budget_seconds": args.budget_seconds,
         "mutant_seconds": round(unit_seconds, 1),
+        "timeout_seconds": round(timeout, 1),
         "affordable": affordable,
     }
     if pending and limit <= 0:
@@ -650,7 +706,7 @@ def main(argv: list[str] | None = None) -> int:
     if sampling:
         base_report = {**base_report, "sampling": sampling}
 
-    run(["cosmic-ray", "exec", str(config_path), str(session)])
+    run(["cosmic-ray", "exec", str(run_config), str(session)])
     result = classify(session, REPO, active)
     # bug-415: "ok" over a run that left work items unexecuted reads as a
     # complete measurement. The counts table is still worth printing -- what is

@@ -12173,6 +12173,20 @@
       "fix_sketch": "Find the process-global state the precision module leaves (diff cpersona.* module attributes before and after the module, as the behaviour-golden harness does) and restore it in the module's fixture; then add a test that runs the two modules in this order.",
       "note": "Found while testing the contract decisions of 2026-10-15; reproduced on unmodified master.",
       "fix_note": "The leaked state was config.VECTOR_MIN_SIMILARITY: test_sidecar_round_trips_agent_betas and test_restore_tolerates_pre_v2429_sidecar restore a sidecar whose global_threshold is 0.5, and the module's autouse fixture saved and restored the beta, gates and signal but not the threshold, so the victim's recall scored against 0.5 instead of 0.3 and deep admitted nothing new. Found by diffing every cpersona module attribute between the victim alone and the victim after this module. The fixture now restores the threshold and calls vector._reset_calibration_authority(), the reset entry the sibling sidecar fixtures use, for the claims the restore also left (no current test reads those across modules, so only the threshold restore is load-bearing). Pinned by tests/test_audit_2611_followups.py::test_bug802_a_recall_test_after_the_precision_module_still_passes, which runs the two in this order in a fresh process; dropping the threshold restore turns it red."
+    },
+    {
+      "id": "bug-803",
+      "summary": "(LOW) The advisory mutation-diff lane ran every mutant, and its baseline, under the fixed `timeout = 120.0` in cosmic-ray.toml, and cosmic-ray 8.4.6 records a test command it stops at the timeout as KILLED (cosmic_ray/testing.py: `except subprocess.TimeoutExpired: return (TestOutcome.KILLED, \"timeout\")`). A surviving mutant runs the whole suite, so as the suite approaches the limit a survivor is counted as caught, and once the suite passes it the baseline fails outright. On CI the unmutated suite was priced at 69.9-102.0 s in the runs of 2026-10-11 and 2026-10-12, and every run with a production diff from 2026-10-14 to 2026-10-16 (13 runs) reported `baseline-failed` with `>>> timeout` (the last baseline took 121 s). The job is continue-on-error, so the checks read as passing while the lane measured nothing. `classify` did not tell a timeout kill from a test kill either, so a run that did proceed could not show how many of its kills were the clock.",
+      "severity": "LOW",
+      "discovered": "2026-10-16T00:00:00Z",
+      "version": "2.6.11a3",
+      "file": "scripts/mutation-diff.py",
+      "pattern": "return max\\(floor, TIMEOUT_FACTOR \\* unit_seconds\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "mutation-result-accounting",
+      "fix_sketch": "Derive the per-mutant timeout from the unmutated suite the lane already times, as a multiple with the configured value as a floor, and run every cosmic-ray step under it; count timeout kills apart from test kills.",
+      "fix_note": "The lane now runs the unmutated suite once, before `cosmic-ray init`: that timed run is the baseline (a red suite reports baseline-failed and starts nothing) and the price, bounded by the budget. It writes the run's config with timeout = max(the configured floor, 3x the measured time) and passes that config to init, both filters and exec, so the limit grows with the suite. `cosmic-ray baseline` is no longer called, which also saves one full suite per run; the `unpriced` status is gone with it. The report carries `timeout_seconds` and `killed_by_timeout`, and the summary names the kills the clock made. Pinned by tests/test_mutation_diff_timeout.py; 14 mutations of the change (the factor, max/min, each step's config, the rewrite, the bound, a second unmutated run, the status, the count and the summary line) each turn it red. Run end to end with cosmic-ray 8.4.6 locally: the suite was priced at 95.7 s and the run config carried timeout = 287.1."
     }
   ]
 }
