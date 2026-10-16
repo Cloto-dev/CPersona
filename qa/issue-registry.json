@@ -11732,7 +11732,7 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/isolation.py",
-      "pattern": "clause=f\"CAST\\(json_extract\\(\\{pre\\}source, '\\$\\.id'\\) AS TEXT\\) = \\?\",",
+      "pattern": "clause=f\"CAST\\(\\{source_id_expr\\} AS TEXT\\) = \\?\",",
       "expected": "present",
       "status": "fixed",
       "category": "recall-isolation-scope",
@@ -12049,12 +12049,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/isolation.py",
-      "pattern": "clause=f\\\"CAST\\(json_extract\\(\\{pre\\}source, '\\$\\.id'\\) AS TEXT\\) = \\?\\\",",
+      "pattern": "source_id_expr = f\\\"CASE WHEN json_valid\\(\\{pre\\}source\\) THEN json_extract\\(\\{pre\\}source, '\\$\\.id'\\) END\\\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Guard the read as CASE WHEN json_valid(source) THEN json_extract(source, '$.id') END, so a malformed source matches no source_id instead of failing the scan.",
-      "note": "Found while fixing bug-743 (a sibling the fix did not cover); reproduced."
+      "note": "Found while fixing bug-743 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "source_id_where reads the id through CASE WHEN json_valid(source) THEN json_extract(source, '$.id') END on both forms (one id and namespace), so a malformed source matches no source_id and every source-scoped arm keeps scanning. A CASE rather than a leading json_valid(source) AND conjunct, as in bug-743, because the fragment is spliced into callers' WHERE clauses and a CASE evaluates only its selected branch wherever it lands. Before the fix the empty-query recall raised 'malformed JSON' and the keyword recall silently returned no rows. Pinned by tests/test_audit_2611_followups.py; mutations M444 (one id) and M445 (namespace) restore the unguarded read and each turns its tests red."
     },
     {
       "id": "bug-795",

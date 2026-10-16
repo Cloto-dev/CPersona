@@ -4510,6 +4510,26 @@ MUTATIONS += [
         breaks='a write that lands while the build reads its rows is in neither the file nor the live read',
         expect='test_bug514_index_change_log.py::test_a_write_while_a_build_reads_is_read_live',
     ),
+    Mutation(
+        id='M444',
+        tests=('tests/test_audit_2611_followups.py',),
+        target='source_id filter — one id is read only from a valid JSON source (bug-794)',
+        file='cpersona/isolation.py',
+        find='clause=f"CAST({source_id_expr} AS TEXT) = ?",',
+        replace='clause=f"CAST(json_extract({pre}source, \'$.id\') AS TEXT) = ?",',
+        breaks='one row in scope whose source is not JSON makes every per-user scan raise "malformed JSON"',
+        expect='test_audit_2611_followups.py::test_bug794_a_source_scoped_recall_survives_a_malformed_row',
+    ),
+    Mutation(
+        id='M445',
+        tests=('tests/test_audit_2611_followups.py',),
+        target='source_id filter — a namespace is read only from a valid JSON source (bug-794)',
+        file='cpersona/isolation.py',
+        find='clause=f"substr({source_id_expr}, 1, ?) = ?",',
+        replace='clause=f"substr(json_extract({pre}source, \'$.id\'), 1, ?) = ?",',
+        breaks='one row in scope whose source is not JSON makes every namespace-scoped scan raise "malformed JSON"',
+        expect='test_audit_2611_followups.py::test_bug794_the_shared_predicate_skips_a_malformed_source',
+    ),
 ]
 
 
