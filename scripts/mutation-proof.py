@@ -4542,6 +4542,29 @@ MUTATIONS += [
         breaks='a read scope opened during a merge preview sees target rows the preview made up',
         expect='test_2611a2_y12.py::test_a_read_between_merge_preview_pages_sees_no_previewed_row',
     ),
+    Mutation(
+        id='M447',
+        tests=('tests/test_http_body_budget.py',),
+        target='HTTP session manager — the SDK body limit is set out of reach (bug-805)',
+        file='cpersona/server.py',
+        find='        max_request_body_size=_SDK_BODY_LIMIT,\n',
+        replace='',
+        breaks="the SDK's fixed 4 MiB refuses bodies the configured budget serves, and warn mode logs them as served",
+        expect='test_http_body_budget.py::test_warn_mode_serves_a_body_past_the_transport_default',
+    ),
+    Mutation(
+        id='M448',
+        tests=('tests/test_http_body_budget.py',),
+        target='HTTP transport — production builds its session manager through the shared factory (bug-805)',
+        file='cpersona/server.py',
+        find='    session_manager = _http_session_manager()\n',
+        replace=(
+            '    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager\n'
+            '    session_manager = StreamableHTTPSessionManager(app=registry.server, stateless=True)\n'
+        ),
+        breaks='production serves through a construction the transport tests never drive',
+        expect='test_http_body_budget.py::test_production_serves_through_the_factory_the_transport_tests_drive',
+    ),
 ]
 
 

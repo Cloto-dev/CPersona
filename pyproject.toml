@@ -52,7 +52,17 @@ dependencies = [
     # code actually satisfies, not a freeze: lifting it is the migration to
     # the 2.0 handler API, and that lives upstream in the shared mcp_common
     # this package vendors, not here.
-    "mcp>=1.26.0,<2",
+    #
+    # The floor is where the code stops working, not a preference: the HTTP
+    # transport passes max_request_body_size to the session manager (bug-805),
+    # an argument that first exists in 1.29.0, and pip keeps an installed mcp
+    # that still satisfies the floor, so `pip install -U cpersona` over an
+    # older SDK would fail at HTTP startup. 1.30.0 rather than 1.29.0 because
+    # it is the release the lock tests, and the first outside the session-
+    # accumulation advisory GHSA-84m7-p3x7-pcfv. This server is not exposed
+    # to that one (its HTTP transport keeps no sessions), but an install that
+    # carries the flagged SDK is reported as vulnerable all the same.
+    "mcp>=1.30.0,<2",
     # The other three carry the same kind of cap for the same reason, arrived at
     # the other way round: `mcp` got one after an unbounded floor had already
     # resolved a breaking release, and a published wheel's `requires_dist` is

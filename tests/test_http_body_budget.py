@@ -20,10 +20,13 @@ one byte above it. A budget that fires at "about" the right size cannot be told
 apart from one that fires at the wrong one.
 """
 
+import asyncio
 import contextlib
+import json
 import logging
 
 import pytest
+from transport_harness import post_tool_call, run_with_real_transport
 
 from cpersona import config, server
 
@@ -481,3 +484,114 @@ def test_an_unknown_mode_falls_back_to_the_documented_default(caplog):
         budget = server.RequestBodyBudgetMiddleware(lambda *a: None, mode="strict")
     assert budget.mode == "warn"
     assert any("not one of warn/reject/off" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Behind the budget: the transport's own limit (bug-805)
+# ---------------------------------------------------------------------------
+#
+# Everything above drives a stand-in endpoint. These drive the real
+# streamable-HTTP transport, built by the factory production serves through,
+# because the defect was a second limit inside that transport: from mcp 1.29.0
+# the session manager refuses a body over 4 MiB on its own, and only a request
+# that reaches it can show whether this server's setting still decides.
+
+MIB = 1024 * 1024
+SDK_DEFAULT_LIMIT = 4 * MIB  # mcp's DEFAULT_MAX_REQUEST_BODY_SIZE
+
+
+def _rpc_answer(raw: bytes) -> dict:
+    """The JSON-RPC message in an SSE or JSON response body."""
+    text = raw.decode("utf-8", errors="replace")
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            return json.loads(line[5:].strip())
+    return json.loads(text)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("declare_length", [True, False], ids=["content-length", "no-length"])
+async def test_warn_mode_serves_a_body_past_the_transport_default(monkeypatch, caplog, declare_length):
+    """The default mode's promise holds where the request is actually parsed.
+
+    Warn mode says the body is served in full. With the transport's own 4 MiB
+    limit in force, a body past it was answered 413: with a Content-Length the
+    refusal came before a byte was read, so the budget saw nothing; without
+    one the budget counted the body, logged that it had been served, and the
+    transport then refused it.
+    """
+    monkeypatch.setattr(config, "HTTP_MAX_BODY_BYTES", SDK_DEFAULT_LIMIT)
+    monkeypatch.setattr(config, "HTTP_BODY_LIMIT_MODE", "warn")
+    pad = "x" * (SDK_DEFAULT_LIMIT + MIB)
+
+    async def drive(app):
+        return await post_tool_call(
+            app, "", "no_such_tool", {"pad": pad}, declare_length=declare_length
+        )
+
+    with caplog.at_level(logging.WARNING, logger="cpersona.server"):
+        status, raw = await run_with_real_transport(None, drive)
+    assert status == 200, raw[:200]
+    assert _rpc_answer(raw)["id"] == 1
+    crossings = [
+        r.getMessage()
+        for r in caplog.records
+        if "exceeded CPERSONA_HTTP_MAX_BODY_BYTES" in r.getMessage()
+    ]
+    assert len(crossings) == 1
+    assert "The body was served in full" in crossings[0]
+
+
+@pytest.mark.asyncio
+async def test_a_budget_raised_past_the_transport_default_is_the_one_that_decides(monkeypatch):
+    """Raising the budget above 4 MiB takes effect, and the refusal past it is ours.
+
+    Under the transport's limit the first request was refused although it was
+    inside the configured budget, and the second got the transport's plain-text
+    413 instead of this server's answer naming the budget.
+    """
+    budget = SDK_DEFAULT_LIMIT + 2 * MIB
+    monkeypatch.setattr(config, "HTTP_MAX_BODY_BYTES", budget)
+    monkeypatch.setattr(config, "HTTP_BODY_LIMIT_MODE", "reject")
+    inside = "x" * (SDK_DEFAULT_LIMIT + MIB)
+    past = "x" * (budget + MIB)
+
+    async def drive(app):
+        return (
+            await post_tool_call(app, "", "no_such_tool", {"pad": inside}, declare_length=True),
+            await post_tool_call(app, "", "no_such_tool", {"pad": past}, declare_length=True),
+        )
+
+    (status_inside, raw_inside), (status_past, raw_past) = await run_with_real_transport(None, drive)
+    assert status_inside == 200, raw_inside[:200]
+    assert _rpc_answer(raw_inside)["id"] == 1
+    assert status_past == 413
+    assert json.loads(raw_past) == {"error": "payload_too_large", "max_bytes": budget}
+
+
+def test_production_serves_through_the_factory_the_transport_tests_drive(monkeypatch):
+    """The two tests above prove the factory; this proves production uses it.
+
+    A server that built its own session manager would keep them green while
+    serving with whatever that construction says.
+    """
+
+    class Built(Exception):
+        pass
+
+    class BuiltElsewhere(Exception):
+        pass
+
+    def factory():
+        raise Built
+
+    def build_app(*_args, **_kwargs):
+        # Reached only when the session manager came from somewhere else.
+        raise BuiltElsewhere
+
+    monkeypatch.delenv("CPERSONA_ACL_FILE", raising=False)
+    monkeypatch.setattr(server.acl, "active_config", lambda: None)
+    monkeypatch.setattr(server, "_http_session_manager", factory)
+    monkeypatch.setattr(server, "_build_http_app", build_app)
+    with pytest.raises(Built):
+        asyncio.run(server._run_http_server())

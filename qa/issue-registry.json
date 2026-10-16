@@ -2782,13 +2782,13 @@
       "discovered": "2026-07-29T00:00:00Z",
       "version": "2.5.1",
       "file": "pyproject.toml",
-      "pattern": "mcp>=1.26.0,<2",
+      "pattern": "mcp>=[0-9.]+,<2\"",
       "expected": "present",
       "status": "fixed",
       "category": "dependency-bound",
       "note": "Numbered 190, not 189: bug-189 (sidecar rewrite-from-memory) is already claimed by the concurrently open promotion-gate branch, so the ledger carries a gap on master until that lands. The id is canonicalized before the fix, per the numbering discipline that a work-in-flight id is never reassigned.",
       "fixed_in": "2.5.2",
-      "fix_note": "Cap the runtime dependency at the major boundary the vendored code actually satisfies: mcp>=1.26.0,<2. This is not a version freeze — the 1.x line keeps flowing, and the fresh unlocked resolution the fix was verified against picked 1.29.0 (released the same day as 2.0.0), a version NEWER than the lock's 1.28.1, which is precisely the drift wheel-smoke exists to catch. uv.lock records only the changed specifier; the resolved version is unmoved at 1.28.1, so no locked job's behaviour changes and the b2 soak is undisturbed. Lifting the cap is the migration to the 2.0 handler API, and that work does not belong to this repository: mcp_utils.py is a vendored snapshot of clotohub-servers/servers/common, shared with every other MCP server, so migrating here alone would fork the snapshot and break the a2 post-sync reconciliation gate. Verified by rebuilding the wheel, installing it into a clean environment outside the checkout, and running the wheel-smoke import script verbatim: exit 0, 6 vendored modules shipped, 24 checks registered. The gate that catches a regression is wheel-smoke itself — an unlocked install is the only job that resolves what a user resolves — which is why the failure surfaced there and nowhere else."
+      "fix_note": "Cap the runtime dependency at the major boundary the vendored code actually satisfies: mcp>=1.26.0,<2. This is not a version freeze — the 1.x line keeps flowing, and the fresh unlocked resolution the fix was verified against picked 1.29.0 (released the same day as 2.0.0), a version NEWER than the lock's 1.28.1, which is precisely the drift wheel-smoke exists to catch. uv.lock records only the changed specifier; the resolved version is unmoved at 1.28.1, so no locked job's behaviour changes and the b2 soak is undisturbed. Lifting the cap is the migration to the 2.0 handler API, and that work does not belong to this repository: mcp_utils.py is a vendored snapshot of clotohub-servers/servers/common, shared with every other MCP server, so migrating here alone would fork the snapshot and break the a2 post-sync reconciliation gate. Verified by rebuilding the wheel, installing it into a clean environment outside the checkout, and running the wheel-smoke import script verbatim: exit 0, 6 vendored modules shipped, 24 checks registered. The gate that catches a regression is wheel-smoke itself — an unlocked install is the only job that resolves what a user resolves — which is why the failure surfaced there and nowhere else. The pattern matches any floor: the floor has since moved for its own reason (bug-805), and the cap is what this entry pins."
     },
     {
       "id": "bug-191",
@@ -12201,6 +12201,20 @@
       "category": "isolation",
       "fix_sketch": "Clear what a test leaves beside the shared database path after every test, and make the test that relied on a leftover file pin the read path it watches.",
       "fix_note": "An autouse fixture in tests/conftest.py removes every file a test created beside `config.DB_PATH` (names starting with the database's file name and a dot, so the database and its -wal/-shm are untouched; files present before the test stay). Removed rather than reported, like the path restore beside it: building those files is what the tests exercise. The count-invariant test now turns the block index file off, since its spy watches the SQLite read; tests/test_block_index.py::test_search_reads_the_file_and_answers_as_sqlite_does already pins that the file answers as SQLite does. With the fixture in place the full suite passes, and no other test changed verdict. Pinned by tests/test_audit_2611_followups.py, which runs the leaking test before the golden scenario, and the count-invariant test alone, each in a fresh process: making the fixture non-autouse, making it remove nothing, or dropping the pin each turns one of them red."
+    },
+    {
+      "id": "bug-805",
+      "summary": "(LOW) From mcp 1.29.0 the streamable-HTTP session manager refuses any request body over 4 MiB with a plain-text 413 before the transport reads it, and the HTTP transport did not set that limit, so the SDK's fixed 4 MiB overruled CPERSONA_HTTP_MAX_BODY_BYTES and CPERSONA_HTTP_BODY_LIMIT_MODE. Under the default `warn`, which docs/configuration.md documents as serving the request in full, a 5 MiB tools/call was answered 413: with a Content-Length the SDK refused before a byte was read, so the budget counted nothing; without one the budget counted the body and logged \"The body was served in full\" before the SDK refused it. A budget raised above 4 MiB changed nothing, and in `reject` mode with such a budget the refusal was the SDK's text rather than this server's JSON naming the budget. uv.lock pinned mcp 1.28.1, so the suite never ran against the limit, and the body budget tests drive a stand-in endpoint rather than the SDK. A fresh resolve since 2026-07-28 takes mcp 1.29 or later, since the dependency was mcp>=1.26.0,<2. Legitimate traffic is far below 4 MiB (the largest single store is 144 KB), which is why this is LOW.",
+      "severity": "LOW",
+      "discovered": "2026-10-16T00:00:00Z",
+      "version": "2.6.11a3",
+      "file": "cpersona/server.py",
+      "pattern": "max_request_body_size=_SDK_BODY_LIMIT,",
+      "expected": "present",
+      "status": "fixed",
+      "category": "configuration",
+      "fix_sketch": "Build the session manager in one function that production and the transport tests share, and pass the SDK a body limit it cannot reach, so the configurable budget is the only limit. Raise the mcp floor to the release that accepts the argument.",
+      "fix_note": "server._http_session_manager() builds the stateless session manager with max_request_body_size set to sys.maxsize, and _run_http_server and tests/transport_harness.py both call it. The mcp floor is now 1.30.0: the argument first exists in 1.29.0, and pip keeps an installed mcp that satisfies the floor, so an upgrade over an older SDK would fail at HTTP startup; 1.30.0 is the release uv.lock tests. Pinned by three tests in tests/test_http_body_budget.py that drive the real transport: warn mode serves a 5 MiB body with and without a Content-Length and logs one crossing, a 6 MiB budget in reject mode serves 5 MiB and answers a 7 MiB body with its own JSON 413, and _run_http_server takes its manager from the factory. Removing the argument, setting it to the budget, building the manager inline in _run_http_server, or making the manager stateful each turns at least one of them red."
     }
   ]
 }
