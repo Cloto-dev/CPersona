@@ -133,6 +133,50 @@ async def test_a_write_queues_its_builds_under_the_callers_session(write, monkey
         assert all(session.is_paused_for(queue._session_for(i)) for i, _ in pending)
 
 
+async def _attributed_after(db, queue, call) -> dict[str, str]:
+    """Run ``call`` on an empty queue and map each build it queued to its session."""
+    await db.execute("DELETE FROM pending_memory_tasks")
+    await db.commit()
+    result = await call()
+    assert result.get("ok", True) is True and "error" not in result, result
+    pending = await _pending(db)
+    assert sorted(t for _, t in pending) == sorted([nodes.TASK_TYPE, blocks.TASK_TYPE]), pending
+    return {task_type: queue._session_for(task_id) for task_id, task_type in pending}
+
+
+@pytest.mark.asyncio
+async def test_an_update_requeues_its_builds_under_the_callers_session(monkeypatch, fake_embedding_client):
+    """bug-798: an edit that changes a memory's text queues its rebuilds under the
+    editing session, not under the session that first wrote the record."""
+    fake_embedding_client.token_window = WINDOW
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    async with _queue_db() as (queue, db):
+        stored = await _store(AGENT, LONG, "session-writer")
+        memory_id = int(stored["id"])
+        attributed = await _attributed_after(
+            db, queue,
+            lambda: admin_handlers.do_update_memory(
+                memory_id, LONG.replace("first", "opening"), agent_id=AGENT, session_key=CALLER
+            ),
+        )
+        assert attributed == {nodes.TASK_TYPE: CALLER, blocks.TASK_TYPE: CALLER}, attributed
+
+
+@pytest.mark.asyncio
+async def test_a_merge_queues_the_copies_builds_under_the_callers_session(monkeypatch, fake_embedding_client):
+    """bug-799: the builds a merge queues for the records it copied belong to the
+    session that ran the merge."""
+    fake_embedding_client.token_window = WINDOW
+    monkeypatch.setattr(config, "BLOCK_BUILD_ENABLED", True)
+    async with _queue_db() as (queue, db):
+        await _store("agent.y09.source", LONG, "session-writer")
+        attributed = await _attributed_after(
+            db, queue,
+            lambda: admin_handlers.do_merge_memories("agent.y09.source", AGENT, session_key=CALLER),
+        )
+        assert attributed == {nodes.TASK_TYPE: CALLER, blocks.TASK_TYPE: CALLER}, attributed
+
+
 # ---------------------------------------------------------------------------
 # reconcile chunks: live rows past the first chunk keep their attribution
 # ---------------------------------------------------------------------------

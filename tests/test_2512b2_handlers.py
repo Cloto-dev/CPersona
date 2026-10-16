@@ -134,13 +134,44 @@ NAIVE = "2026-09-06 12:00:00"  # the shape SQLite datetime('now') writes: UTC, n
 AWARE = "2026-09-06T12:00:00+00:00"  # the same instant, as do_store writes it
 
 
+def _pinned_zone(name):
+    """Set the process's local timezone to ``name`` until the generator resumes.
+
+    bug-801: the environment is restored BEFORE the last ``tzset()``. The C library
+    keeps the zone ``tzset()`` last read, so a teardown that called it while TZ still
+    named the pinned zone (as monkeypatch's late restore of TZ made this fixture do)
+    left the process on JST for every test after this module, where TZ said otherwise.
+    """
+    saved = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = saved
+        time.tzset()
+
+
 @pytest.fixture(autouse=True)
-def _jst(monkeypatch):
+def _jst():
     """Pin a non-UTC host timezone (the deployment's own: JST, UTC+9)."""
-    monkeypatch.setenv("TZ", "Asia/Tokyo")
-    time.tzset()
-    yield
-    time.tzset()
+    yield from _pinned_zone("Asia/Tokyo")
+
+
+def test_bug801_the_pinned_zone_does_not_outlive_its_block():
+    """Inside this module the autouse fixture has already pinned Tokyo; a nested pin
+    must hand back both the variable and the zone the C library uses, which is what
+    ``time.tzname`` reports after a ``tzset()``."""
+    before = (os.environ.get("TZ"), time.tzname)
+    pin = _pinned_zone("America/Los_Angeles")
+    next(pin)
+    assert time.tzname != before[1], "the nested zone was not applied; this test proves nothing"
+    with pytest.raises(StopIteration):
+        next(pin)
+    assert (os.environ.get("TZ"), time.tzname) == before
 
 
 @pytest_asyncio.fixture

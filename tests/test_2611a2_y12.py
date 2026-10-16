@@ -16,6 +16,9 @@
   to exist, the read scope's exit rolls back the rows the preview's dedup relies
   on, and within-file duplicates are counted as imports, so the preview stops
   matching a real run. No test that only runs the preview alone can see this.
+- bug-800: the merge preview runs on the same shared read connection, and its
+  memory INSERT carries the same guard. Without it, a read scope opened during
+  the preview sees target rows the preview made up.
 
 Each test fails, for the reason it names, when the guarded behaviour is removed.
 """
@@ -396,3 +399,42 @@ async def test_a_read_between_preview_records_leaves_the_preview_counts_alone(db
     )
     assert not any(seen), "a read between two preview records saw a row the preview wrote"
     assert await _real_run_counts(path, agent) == _EXPECTED_COUNTS
+
+
+# ===========================================================================
+# bug-800 -- a merge preview beside concurrent reads.
+# ===========================================================================
+
+_MERGE_SOURCE_ROWS = 12
+
+
+@pytest.mark.asyncio
+async def test_a_read_between_merge_preview_pages_sees_no_previewed_row(db, monkeypatch):
+    """The merge twin of the import test above: a read scope opens and closes after
+    every page of the preview (three rows to a page here), which is when another
+    request's read can interleave with it."""
+    source, target = "agent.y12-merge-source", "agent.y12-merge-target"
+    for i in range(_MERGE_SOURCE_ROWS):
+        await memory_handlers.do_store(source, {"content": f"merge preview body {i}", "msg_id": f"m-{i}"})
+    monkeypatch.setattr(admin_handlers, "_MERGE_READ_CHUNK", 3)
+    seen: list[int] = []
+    merge_page = admin_handlers._merge_memory_page
+
+    async def merge_page_then_read(conn, rows, target_agent_id, tally):
+        await merge_page(conn, rows, target_agent_id, tally)
+        seen.append(await _visible_rows(target))
+
+    monkeypatch.setattr(admin_handlers, "_merge_memory_page", merge_page_then_read)
+    preview = await admin_handlers.do_merge_memories(source, target, dry_run=True)
+    assert preview.get("ok", True) is True and "error" not in preview, preview
+    assert len(seen) == _MERGE_SOURCE_ROWS // 3, "a page went past the interleaved read"
+    assert not any(seen), f"a read between two preview pages saw rows the preview wrote: {seen}"
+    assert await _visible_rows(target) == 0
+
+    monkeypatch.setattr(admin_handlers, "_merge_memory_page", merge_page)
+    real = await admin_handlers.do_merge_memories(source, target)
+    counts = ("merged_memories", "skipped_memories")
+    assert {k: preview[k] for k in counts} == {k: real[k] for k in counts} == {
+        "merged_memories": _MERGE_SOURCE_ROWS,
+        "skipped_memories": 0,
+    }, (preview, real)

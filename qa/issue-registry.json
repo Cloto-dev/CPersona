@@ -12108,10 +12108,11 @@
       "file": "cpersona/admin_handlers.py",
       "pattern": "queued = await nodes\\.queue_build\\(\"mem\", memory_id, row\\[1\\], key\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
       "fix_sketch": "Extend the bug-670 test (tests/test_2611a2_y09.py) to update_memory: edit a row under a declared session key and assert that the queued build_nodes and build_blocks tasks carry that key.",
-      "note": "Found while fixing bug-670 (a sibling the fix did not cover); measured by replacing the key with a constant against the full suite."
+      "note": "Found while fixing bug-670 (a sibling the fix did not cover); measured by replacing the key with a constant against the full suite.",
+      "fix_note": "tests/test_2611a2_y09.py::test_an_update_requeues_its_builds_under_the_callers_session edits a record under a declared session and asserts the node and block builds it queues carry that key, not the writer's. Replacing the key with the keyless bucket at either call site in do_update_memory now turns it red."
     },
     {
       "id": "bug-799",
@@ -12122,10 +12123,11 @@
       "file": "cpersona/admin_handlers.py",
       "pattern": "await nodes\\.queue_build\\(kind, row_id, agent_id, session_key\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
       "fix_sketch": "Run a merge under a declared session key and assert that the build_nodes and build_blocks tasks queued for the copied records carry that key.",
-      "note": "Found while fixing bug-670 (a sibling the fix did not cover); measured by replacing the key with a constant against the full suite."
+      "note": "Found while fixing bug-670 (a sibling the fix did not cover); measured by replacing the key with a constant against the full suite.",
+      "fix_note": "tests/test_2611a2_y09.py::test_a_merge_queues_the_copies_builds_under_the_callers_session runs a merge under a declared session and asserts the builds queued for the copied record carry that key. Replacing the key with the keyless bucket at either call in _queue_derived_builds now turns it red."
     },
     {
       "id": "bug-800",
@@ -12133,13 +12135,14 @@
       "severity": "LOW",
       "discovered": "2026-10-15T00:00:00Z",
       "version": "2.6.11a1",
-      "file": "cpersona/admin_handlers.py",
-      "pattern": "await _equal_memory_id\\(db, target_agent_id, project_id, channel, content\\) if dup else None,",
+      "file": "scripts/mutation-proof.py",
+      "pattern": "target='do_merge_memories dry_run guard alone",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-teeth",
       "fix_sketch": "Give merge_memories(dry_run=True) the deterministic test bug-759 added for import: open and close a read scope after every record, and assert that the preview counts equal a real run's and that no preview row is visible. Register the guard-only mutation in scripts/mutation-proof.py.",
-      "note": "Found while fixing bug-759 (a sibling the fix did not cover); measured by removing the guard against the full suite. Nothing is wrong at runtime: the shipped code keeps the guard."
+      "note": "Found while fixing bug-759 (a sibling the fix did not cover); measured by removing the guard against the full suite. Nothing is wrong at runtime: the shipped code keeps the guard.",
+      "fix_note": "tests/test_2611a2_y12.py::test_a_read_between_merge_preview_pages_sees_no_previewed_row opens and closes a read scope after every page of a merge preview and asserts it saw no target row, then that the preview's counts equal a real run's. Within one source the unique indexes already keep rows from colliding, so the counts cannot tell the guard's absence; visibility to a read is what the guard protects. Mutation M446 removes the guard alone (the import preview's M06 shape) and is CAUGHT: each interleaved read saw the 3 previewed rows of its page."
     },
     {
       "id": "bug-801",
@@ -12148,12 +12151,13 @@
       "discovered": "2026-10-15T00:00:00Z",
       "version": "2.6.11a1",
       "file": "tests/test_2512b2_handlers.py",
-      "pattern": "^def _jst\\(monkeypatch\\):",
+      "pattern": "^def _pinned_zone\\(name\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "isolation",
       "fix_sketch": "Restore TZ before the last tzset: after the yield, set TZ back explicitly (or call monkeypatch.undo()) and then call time.tzset(), as the helper in tests/test_audit_2500b2.py now does.",
-      "note": "Found while fixing bug-763 (a sibling the fix did not cover); confirmed by reading the fixture. The glibc effect is reasoned, not reproduced."
+      "note": "Found while fixing bug-763 (a sibling the fix did not cover); confirmed by reading the fixture. The glibc effect is reasoned, not reproduced.",
+      "fix_note": "The fixture no longer uses monkeypatch for TZ: _pinned_zone restores the variable and only then calls tzset(), the order tests/test_audit_2500b2.py's _host_timezone uses. test_bug801_the_pinned_zone_does_not_outlive_its_block nests a pin inside the module's own and asserts both TZ and time.tzname come back; calling tzset() before the restore turns it red with TZ=Asia/Tokyo and the zone still PST/PDT, the shape of the defect. The glibc consequence stays reasoned, not reproduced; time.tzname shows the stale zone on any platform."
     },
     {
       "id": "bug-802",
