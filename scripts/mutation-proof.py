@@ -4530,6 +4530,18 @@ MUTATIONS += [
         breaks='one row in scope whose source is not JSON makes every namespace-scoped scan raise "malformed JSON"',
         expect='test_audit_2611_followups.py::test_bug794_the_shared_predicate_skips_a_malformed_source',
     ),
+    Mutation(
+        id='M446',
+        tests=('tests/test_2611a2_y12.py',),
+        target='do_merge_memories dry_run guard alone — the preview beside concurrent reads (bug-800)',
+        file='cpersona/admin_handlers.py',
+        # M12 removes this guard together with the read seam; this entry removes the
+        # guard alone, which is the import preview's M06 shape.
+        find='        if not tally.dry_run:\n            cur = await db.execute(\n                "INSERT OR IGNORE INTO memories"',
+        replace='        if True:\n            cur = await db.execute(\n                "INSERT OR IGNORE INTO memories"',
+        breaks='a read scope opened during a merge preview sees target rows the preview made up',
+        expect='test_2611a2_y12.py::test_a_read_between_merge_preview_pages_sees_no_previewed_row',
+    ),
 ]
 
 
