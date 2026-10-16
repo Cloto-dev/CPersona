@@ -137,17 +137,28 @@ def source_id_where(source_id: str, *, alias: str = "") -> IsolationFilter:
     copies is how the axis came to be spelled four times and fixed in none.
     Empty ``source_id`` yields an empty filter, so callers can branch on it the
     way they always did.
+
+    bug-794: the id is read only when ``json_valid(source)``. ``json_extract``
+    raises "malformed JSON" on a source that is not JSON instead of returning
+    NULL, and nothing in the schema keeps such rows out (the JSON repair leaves
+    locked ones alone), so one of them in scope made every source-scoped scan
+    fail. The guard is a CASE, as in the index builder's row plan (bug-743),
+    because a CASE evaluates only the branch it selects wherever the fragment
+    lands, while an ``AND`` short-circuit holds only as a top-level WHERE
+    conjunct. A malformed source reads as no id, so it matches no filter --
+    what the contiguous index already makes of it.
     """
     if not source_id:
         return IsolationFilter(clause="", params=())
     pre = f"{alias}." if alias else ""
+    source_id_expr = f"CASE WHEN json_valid({pre}source) THEN json_extract({pre}source, '$.id') END"
     if source_id_is_namespace(source_id):
         return IsolationFilter(
-            clause=f"substr(json_extract({pre}source, '$.id'), 1, ?) = ?",
+            clause=f"substr({source_id_expr}, 1, ?) = ?",
             params=(len(source_id), source_id),
         )
     return IsolationFilter(
-        clause=f"CAST(json_extract({pre}source, '$.id') AS TEXT) = ?",
+        clause=f"CAST({source_id_expr} AS TEXT) = ?",
         params=(source_id,),
     )
 
