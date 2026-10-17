@@ -684,3 +684,26 @@ async def test_bug793_the_replaced_index_is_released_before_its_successor_loads(
 
     assert held_during_load == [False], "the replaced index was still cached while its successor loaded"
     assert sorted(int(v) for v in reloaded.parent_id) == [101, 102, 103]
+
+
+# ---------------------------------------------------------------------------
+# bug-797 — an empty transport is refused, and the refusal says it was empty
+# ---------------------------------------------------------------------------
+
+
+def test_bug797_an_empty_transport_is_refused_as_empty(monkeypatch):
+    monkeypatch.setenv("CPERSONA_TRANSPORT", "")
+    with pytest.raises(ValueError, match="Unknown transport") as refused:
+        config.validate_transport()
+
+    message = str(refused.value)
+    assert "CPERSONA_TRANSPORT is set but empty" in message
+    assert "unset it to use stdio" in message
+
+
+def test_bug797_a_misspelt_transport_keeps_its_own_refusal(monkeypatch):
+    monkeypatch.setenv("CPERSONA_TRANSPORT", "http")
+    with pytest.raises(ValueError) as refused:
+        config.validate_transport()
+
+    assert str(refused.value) == "Unknown transport: http (expected one of stdio, streamable-http)"

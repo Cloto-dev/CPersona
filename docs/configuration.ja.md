@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:d18745fe8b252b2832256c589b9f3726af50dc80 -->
+<!-- i18n-source: docs/configuration.md@blob:f6bdce46ea7dd988d0b45a128afbe296dbc46ca2 -->
 
 # 設定リファレンス
 
@@ -206,7 +206,7 @@
 
 | 変数 | 既定値 | 説明 |
 |----------|---------|-------------|
-| `CPERSONA_TRANSPORT` | `stdio` | `stdio`、または HTTP 配信の `streamable-http` |
+| `CPERSONA_TRANSPORT` | `stdio` | `stdio`、または HTTP 配信の `streamable-http`。空の値は未設定とは読まず、起動時に拒否します。stdio はクライアントがつながっていないとエラーを出さずにすぐ終了し、コンテナイメージの既定は `streamable-http` なので、そこで空を渡すとサーバーが黙って止まるためです |
 | `CPERSONA_HTTP_HOST` | `127.0.0.1` | バインドアドレス |
 | `CPERSONA_HTTP_PORT` | `8402` | バインドポート |
 | `CPERSONA_AUTH_TOKEN` | *(未設定)* | 全リクエストに要求する Bearer トークン |

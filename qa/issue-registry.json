@@ -12099,17 +12099,18 @@
     },
     {
       "id": "bug-797",
-      "summary": "(LOW) An empty CPERSONA_TRANSPORT is refused at startup as an unknown transport, where every other setting reads an empty value as unset (the bug-133 and bug-561 rule) and would start on stdio.",
+      "summary": "(LOW) An empty CPERSONA_TRANSPORT was refused at startup with `Unknown transport:  (expected one of stdio, streamable-http)`, which shows nothing where the name goes and does not say the value was empty, and neither the code nor docs/configuration.md said that the transport is an exception to the rule that an empty setting is unset (the bug-133 and bug-561 rule).",
       "severity": "LOW",
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/config.py",
-      "pattern": "return os\\.environ\\.get\\(\\\"CPERSONA_TRANSPORT\\\", \\\"stdio\\\"\\)",
+      "pattern": "CPERSONA_TRANSPORT is set but empty",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "configuration",
-      "fix_sketch": "Read an empty CPERSONA_TRANSPORT as unset (stdio), as the other parsers do.",
-      "note": "Found while fixing bug-727 (a sibling the fix did not cover); confirmed by reading the code."
+      "fix_sketch": "Keep refusing an empty value, say in the refusal that it was empty, and write the exception and its reason where the setting is defined and documented.",
+      "note": "Found while fixing bug-727 (a sibling the fix did not cover); confirmed by reading the code. Filed first as 'read an empty value as unset (stdio)'. Measured before fixing: stdio with its input at end of file exits 0 within a second and logs no error, and the container image sets CPERSONA_TRANSPORT=streamable-http, so reading empty as stdio would turn an empty override of the image default into a server that quietly stops. tests/test_2611a2_x10.py also pins the empty value among the refused names.",
+      "fix_note": "validate_transport refuses an empty value with its own message, which keeps the `Unknown transport` prefix and says the variable is set but empty and that unsetting it selects stdio. The docstring, the on/off parser's comment and the CPERSONA_TRANSPORT row of docs/configuration.md (and the Japanese page) state the exception and why."
     },
     {
       "id": "bug-798",

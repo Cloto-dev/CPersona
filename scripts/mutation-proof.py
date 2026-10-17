@@ -4812,6 +4812,16 @@ MUTATIONS += [
         breaks='on Windows two copies of the block index are resident during a reload',
         expect='test_audit_2611_siblings.py::test_bug793_the_replaced_index_is_released_before_its_successor_loads',
     ),
+    Mutation(
+        id='M472',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='validate_transport — an empty value is refused as empty (bug-797)',
+        file='cpersona/config.py',
+        find='    if not name:\n',
+        replace='    if False:\n',
+        breaks='an empty transport is refused with a blank name and no word that it was empty',
+        expect='test_audit_2611_siblings.py::test_bug797_an_empty_transport_is_refused_as_empty',
+    ),
 ]
 
 

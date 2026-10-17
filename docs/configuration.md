@@ -209,7 +209,7 @@ HTTP instead: one server, several clients, reachable over a network.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CPERSONA_TRANSPORT` | `stdio` | `stdio`, or `streamable-http` to serve over HTTP |
+| `CPERSONA_TRANSPORT` | `stdio` | `stdio`, or `streamable-http` to serve over HTTP. An empty value is refused at startup rather than read as unset: stdio with no client attached exits at once without an error, and the container image defaults to `streamable-http`, so an empty override there would stop the server quietly |
 | `CPERSONA_HTTP_HOST` | `127.0.0.1` | Bind address |
 | `CPERSONA_HTTP_PORT` | `8402` | Bind port |
 | `CPERSONA_AUTH_TOKEN` | *(unset)* | Bearer token required on every request |
