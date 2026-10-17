@@ -800,36 +800,40 @@ def _purge_agent_calibration(agent_id: str) -> bool:
     # those entries back out of it — resurrecting calibration for a corpus that
     # no longer exists, which is the bug-036 this function was written to close.
     vector._record_agent_calibration_change(agent_id, *vector._CALIBRATION_AGENT_AXES)
-    state = _load_calibration_state()
-    if state is not None:
-        for _key in ("agent_thresholds", "agent_fused_gates", "agent_betas"):
-            _sub = state.get(_key)
-            if isinstance(_sub, dict):
-                removed_cal = (_sub.pop(agent_id, None) is not None) or removed_cal
-        if removed_cal:
-            purged = _save_calibration_state(
-                state.get("embedding_dim"),
-                state.get("embedding_model"),
-                state.get("global_threshold"),
-                state.get("agent_thresholds") or {},
-                global_fused_gate=state.get("global_fused_gate"),
-                agent_fused_gates=state.get("agent_fused_gates") or {},
-                fused_gate_signal=state.get("fused_gate_signal"),
-                agent_betas=state.get("agent_betas") or {},
-                # bug-184: this rewrite drops one agent's entries, it does not
-                # re-measure anything — carry the stored fingerprint (None for a
-                # pre-2.5.2b2 sidecar) so the startup guard still sees the staleness.
-                scoring_version=state.get("scoring_version"),
-                # The same reason for the time: deep_check ages every agent's
-                # calibration from this one stamp, so restamping it here made a
-                # months-old calibration of every other agent read as fresh.
-                calibrated_at=state.get("calibrated_at"),
-            )
-            # The removal is on disk, so it is no longer pending: a later calibration
-            # of a same-id agent by another process must not be deleted again here.
-            if purged:
-                for _axis in vector._CALIBRATION_AGENT_AXES:
-                    vector._calibration_pending[_axis].discard(agent_id)
+    # bug-796: the load, the drop and the rename under the sidecar's lock, as a
+    # calibration's are. Without it the rewrite is not made, and the claim above keeps
+    # the removal pending, so the next calibration does not carry the agent back.
+    with _calibration_sidecar_locked() as held:
+        state = _load_calibration_state() if held else None
+        if state is not None:
+            for _key in ("agent_thresholds", "agent_fused_gates", "agent_betas"):
+                _sub = state.get(_key)
+                if isinstance(_sub, dict):
+                    removed_cal = (_sub.pop(agent_id, None) is not None) or removed_cal
+            if removed_cal:
+                purged = _save_calibration_state(
+                    state.get("embedding_dim"),
+                    state.get("embedding_model"),
+                    state.get("global_threshold"),
+                    state.get("agent_thresholds") or {},
+                    global_fused_gate=state.get("global_fused_gate"),
+                    agent_fused_gates=state.get("agent_fused_gates") or {},
+                    fused_gate_signal=state.get("fused_gate_signal"),
+                    agent_betas=state.get("agent_betas") or {},
+                    # bug-184: this rewrite drops one agent's entries, it does not
+                    # re-measure anything — carry the stored fingerprint (None for a
+                    # pre-2.5.2b2 sidecar) so the startup guard still sees the staleness.
+                    scoring_version=state.get("scoring_version"),
+                    # The same reason for the time: deep_check ages every agent's
+                    # calibration from this one stamp, so restamping it here made a
+                    # months-old calibration of every other agent read as fresh.
+                    calibrated_at=state.get("calibrated_at"),
+                )
+                # The removal is on disk, so it is no longer pending: a later calibration
+                # of a same-id agent by another process must not be deleted again here.
+                if purged:
+                    for _axis in vector._CALIBRATION_AGENT_AXES:
+                        vector._calibration_pending[_axis].discard(agent_id)
     return removed_cal
 
 
@@ -1288,6 +1292,45 @@ def _threshold_from_sims(
 def _calibration_sidecar_path() -> str:
     """Path of the JSON sidecar that persists calibration state next to the DB."""
     return config.DB_PATH + ".calibration.json"
+
+
+@contextlib.contextmanager
+def _calibration_sidecar_locked():
+    """Hold the sidecar's lock file, ``<sidecar>.lock``, for the block; yield whether it is.
+
+    bug-796: the sidecar is read, overlaid and replaced whole, so two server processes
+    over one database that calibrated different agents at once could each write a file
+    built from a read that predated the other's write, and one agent's thresholds were
+    lost. The read, the overlay and the rename happen under this lock, which every
+    process takes for the same span, as the alias ledger's do (bug-630). It is held on a
+    file beside the sidecar because the sidecar is replaced by a rename. A lock that
+    cannot be opened or taken yields False and the caller does not write: writing
+    without it is the race it exists to close.
+    """
+    lock_path = _calibration_sidecar_path() + ".lock"
+    try:
+        fd = fileperms.open_lock(lock_path)
+    except OSError as exc:
+        logger.warning("Could not open the calibration sidecar lock %s: %s", lock_path, exc)
+        fd = None
+    if fd is None:
+        yield False
+        return
+    try:
+        try:
+            fileperms.lock_file(fd)
+            held = True
+        except OSError as exc:
+            logger.warning("Could not take the calibration sidecar lock %s: %s", lock_path, exc)
+            held = False
+        try:
+            yield held
+        finally:
+            if held:
+                with contextlib.suppress(OSError):
+                    fileperms.unlock_file(fd)
+    finally:
+        os.close(fd)
 
 
 def _stored_agent_maps_to_carry(embedding_dim: int, state: dict | None = None) -> dict[str, dict]:
@@ -2211,98 +2254,110 @@ async def do_calibrate_threshold(
     # so nothing invalid survives, and it omits every entry this process OWNS, so a
     # deliberate deletion (a cleared precision override, a purged agent) still
     # reaches disk instead of being carried back over.
-    stored_state, stored_unreadable = _read_calibration_sidecar()
-    # An unreadable sidecar carries nothing, so the write below would replace the only
-    # copy of every other agent's thresholds, gates and precision overrides with this
-    # process's memory. The startup path copies the bytes aside first (bug-347); a
-    # runtime calibration must too, and must leave the file alone when it cannot.
-    may_replace = not stored_unreadable or _backup_unreadable_calibration_sidecar() is not None
-    if may_replace:
-        _refresh_unchanged_calibration(stored_state, embedding_dim)
+    # bug-796: from the read to the rename, under the sidecar's lock, so a write by
+    # another server process lands wholly before this read or wholly after this write.
+    with _calibration_sidecar_locked() as sidecar_lock_held:
+        stored_state, stored_unreadable = _read_calibration_sidecar()
+        # An unreadable sidecar carries nothing, so the write below would replace the only
+        # copy of every other agent's thresholds, gates and precision overrides with this
+        # process's memory. The startup path copies the bytes aside first (bug-347); a
+        # runtime calibration must too, and must leave the file alone when it cannot.
+        may_replace = sidecar_lock_held and (
+            not stored_unreadable or _backup_unreadable_calibration_sidecar() is not None
+        )
+        if may_replace:
+            _refresh_unchanged_calibration(stored_state, embedding_dim)
 
-    # The gate sits on the separation curve at the beta it was measured at. When the
-    # agent's beta changed during the measurement -- set_recall_precision applied a new
-    # one, typically while the startup guard was calibrating this agent -- the agent
-    # already holds a gate measured at its new beta, and this one would replace it with
-    # a value for a beta the agent no longer has, in memory and in the sidecar.
-    if (
-        fused_stats is not None
-        and precision_override is _CURRENT_PRECISION
-        and vector._get_precision_beta(agent_id) != gate_beta
-    ):
-        logger.info(
-            "Fused gate [%s]: discarded a gate measured at beta %s; the agent's beta "
-            "changed to %s while it was measured.",
-            agent_id,
-            gate_beta,
-            vector._get_precision_beta(agent_id),
-        )
-        fused_stats = None
-    if fused_stats is not None:
-        # The 0.1544 collapse produced zero log lines —
-        # the gate is recall's effective filter, so a replacement is worth one.
-        logger.info(
-            "Fused gate [%s]: %s -> %.4f (signal=%s, draws=%s)",
-            agent_id,
-            vector._agent_fused_gates.get(agent_id, "unset"),
-            fused_stats["threshold"],
-            fused_stats["signal"],
-            fused_stats.get("threshold_draws", [fused_stats["threshold"]]),
-        )
-        vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
-        vector._fused_gate_signal = fused_stats["signal"]
-        # Only on success: a degraded run (no embedding client, a flaky
-        # backend) measured no gate, so it owns neither the agent's gate
-        # nor the signal and must leave the stored ones alone.
-        vector._record_agent_calibration_change(agent_id, "agent_fused_gates")
-        vector._record_global_calibration_change("fused_gate_signal")
+        # The gate sits on the separation curve at the beta it was measured at. When the
+        # agent's beta changed during the measurement -- set_recall_precision applied a new
+        # one, typically while the startup guard was calibrating this agent -- the agent
+        # already holds a gate measured at its new beta, and this one would replace it with
+        # a value for a beta the agent no longer has, in memory and in the sidecar.
+        if (
+            fused_stats is not None
+            and precision_override is _CURRENT_PRECISION
+            and vector._get_precision_beta(agent_id) != gate_beta
+        ):
+            logger.info(
+                "Fused gate [%s]: discarded a gate measured at beta %s; the agent's beta "
+                "changed to %s while it was measured.",
+                agent_id,
+                gate_beta,
+                vector._get_precision_beta(agent_id),
+            )
+            fused_stats = None
+        if fused_stats is not None:
+            # The 0.1544 collapse produced zero log lines —
+            # the gate is recall's effective filter, so a replacement is worth one.
+            logger.info(
+                "Fused gate [%s]: %s -> %.4f (signal=%s, draws=%s)",
+                agent_id,
+                vector._agent_fused_gates.get(agent_id, "unset"),
+                fused_stats["threshold"],
+                fused_stats["signal"],
+                fused_stats.get("threshold_draws", [fused_stats["threshold"]]),
+            )
+            vector._agent_fused_gates[agent_id] = fused_stats["threshold"]
+            vector._fused_gate_signal = fused_stats["signal"]
+            # Only on success: a degraded run (no embedding client, a flaky
+            # backend) measured no gate, so it owns neither the agent's gate
+            # nor the signal and must leave the stored ones alone.
+            vector._record_agent_calibration_change(agent_id, "agent_fused_gates")
+            vector._record_global_calibration_change("fused_gate_signal")
 
-    unpaired_override = False
-    if may_replace:
-        carried = _stored_calibration_to_carry(embedding_dim, stored_state)
-        agent_betas = {**carried.get("agent_betas", {}), **dict(vector._agent_betas)}
-        # A new beta is recorded with the gate measured at it. When that measurement
-        # gave nothing (no embedding client, a failing backend, too little data) and the
-        # agent holds a gate measured at its current beta, recording the beta alone
-        # stored it beside that gate, and a restart restored the pair that disagrees.
-        # The stored beta stays, and set_recall_precision reports the change as not
-        # applied. An agent holding no gate has nothing to disagree with, so its beta is
-        # recorded as before, and its gate is measured at it once one can be.
-        unpaired_override = (
-            precision_override is not _CURRENT_PRECISION
-            and gate_beta is not None
-            and fused_stats is None
-            and gate_beta != vector._get_precision_beta(agent_id)
-            and (agent_id in vector._agent_fused_gates or agent_id in carried.get("agent_fused_gates", {}))
-        )
-        if unpaired_override:
-            pass  # the stored beta stays
-        elif precision_override is None:
-            agent_betas.pop(agent_id, None)
-        elif precision_override is not _CURRENT_PRECISION:
-            agent_betas[agent_id] = precision_override
-        sidecar_persisted = _save_calibration_state(
-            embedding_dim,
-            config.EMBEDDING_MODEL,
-            carried.get("global_threshold", config.VECTOR_MIN_SIMILARITY),
-            {**carried.get("agent_thresholds", {}), **dict(vector._agent_thresholds)},
-            global_fused_gate=carried.get("global_fused_gate", vector._global_fused_gate),
-            agent_fused_gates={
-                **carried.get("agent_fused_gates", {}),
-                **dict(vector._agent_fused_gates),
-            },
-            fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
-            agent_betas=agent_betas,
-        )
-        if sidecar_persisted:
-            vector._clear_calibration_pending()
-    else:
-        logger.warning(
-            "Not persisting calibration: the sidecar at %s is unreadable and could not "
-            "be copied aside, so replacing it would destroy the only copy.",
-            _calibration_sidecar_path(),
-        )
-        sidecar_persisted = False
+        unpaired_override = False
+        if may_replace:
+            carried = _stored_calibration_to_carry(embedding_dim, stored_state)
+            agent_betas = {**carried.get("agent_betas", {}), **dict(vector._agent_betas)}
+            # A new beta is recorded with the gate measured at it. When that measurement
+            # gave nothing (no embedding client, a failing backend, too little data) and the
+            # agent holds a gate measured at its current beta, recording the beta alone
+            # stored it beside that gate, and a restart restored the pair that disagrees.
+            # The stored beta stays, and set_recall_precision reports the change as not
+            # applied. An agent holding no gate has nothing to disagree with, so its beta is
+            # recorded as before, and its gate is measured at it once one can be.
+            unpaired_override = (
+                precision_override is not _CURRENT_PRECISION
+                and gate_beta is not None
+                and fused_stats is None
+                and gate_beta != vector._get_precision_beta(agent_id)
+                and (agent_id in vector._agent_fused_gates or agent_id in carried.get("agent_fused_gates", {}))
+            )
+            if unpaired_override:
+                pass  # the stored beta stays
+            elif precision_override is None:
+                agent_betas.pop(agent_id, None)
+            elif precision_override is not _CURRENT_PRECISION:
+                agent_betas[agent_id] = precision_override
+            sidecar_persisted = _save_calibration_state(
+                embedding_dim,
+                config.EMBEDDING_MODEL,
+                carried.get("global_threshold", config.VECTOR_MIN_SIMILARITY),
+                {**carried.get("agent_thresholds", {}), **dict(vector._agent_thresholds)},
+                global_fused_gate=carried.get("global_fused_gate", vector._global_fused_gate),
+                agent_fused_gates={
+                    **carried.get("agent_fused_gates", {}),
+                    **dict(vector._agent_fused_gates),
+                },
+                fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
+                agent_betas=agent_betas,
+            )
+            if sidecar_persisted:
+                vector._clear_calibration_pending()
+        elif not sidecar_lock_held:
+            logger.warning(
+                "Not persisting calibration: the lock on the sidecar at %s could not be "
+                "taken, and a write without it can undo another server process's.",
+                _calibration_sidecar_path(),
+            )
+            sidecar_persisted = False
+        else:
+            logger.warning(
+                "Not persisting calibration: the sidecar at %s is unreadable and could not "
+                "be copied aside, so replacing it would destroy the only copy.",
+                _calibration_sidecar_path(),
+            )
+            sidecar_persisted = False
 
     result = {
         "ok": True,

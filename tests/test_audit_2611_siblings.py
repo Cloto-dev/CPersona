@@ -50,6 +50,7 @@ import os
 import random
 import sqlite3
 import struct
+import subprocess
 import sys
 
 import aiosqlite
@@ -68,6 +69,7 @@ from cpersona import (
     coverage,
     database,
     excerpts,
+    fileperms,
     maintenance_handlers,
     nodes,
     server,
@@ -884,3 +886,112 @@ async def test_bug780_a_precision_that_keeps_the_beta_is_applied(degraded_gate):
     assert result["ok"] is True, result
     stored = _stored(degraded_gate)
     assert (stored["agent_betas"][CAL_AGENT], stored["agent_fused_gates"][CAL_AGENT]) == (2.0, 0.31)
+
+
+# ---------------------------------------------------------------------------
+# bug-796 — the calibration sidecar is read, overlaid and replaced under a lock
+# ---------------------------------------------------------------------------
+
+# Another server process's calibration, reduced to its write: it takes the lock, holds
+# it while it "measures", then publishes a sidecar built before this process's write.
+_OTHER_PROCESS = r"""
+import fcntl, os, sys, time
+sidecar, lock, payload = sys.argv[1:4]
+fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+print("held", flush=True)
+time.sleep(1.5)
+with open(sidecar + ".other", "w") as fh:
+    fh.write(payload)
+os.replace(sidecar + ".other", sidecar)
+fcntl.flock(fd, fcntl.LOCK_UN)
+"""
+
+
+def _lock_is_held(path: str) -> bool:
+    import fcntl
+
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the other process locks with flock")
+@pytest.mark.asyncio
+async def test_bug796_a_calibration_waits_for_another_process_and_keeps_its_write(degraded_gate):
+    payload = json.dumps(
+        {
+            "embedding_dim": CAL_DIM,
+            "embedding_model": config.EMBEDDING_MODEL,
+            "scoring_version": admin_handlers._live_fingerprint(),
+            "global_threshold": config.VECTOR_MIN_SIMILARITY,
+            "agent_thresholds": {"agent.other": 0.42},
+            "global_fused_gate": None,
+            "agent_fused_gates": {},
+            "fused_gate_signal": None,
+            "agent_betas": {},
+            "calibrated_at": "2026-10-17T00:00:00+00:00",
+        }
+    )
+    other = subprocess.Popen(
+        [sys.executable, "-c", _OTHER_PROCESS, degraded_gate, degraded_gate + ".lock", payload],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert other.stdout.readline().strip() == "held"
+        result = await admin_handlers.do_calibrate_threshold(CAL_AGENT, method="percentile")
+    finally:
+        assert other.wait(timeout=30) == 0
+
+    assert result["sidecar_persisted"] is True, result
+    stored = _stored(degraded_gate)["agent_thresholds"]
+    assert set(stored) == {"agent.other", CAL_AGENT}, f"one process's write was lost: {stored}"
+
+
+@pytest.mark.asyncio
+async def test_bug796_a_calibration_that_cannot_take_the_lock_does_not_write(degraded_gate, monkeypatch):
+    def refused(fd):
+        raise OSError("the lock could not be taken")
+
+    monkeypatch.setattr(fileperms, "lock_file", refused)
+
+    result = await admin_handlers.do_calibrate_threshold(CAL_AGENT, method="percentile")
+
+    assert result["ok"] is True and result["sidecar_persisted"] is False, result
+    assert not os.path.exists(degraded_gate)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the probe locks with flock")
+@pytest.mark.asyncio
+async def test_bug796_dropping_an_agent_rewrites_the_sidecar_under_the_lock(degraded_gate, monkeypatch):
+    await admin_handlers.do_calibrate_threshold(CAL_AGENT, method="percentile")
+    assert CAL_AGENT in _stored(degraded_gate)["agent_thresholds"]
+    lock = degraded_gate + ".lock"
+    held = []
+    real_read = admin_handlers._read_calibration_sidecar
+    real_save = admin_handlers._save_calibration_state
+
+    def read():
+        held.append(("read", _lock_is_held(lock)))
+        return real_read()
+
+    def save(*args, **kwargs):
+        held.append(("save", _lock_is_held(lock)))
+        return real_save(*args, **kwargs)
+
+    monkeypatch.setattr(admin_handlers, "_read_calibration_sidecar", read)
+    monkeypatch.setattr(admin_handlers, "_save_calibration_state", save)
+
+    assert admin_handlers._purge_agent_calibration(CAL_AGENT) is True
+
+    assert held == [("read", True), ("save", True)]
+    assert not _lock_is_held(lock), "the lock was not released"
+    assert CAL_AGENT not in _stored(degraded_gate)["agent_thresholds"]

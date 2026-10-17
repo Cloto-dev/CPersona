@@ -7665,7 +7665,7 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "may_replace = not stored_unreadable or _backup_unreadable_calibration_sidecar\\(\\) is not None",
+      "pattern": "not stored_unreadable or _backup_unreadable_calibration_sidecar\\(\\) is not None",
       "expected": "present",
       "status": "fixed",
       "category": "data-integrity",
@@ -12092,12 +12092,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "stored_state, stored_unreadable = _read_calibration_sidecar\\(\\)",
+      "pattern": "with _calibration_sidecar_locked\\(\\) as sidecar_lock_held:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Hold a lock file beside the sidecar for the read, overlay and rename, as the alias ledger does.",
-      "note": "Found while fixing bug-630 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-630 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "A calibration's read of the sidecar, its overlay and the rename, and the rewrite that drops a deleted agent, happen under an advisory lock on <sidecar>.lock, the alias ledger's lock (now fileperms.lock_file, shared by both), which every server process takes for the same span. A lock that cannot be opened or taken is not written around: the calibration reports sidecar_persisted: false (so set_recall_precision reports the override as not applied), and the drop stays pending as it does when its rewrite fails. Reproduced with a second process that holds the lock for 1.5 s and then publishes a sidecar holding another agent: before the fix the calibration wrote meanwhile and its agent was gone from the file the other process published; with the lock it waits, reads that file and keeps both."
     },
     {
       "id": "bug-797",
