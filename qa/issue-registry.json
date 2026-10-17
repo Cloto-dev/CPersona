@@ -11843,7 +11843,8 @@
       "category": "resource-budget",
       "fix_sketch": "Read the timed_out value _post_remote_side_effect returns and stop posting the remaining chunks for that namespace after a timeout, logging how many rows stay out of step, as _remove_moved_source_vectors does.",
       "note": "Found while fixing bug-608 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "_sync_remote_index lays out every post in order and stops at the first that times out, logging how many repaired rows stay out of step with the remote index. It stops the whole sync rather than one namespace: every post goes to the one service. A refusal or a refused connection answers at once and the sync goes on, as the merge's removals do. Before the fix, with every post timing out, 300 deletes and 5 rewrites spent four deadlines. Pinned by tests/test_audit_2611_siblings.py with a timing-out and an answering service; mutation M469 ignores the timeout and turns it red."
+      "fix_note": "_sync_remote_index lays out every post in order and stops at the first that times out, logging how many repaired rows stay out of step with the remote index. It stops the whole sync rather than one namespace: every post goes to the one service. A refusal or a refused connection answers at once and the sync goes on, as the merge's removals do. Before the fix, with every post timing out, 300 deletes and 5 rewrites spent four deadlines. Pinned by tests/test_audit_2611_siblings.py with a timing-out and an answering service; mutation M469 ignores the timeout and turns it red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-780",
@@ -11858,7 +11859,8 @@
       "category": "calibration-staleness",
       "fix_sketch": "When precision_override names a new beta and fused_stats is None, either leave the stored beta unchanged and report that the precision was not applied, or persist the beta together with a marker that the gate must be re-measured.",
       "note": "Found while fixing bug-613 (a sibling the fix did not cover); confirmed by reading the code.",
-      "fix_note": "do_calibrate_threshold keeps the stored beta when it was asked to record a new one (set_recall_precision's precision_override), the gate measured at that beta gave nothing, the beta differs from the agent's current one, and the agent holds a gate (in memory or in the sidecar), which was therefore measured at its current beta; its result then carries precision_override_applied: false, and set_recall_precision answers ok:false saying the override was not applied and adopts nothing. The same holds for a clear. An agent holding no gate has nothing to disagree with, so its beta is recorded as before, and a call that keeps the beta is applied. Against the previous code the two not-applied cases answered ok:true and stored the new beta (or dropped it, for a clear) beside the gate measured at the old one."
+      "fix_note": "do_calibrate_threshold keeps the stored beta when it was asked to record a new one (set_recall_precision's precision_override), the gate measured at that beta gave nothing, the beta differs from the agent's current one, and the agent holds a gate (in memory or in the sidecar), which was therefore measured at its current beta; its result then carries precision_override_applied: false, and set_recall_precision answers ok:false saying the override was not applied and adopts nothing. The same holds for a clear. An agent holding no gate has nothing to disagree with, so its beta is recorded as before, and a call that keeps the beta is applied. Against the previous code the two not-applied cases answered ok:true and stored the new beta (or dropped it, for a clear) beside the gate measured at the old one.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-781",
@@ -11873,7 +11875,8 @@
       "category": "data-integrity",
       "fix_sketch": "Clean the rows with utils._strip_annotations (then strip) instead of _MEMORY_ANNOTATION_PATTERN.sub, so the repair and the write seam produce the same text.",
       "note": "Found while fixing bug-616 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "check_memory_annotation cleans each row with utils._strip_annotations, the function the write seam strips with, so the repair and a store produce the same text and a repaired row holds no annotation. Before the fix '[Memory fr[Memory from a] om b] keep this' was repaired to '[Memory from b] keep this' and reported again. Pinned by tests/test_audit_2611_siblings.py; mutation M449 restores the one-pass repair and turns its test red."
+      "fix_note": "check_memory_annotation cleans each row with utils._strip_annotations, the function the write seam strips with, so the repair and a store produce the same text and a repaired row holds no annotation. Before the fix '[Memory fr[Memory from a] om b] keep this' was repaired to '[Memory from b] keep this' and reported again. Pinned by tests/test_audit_2611_siblings.py; mutation M449 restores the one-pass repair and turns its test red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-782",
@@ -11888,7 +11891,8 @@
       "category": "index-divergence",
       "fix_sketch": "Collect the rewritten row ids during the fix run and queue their node and block builds after the run commits, as the merge path does.",
       "note": "Found while fixing bug-625 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "The list the repairs record their deletes and rewrites in (checks.repair_effects, formerly remote_index_effects) is now collected on every fix run rather than only with remote search armed. After the commit, maintenance_handlers._after_repairs_commit tells the remote index when it is armed, as before, and queues node and block builds for each row whose final state is a rewrite, through admin_handlers._queue_derived_builds under the caller's session, as a merge does. check_health and deep_check both settle through it, and a check that crashed and rolled back drops its notes as before. Before the fix an annotation, mention or oversized-content repair queued nothing. Pinned by tests/test_audit_2611_siblings.py for all three repairs, with a report-only run and a row deleted on collision queueing nothing; mutations M451 (no queueing) and M452 (collecting only with remote search armed) turn them red."
+      "fix_note": "The list the repairs record their deletes and rewrites in (checks.repair_effects, formerly remote_index_effects) is now collected on every fix run rather than only with remote search armed. After the commit, maintenance_handlers._after_repairs_commit tells the remote index when it is armed, as before, and queues node and block builds for each row whose final state is a rewrite, through admin_handlers._queue_derived_builds under the caller's session, as a merge does. check_health and deep_check both settle through it, and a check that crashed and rolled back drops its notes as before. Before the fix an annotation, mention or oversized-content repair queued nothing. Pinned by tests/test_audit_2611_siblings.py for all three repairs, with a report-only run and a row deleted on collision queueing nothing; mutations M451 (no queueing) and M452 (collecting only with remote search armed) turn them red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-783",
@@ -11903,7 +11907,8 @@
       "category": "input-validation",
       "fix_sketch": "Refuse a lone surrogate once at the tool boundary for every string argument (utils.lone_surrogate_issue), rather than handler by handler, and keep each tool's own refusal shape.",
       "note": "Found while fixing bug-633 (a sibling the fix did not cover); confirmed by reading the code.",
-      "fix_note": "Every tool handler is wrapped, below the last registration and inside the capability guard, by a check that walks every string in the call's arguments (nested lists and objects included, dictionary keys before their values) through utils.lone_surrogate_in and refuses the first lone surrogate by its path, before the handler binds anything. The refusal takes the tool's own shape: store keeps result/reason (and locked under lock:true), declare_associations result and its empty lists, archive_episode episode_id, recall and recall_with_context messages, reconstruct items and returned_count, update_profile profiles_updated/reason; every other tool answers with error_response. Measured by sending U+DFFF alone in each of the 68 string parameters across the tools: before, 21 answered this refusal, 18 raised UnicodeEncodeError, 2 quoted the encoder in their refusal, 8 answered as if nothing was wrong and 19 were refused first for another reason; after, all 68 answer this refusal."
+      "fix_note": "Every tool handler is wrapped, below the last registration and inside the capability guard, by a check that walks every string in the call's arguments (nested lists and objects included, dictionary keys before their values) through utils.lone_surrogate_in and refuses the first lone surrogate by its path, before the handler binds anything. The refusal takes the tool's own shape: store keeps result/reason (and locked under lock:true), declare_associations result and its empty lists, archive_episode episode_id, recall and recall_with_context messages, reconstruct items and returned_count, update_profile profiles_updated/reason; every other tool answers with error_response. Measured by sending U+DFFF alone in each of the 68 string parameters across the tools: before, 21 answered this refusal, 18 raised UnicodeEncodeError, 2 quoted the encoder in their refusal, 8 answered as if nothing was wrong and 19 were refused first for another reason; after, all 68 answer this refusal.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-784",
@@ -11918,7 +11923,8 @@
       "category": "timestamp-correctness",
       "fix_sketch": "Extend the check (and the import's report) to episodes' start_time / end_time with the same boundary, and decide the repair: created_at, as for memories.",
       "note": "Found while fixing bug-690 (a sibling the fix did not cover); confirmed by reading the code.",
-      "fix_note": "A future_episode_timestamp health check (warn, fix-capable) counts the episodes whose start_time or end_time is ahead of future_timestamp_boundary, the memories check's boundary, and fix=true sets each column that is ahead to the episode's own created_at in the canonical aware form, when created_at is not itself ahead (episodes have no locked column). It runs after missing_episode_start_time and episode_timestamp_format_drift, so it judges the span they leave. import_memories counts restored episodes with either column ahead as future_episode_timestamps and imports them anyway, as it does memories (future_timestamps). Documented beside the memories check in docs/configuration.md and its Japanese page; the behaviour golden gains the check's name in the six health scenarios' checks_run and nothing else."
+      "fix_note": "A future_episode_timestamp health check (warn, fix-capable) counts the episodes whose start_time or end_time is ahead of future_timestamp_boundary, the memories check's boundary, and fix=true sets each column that is ahead to the episode's own created_at in the canonical aware form, when created_at is not itself ahead (episodes have no locked column). It runs after missing_episode_start_time and episode_timestamp_format_drift, so it judges the span they leave. import_memories counts restored episodes with either column ahead as future_episode_timestamps and imports them anyway, as it does memories (future_timestamps). Documented beside the memories check in docs/configuration.md and its Japanese page; the behaviour golden gains the check's name in the six health scenarios' checks_run and nothing else.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-785",
@@ -11933,7 +11939,8 @@
       "category": "read-path-budget",
       "fix_sketch": "Read the ids through vector._fetch_rows_by_id, or chunk them at _ID_FETCH_CHUNK.",
       "note": "Found while fixing bug-682 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "coverage.stored_texts reads the memories and episodes a traced recall returned through vector._fetch_rows_by_id, in chunks of _ID_FETCH_CHUNK with the ownership predicate on every chunk, as the other id reads on the recall path do. Before the fix, on a connection whose bound-variable limit was lowered to 8, twelve refs raised 'too many SQL variables'. Pinned by tests/test_audit_2611_siblings.py, which lowers the limit and the chunk width and checks that another agent's record and the profile are still not read; mutation M460 restores the single IN (...) and turns it red."
+      "fix_note": "coverage.stored_texts reads the memories and episodes a traced recall returned through vector._fetch_rows_by_id, in chunks of _ID_FETCH_CHUNK with the ownership predicate on every chunk, as the other id reads on the recall path do. Before the fix, on a connection whose bound-variable limit was lowered to 8, twelve refs raised 'too many SQL variables'. Pinned by tests/test_audit_2611_siblings.py, which lowers the limit and the chunk width and checks that another agent's record and the profile are still not read; mutation M460 restores the single IN (...) and turns it red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-786",
@@ -11948,7 +11955,8 @@
       "category": "contract-drift",
       "fix_sketch": "Use vector.remote_route(\"search\") is not None as the predicate, the one the search and the single-arm marking use.",
       "note": "Found while fixing bug-669 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "vector.remote_arm_armed(mode) is the one predicate for whether the remote vector arm runs: remote mode and a URL the service's routes derive from (remote_route). checks._remote_vector_arm_armed, coarse_notice.local_vector_search, the single-arm marking in recall and the boot notice all call it, each passing the mode copy it acts on. The boot notice moved out of main() into server._log_vector_fallback_trade so it can be tested, and its warning now says the URL has to end in /embed. Before the fix, with an endpoint ending /v1/embeddings, the maintenance hint and the boot notice described a remote /search outage risk, and the coarse-index suggestion was withheld as if the service ranked recall, though no remote call is made and recall ranks the local store. Pinned by tests/test_audit_2611_siblings.py for routed, routed-with-query, unrouted and empty URLs; mutations M461 (the predicate), M462 (checks), M463 (coarse notice) and M464 (boot notice) each restore a URL-only test and turn a test red."
+      "fix_note": "vector.remote_arm_armed(mode) is the one predicate for whether the remote vector arm runs: remote mode and a URL the service's routes derive from (remote_route). checks._remote_vector_arm_armed, coarse_notice.local_vector_search, the single-arm marking in recall and the boot notice all call it, each passing the mode copy it acts on. The boot notice moved out of main() into server._log_vector_fallback_trade so it can be tested, and its warning now says the URL has to end in /embed. Before the fix, with an endpoint ending /v1/embeddings, the maintenance hint and the boot notice described a remote /search outage risk, and the coarse-index suggestion was withheld as if the service ranked recall, though no remote call is made and recall ranks the local store. Pinned by tests/test_audit_2611_siblings.py for routed, routed-with-query, unrouted and empty URLs; mutations M461 (the predicate), M462 (checks), M463 (coarse notice) and M464 (boot notice) each restore a URL-only test and turn a test red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-787",
@@ -11963,7 +11971,8 @@
       "category": "health-check",
       "fix_sketch": "Choose the survivor as COALESCE(locked row, MIN/MAX(id)) per group, as check_dedup_msg_id_index now does.",
       "note": "Found while fixing bug-638 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "Both v12 dedup steps keep a locked row when the group has one: the content step keeps COALESCE(MIN(locked id), MIN(id)) and the msg_id step COALESCE(MAX(locked id), MAX(id)), the choice check_dedup_msg_id_index makes. Only two locked colliders still leave an index skipped. Before the fix a schema 11 database with an unlocked row and a newer locked copy kept both and booted without idx_memories_dedup_content, and an older locked msg_id beside a newer unlocked one kept both msg_ids and skipped idx_memories_dedup_msg_id. Pinned by tests/test_audit_2611_siblings.py, which builds a schema 11 file with its full-text index and boots it through get_db(); mutations M453 (content) and M454 (msg_id) restore the old survivor and each turns its test red."
+      "fix_note": "Both v12 dedup steps keep a locked row when the group has one: the content step keeps COALESCE(MIN(locked id), MIN(id)) and the msg_id step COALESCE(MAX(locked id), MAX(id)), the choice check_dedup_msg_id_index makes. Only two locked colliders still leave an index skipped. Before the fix a schema 11 database with an unlocked row and a newer locked copy kept both and booted without idx_memories_dedup_content, and an older locked msg_id beside a newer unlocked one kept both msg_ids and skipped idx_memories_dedup_msg_id. Pinned by tests/test_audit_2611_siblings.py, which builds a schema 11 file with its full-text index and boots it through get_db(); mutations M453 (content) and M454 (msg_id) restore the old survivor and each turns its test red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-788",
@@ -11978,7 +11987,8 @@
       "category": "health-check",
       "fix_sketch": "Prefer a locked row as the survivor, and repoint associations to it as the current repair repoints them to MIN(id).",
       "note": "Found while fixing bug-638 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "check_duplicate_content keeps a locked row of each exact-bucket group when it has one, else the oldest, in the one predicate that counts and deletes. A deleted copy's declarations move to the kept channel '' copy, locked first, else to the copy kept in its own channel, locked first. Before the fix a group of an unlocked row and a newer locked copy reported total_extra 1 and repairable 0 on every run, and the repair deleted nothing. Pinned by tests/test_audit_2611_siblings.py; mutation M455 restores MIN(id) as the survivor, and M456 / M457 drop the locked-first choice of the repoint target in the shared and named channel, each turning a test red."
+      "fix_note": "check_duplicate_content keeps a locked row of each exact-bucket group when it has one, else the oldest, in the one predicate that counts and deletes. A deleted copy's declarations move to the kept channel '' copy, locked first, else to the copy kept in its own channel, locked first. Before the fix a group of an unlocked row and a newer locked copy reported total_extra 1 and repairable 0 on every run, and the repair deleted nothing. Pinned by tests/test_audit_2611_siblings.py; mutation M455 restores MIN(id) as the survivor, and M456 / M457 drop the locked-first choice of the repoint target in the shared and named channel, each turning a test red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-789",
@@ -11993,7 +12003,8 @@
       "category": "isolation",
       "fix_sketch": "Report the checked agent's changed rows in an agent-scoped call (or omit the figure there), keeping the store-wide count for a whole-store call.",
       "note": "Found while fixing bug-642 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "block_index_behind carries changes_since_build only in a whole-store call. The change clock counts every agent's block writes and the log keeps no owner for a deleted record, so an agent-scoped call is told the file is behind without the figure. Before the fix a call scoped to one agent reported the three block writes another agent made after the build. Pinned by tests/test_audit_2611_siblings.py; mutation M458 reports the figure in every call and turns its test red."
+      "fix_note": "block_index_behind carries changes_since_build only in a whole-store call. The change clock counts every agent's block writes and the log keeps no owner for a deleted record, so an agent-scoped call is told the file is behind without the figure. Before the fix a call scoped to one agent reported the three block writes another agent made after the build. Pinned by tests/test_audit_2611_siblings.py; mutation M458 reports the figure in every call and turns its test red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-790",
@@ -12008,7 +12019,8 @@
       "category": "read-path-budget",
       "fix_sketch": "Skip a block that lies inside a taken range before computing its context range, using a sorted list and bisect as record_passages does.",
       "note": "Found while fixing bug-705 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "fill_ranges keeps the taken ranges sorted, skips a block that lies inside one before computing its governing range, and tests overlap with one bisect rather than a scan of every taken range, as reconstruct.record_passages does. Its answers are unchanged: on 1,500 random records with shuffled rankings and caps from 20 to unbounded they equal the old scan's. On a record of 300 unterminated lines ranked middle-first, the context walks fall from 300 to 145. Pinned by tests/test_audit_2611_siblings.py; mutation M465 drops the skip and the blocks inside the first range are walked again, and M466 drops the overlap test and the answers diverge."
+      "fix_note": "fill_ranges keeps the taken ranges sorted, skips a block that lies inside one before computing its governing range, and tests overlap with one bisect rather than a scan of every taken range, as reconstruct.record_passages does. Its answers are unchanged: on 1,500 random records with shuffled rankings and caps from 20 to unbounded they equal the old scan's. On a record of 300 unterminated lines ranked middle-first, the context walks fall from 300 to 145. Pinned by tests/test_audit_2611_siblings.py; mutation M465 drops the skip and the blocks inside the first range are walked again, and M466 drops the overlap test and the answers diverge.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-791",
@@ -12039,7 +12051,8 @@
       "category": "robustness",
       "fix_sketch": "Run the steps with GIT_TERMINAL_PROMPT=0 (and pip's --no-input) in the child environment, so a step that needs credentials fails at once with its own message.",
       "note": "Found while fixing bug-736 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "_run_step runs every apply step with GIT_TERMINAL_PROMPT=0 and PIP_NO_INPUT=1 over the server's environment, and in a session of its own (start_new_session, POSIX), which has no controlling terminal for git, ssh or anything else to open. A step that needs credentials now fails at once with its own message. Before the fix a step inherited the operator's GIT_TERMINAL_PROMPT=1 and ran in the server's session. Pinned by tests/test_audit_2611_siblings.py with a step that prints what it was given; mutations M467 (environment) and M468 (session) each turn it red."
+      "fix_note": "_run_step runs every apply step with GIT_TERMINAL_PROMPT=0 and PIP_NO_INPUT=1 over the server's environment, and in a session of its own (start_new_session, POSIX), which has no controlling terminal for git, ssh or anything else to open. A step that needs credentials now fails at once with its own message. Before the fix a step inherited the operator's GIT_TERMINAL_PROMPT=1 and ran in the server's session. Pinned by tests/test_audit_2611_siblings.py with a step that prints what it was given; mutations M467 (environment) and M468 (session) each turn it red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-793",
@@ -12054,7 +12067,8 @@
       "category": "resource-budget",
       "fix_sketch": "Load through vector_index._read_header / _array_reader from one open handle, and pop the stale cache entry before loading, as cached_index does.",
       "note": "Found while fixing bug-744 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "load_block_index reads the header, the size check and every array from one open handle through vector_index._read_header and _array_reader, as the vector and coarse loaders do, so a rebuild that lands on the path mid-load is not mixed in: the handle keeps the file the header came from. cached_block_index pops the replaced entry before loading its successor. Before the fix, a file moved over the path between the header read and the array reads gave parents 101-103 under the first file's header (mapped and read alike), and the replaced index was still cached while its successor loaded. Pinned by tests/test_audit_2611_siblings.py; mutations M470 (reopen by path per array) and M471 (keep the stale entry) each turn a test red."
+      "fix_note": "load_block_index reads the header, the size check and every array from one open handle through vector_index._read_header and _array_reader, as the vector and coarse loaders do, so a rebuild that lands on the path mid-load is not mixed in: the handle keeps the file the header came from. cached_block_index pops the replaced entry before loading its successor. Before the fix, a file moved over the path between the header read and the array reads gave parents 101-103 under the first file's header (mapped and read alike), and the replaced index was still cached while its successor loaded. Pinned by tests/test_audit_2611_siblings.py; mutations M470 (reopen by path per array) and M471 (keep the stale entry) each turn a test red.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-794",
@@ -12099,7 +12113,8 @@
       "category": "concurrency",
       "fix_sketch": "Hold a lock file beside the sidecar for the read, overlay and rename, as the alias ledger does.",
       "note": "Found while fixing bug-630 (a sibling the fix did not cover); confirmed by reading the code.",
-      "fix_note": "A calibration's read of the sidecar, its overlay and the rename, and the rewrite that drops a deleted agent, happen under an advisory lock on <sidecar>.lock, the alias ledger's lock (now fileperms.lock_file, shared by both), which every server process takes for the same span. A lock that cannot be opened or taken is not written around: the calibration reports sidecar_persisted: false (so set_recall_precision reports the override as not applied), and the drop stays pending as it does when its rewrite fails. Reproduced with a second process that holds the lock for 1.5 s and then publishes a sidecar holding another agent: before the fix the calibration wrote meanwhile and its agent was gone from the file the other process published; with the lock it waits, reads that file and keeps both."
+      "fix_note": "A calibration's read of the sidecar, its overlay and the rename, and the rewrite that drops a deleted agent, happen under an advisory lock on <sidecar>.lock, the alias ledger's lock (now fileperms.lock_file, shared by both), which every server process takes for the same span. A lock that cannot be opened or taken is not written around: the calibration reports sidecar_persisted: false (so set_recall_precision reports the override as not applied), and the drop stays pending as it does when its rewrite fails. Reproduced with a second process that holds the lock for 1.5 s and then publishes a sidecar holding another agent: before the fix the calibration wrote meanwhile and its agent was gone from the file the other process published; with the lock it waits, reads that file and keeps both.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-797",
@@ -12114,7 +12129,8 @@
       "category": "configuration",
       "fix_sketch": "Keep refusing an empty value, say in the refusal that it was empty, and write the exception and its reason where the setting is defined and documented.",
       "note": "Found while fixing bug-727 (a sibling the fix did not cover); confirmed by reading the code. Filed first as 'read an empty value as unset (stdio)'. Measured before fixing: stdio with its input at end of file exits 0 within a second and logs no error, and the container image sets CPERSONA_TRANSPORT=streamable-http, so reading empty as stdio would turn an empty override of the image default into a server that quietly stops. tests/test_2611a2_x10.py also pins the empty value among the refused names.",
-      "fix_note": "validate_transport refuses an empty value with its own message, which keeps the `Unknown transport` prefix and says the variable is set but empty and that unsetting it selects stdio. The docstring, the on/off parser's comment and the CPERSONA_TRANSPORT row of docs/configuration.md (and the Japanese page) state the exception and why."
+      "fix_note": "validate_transport refuses an empty value with its own message, which keeps the `Unknown transport` prefix and says the variable is set but empty and that unsetting it selects stdio. The docstring, the on/off parser's comment and the CPERSONA_TRANSPORT row of docs/configuration.md (and the Japanese page) state the exception and why.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-798",
@@ -12254,7 +12270,8 @@
       "category": "data-integrity",
       "fix_sketch": "Strip mentions to a fixed point, as the annotation repair now does.",
       "note": "Found while fixing bug-781 (a sibling the fix did not cover); reproduced.",
-      "fix_note": "utils._strip_mentions removes mentions to a fixed point in one left-to-right scan: a mention holds no '<' or '>', so two cannot overlap and every order of removal ends at the same text, which a stack reaches by dropping a mention as soon as its closing '>' completes one. Ordinary content takes the one-pass result. It matched repeated substitution on 200,000 random strings and strips 100,000 characters of nested mentions in about 10 ms. check_discord_mention uses it. Pinned by tests/test_audit_2611_siblings.py with nested, ordinary and near-miss inputs; mutation M450 returns the one-pass result and turns the nested cases red."
+      "fix_note": "utils._strip_mentions removes mentions to a fixed point in one left-to-right scan: a mention holds no '<' or '>', so two cannot overlap and every order of removal ends at the same text, which a stack reaches by dropping a mention as soon as its closing '>' completes one. Ordinary content takes the one-pass result. It matched repeated substitution on 200,000 random strings and strips 100,000 characters of nested mentions in about 10 ms. check_discord_mention uses it. Pinned by tests/test_audit_2611_siblings.py with nested, ordinary and near-miss inputs; mutation M450 returns the one-pass result and turns the nested cases red.",
+      "fixed_in": "2.6.11a5"
     }
   ]
 }
