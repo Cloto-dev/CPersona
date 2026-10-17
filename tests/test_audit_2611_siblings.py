@@ -888,6 +888,39 @@ async def test_bug780_a_precision_that_keeps_the_beta_is_applied(degraded_gate):
     assert (stored["agent_betas"][CAL_AGENT], stored["agent_fused_gates"][CAL_AGENT]) == (2.0, 0.31)
 
 
+@pytest.mark.asyncio
+async def test_bug519_strict_over_a_failing_backend_leaves_the_balanced_pair_in_force(degraded_gate, monkeypatch):
+    """bug-519's reproduction, which bug-780's fix closes: under rsf a healthy calibration
+    measures the agent's gate at the default (balanced) beta, then strict is asked for while
+    the measurement raises, which calibration catches and degrades to no gate."""
+    monkeypatch.setattr(config, "RECALL_MODE", "rsf")
+    monkeypatch.setattr(config, "FUSED_GATE_BETA", 1.0)
+    measured_at = []
+
+    async def healthy(db, agent_id, sample_queries, window_min, beta, floor, draws=None):
+        measured_at.append(beta)
+        return {"threshold": 0.155, "signal": "rsf", "threshold_draws": [0.155]}
+
+    monkeypatch.setattr(admin_handlers, "_calibrate_fused_gate_median", healthy)
+    healthy_run = await admin_handlers.do_calibrate_threshold(CAL_AGENT)
+    assert healthy_run["ok"] is True and measured_at == [1.0], healthy_run
+    assert vector._agent_fused_gates[CAL_AGENT] == 0.155
+
+    async def backend_raises(*args, **kwargs):
+        raise RuntimeError("embedding backend unavailable")
+
+    monkeypatch.setattr(admin_handlers, "_calibrate_fused_gate_median", backend_raises)
+    result = await admin_handlers.do_set_recall_precision(CAL_AGENT, "strict")
+
+    assert result["ok"] is False and "not applied" in result["error"], result
+    in_force = await admin_handlers.do_get_recall_precision(CAL_AGENT)
+    assert (in_force["precision"], in_force["beta"]) == ("balanced", 1.0), in_force
+    assert vector._agent_fused_gates[CAL_AGENT] == 0.155
+    stored = _stored(degraded_gate)  # what a restart restores
+    assert stored["agent_betas"].get(CAL_AGENT) is None
+    assert stored["agent_fused_gates"][CAL_AGENT] == 0.155
+
+
 # ---------------------------------------------------------------------------
 # bug-796 — the calibration sidecar is read, overlaid and replaced under a lock
 # ---------------------------------------------------------------------------

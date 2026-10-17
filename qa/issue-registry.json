@@ -7713,12 +7713,14 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "if not cal\\.get\\(\"ok\"\\) or cal\\.get\\(\"persisted\"\\) is False:",
+      "pattern": "pass  # the stored beta stays",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "When the fused gate is enabled and a signal applies but no gate was measured, treat it as a failure to apply in set_recall_precision. Roll the beta back, or drop the agent's stale gate so the heuristic is used, and never persist a beta beside a gate measured at a different beta.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The fix needs a scoring decision on what a precision change without a measured gate should leave in force."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced. The fix needs a scoring decision on what a precision change without a measured gate should leave in force.",
+      "fix_note": "Closed by bug-780's fix, shipped in 2.6.11a5, which takes the first of this entry's two options. When set_recall_precision asks for a new beta, no gate could be measured at it (the measurement returned nothing, or raised and calibration caught it), and the agent holds a gate measured at its current beta, do_calibrate_threshold keeps the stored beta and set_recall_precision answers ok:false with the override not applied. The gate in force, the precision reported and the pair a restart restores therefore stay the ones measured together. The other option, dropping the agent's gate for the heuristic, was not taken. An agent holding no gate of its own has no measured gate to disagree with, because only an agent's own gate is ever measured (no version writes a measured global gate), so its beta is recorded. The reproduction (a healthy rsf calibration at balanced, then strict while the measurement raises) is pinned by test_bug519_strict_over_a_failing_backend_leaves_the_balanced_pair_in_force. Under bug-780's mutations it fails as reproduced: with M477 the sidecar stores beta 2.0 beside the gate 0.155, and with M480 the call answers ok:true, precision strict, beta 2.0.",
+      "fixed_in": "2.6.11a5"
     },
     {
       "id": "bug-520",
