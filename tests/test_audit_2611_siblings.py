@@ -707,3 +707,86 @@ def test_bug797_a_misspelt_transport_keeps_its_own_refusal(monkeypatch):
         config.validate_transport()
 
     assert str(refused.value) == "Unknown transport: http (expected one of stdio, streamable-http)"
+
+
+# ---------------------------------------------------------------------------
+# bug-783 — a lone surrogate is refused at the tool boundary, for every tool
+# ---------------------------------------------------------------------------
+
+LONE = "\udfff"
+
+
+def _string_arguments():
+    cases = []
+    for tool in server.registry._tools:
+        for name, spec in (tool.inputSchema or {}).get("properties", {}).items():
+            kinds = spec.get("type")
+            if "string" in (kinds if isinstance(kinds, list) else [kinds]):
+                cases.append(pytest.param(tool.name, name, id=f"{tool.name}.{name}"))
+    return cases
+
+
+def _refusal_text(response: dict) -> str:
+    return str(response.get("error") or response.get("reason") or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("tool", "argument"), _string_arguments())
+async def test_bug783_every_string_argument_is_refused_at_the_boundary(file_db, tool, argument):
+    response = await asyncio.wait_for(server.registry._handlers[tool]({argument: LONE}), 30)
+
+    assert response.get("ok") is False, response
+    assert f"{argument} holds a lone UTF-16 surrogate" in _refusal_text(response), response
+
+
+@pytest.mark.asyncio
+async def test_bug783_a_nested_string_is_named_by_its_path(file_db):
+    arguments = {"agent_id": "agent.a", "associations": {"entities": [{"name": "fine"}, {"name": LONE}]}}
+    response = await server.registry._handlers["declare_associations"](arguments)
+
+    assert response["error"].startswith("associations.entities[1].name holds a lone UTF-16 surrogate")
+    assert (response["result"], response["entities"], response["relations"]) == ("rejected", [], [])
+
+
+@pytest.mark.asyncio
+async def test_bug783_a_key_is_refused_without_quoting_it(file_db):
+    arguments = {"agent_id": "agent.a", "content": "fine", "metadata": {LONE: 1}}
+    response = await server.registry._handlers["store"](arguments)
+
+    assert response["result"] == "rejected", response
+    assert response["reason"].startswith("a key in metadata holds a lone UTF-16 surrogate")
+    response["reason"].encode("utf-8")  # the refusal does not carry the character it refuses
+
+
+# The tools that refuse a lone surrogate themselves (bug-633): the boundary answers
+# them with exactly what they answer, so a caller cannot tell which layer refused.
+_SELF_CHECKED = [
+    ("store", {"agent_id": "agent.a", "content": LONE}),
+    ("store", {"agent_id": "agent.a", "content": LONE, "lock": True}),
+    ("archive_episode", {"agent_id": "agent.a", "summary": LONE}),
+    ("recall", {"agent_id": "agent.a", "query": LONE}),
+    ("recall_with_context", {"agent_id": "agent.a", "query": LONE}),
+    ("reconstruct", {"agent_id": "agent.a", "query": LONE}),
+    ("get_contents", {"agent_id": LONE, "refs": ["mem:1"]}),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("tool", "arguments"), _SELF_CHECKED, ids=lambda v: v if isinstance(v, str) else "")
+async def test_bug783_the_boundary_answers_as_the_tool_itself_does(file_db, tool, arguments):
+    own_handler = server.registry._handlers[tool]._acl_inner.__wrapped__
+    own = await own_handler(dict(arguments))
+    boundary = await server.registry._handlers[tool](dict(arguments))
+
+    assert "lone UTF-16 surrogate" in _refusal_text(own), own
+    assert boundary == own
+
+
+@pytest.mark.asyncio
+async def test_bug783_update_profile_is_refused_in_its_own_shape(file_db):
+    own = await server.registry._handlers["update_profile"]({"agent_id": "agent.a", "profile": ""})
+    boundary = await server.registry._handlers["update_profile"]({"agent_id": "agent.a", "profile": LONE})
+
+    assert own == {"ok": False, "profiles_updated": 0, "reason": "empty profile"}
+    assert set(boundary) == set(own)
+    assert boundary["profiles_updated"] == 0

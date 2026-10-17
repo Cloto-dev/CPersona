@@ -649,6 +649,37 @@ def lone_surrogate_issue(**fields: object) -> str | None:
     return None
 
 
+def lone_surrogate_in(arguments: dict) -> str | None:
+    """:func:`lone_surrogate_issue` over every string in a tool call's arguments.
+
+    Nested values count: an association's entity name or a history entry is bound
+    as text like any top-level argument. A field is named by its path
+    (``associations.entities[0].name``). A dictionary key is checked before
+    anything under it, and is named by where it sits rather than by its own text,
+    so the refusal never carries the character it refuses. Walked with a stack, so
+    the depth of the arguments is not the depth of this call.
+    """
+    pending: list[tuple[str, object]] = [("", arguments)]
+    while pending:
+        path, value = pending.pop()
+        if isinstance(value, str):
+            issue = lone_surrogate_issue(**{path: value})
+            if issue:
+                return issue
+        elif isinstance(value, dict):
+            children = []
+            for key, item in value.items():
+                if isinstance(key, str):
+                    issue = lone_surrogate_issue(**{f"a key in {path or 'the arguments'}": key})
+                    if issue:
+                        return issue
+                children.append((f"{path}.{key}" if path else str(key), item))
+            pending.extend(reversed(children))
+        elif isinstance(value, (list, tuple)):
+            pending.extend(reversed([(f"{path}[{i}]", item) for i, item in enumerate(value)]))
+    return None
+
+
 def _try_parse_json(s: str) -> dict:
     """Try to parse a string as JSON, return empty dict on failure."""
     try:

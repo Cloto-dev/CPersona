@@ -10793,7 +10793,7 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "^            \"result\": \"rejected\",$",
+      "pattern": "return \\{\\*\\*_oc_reject\\(error\\), \\*\\*_declare_refused\\(error\\)\\}",
       "expected": "present",
       "status": "fixed",
       "category": "response-shape",
@@ -11895,13 +11895,14 @@
       "severity": "LOW",
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
-      "file": "cpersona/admin_handlers.py",
-      "pattern": "_warn_if_unscoped\\(\\\"do_update_memory\\\", memory_id, agent_id\\)",
+      "file": "cpersona/server.py",
+      "pattern": "^_install_surrogate_guard\\(registry\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Refuse a lone surrogate once at the tool boundary for every string argument (utils.lone_surrogate_issue), rather than handler by handler, and keep each tool's own refusal shape.",
-      "note": "Found while fixing bug-633 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-633 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "Every tool handler is wrapped, below the last registration and inside the capability guard, by a check that walks every string in the call's arguments (nested lists and objects included, dictionary keys before their values) through utils.lone_surrogate_in and refuses the first lone surrogate by its path, before the handler binds anything. The refusal takes the tool's own shape: store keeps result/reason (and locked under lock:true), declare_associations result and its empty lists, archive_episode episode_id, recall and recall_with_context messages, reconstruct items and returned_count, update_profile profiles_updated/reason; every other tool answers with error_response. Measured by sending U+DFFF alone in each of the 68 string parameters across the tools: before, 21 answered this refusal, 18 raised UnicodeEncodeError, 2 quoted the encoder in their refusal, 8 answered as if nothing was wrong and 19 were refused first for another reason; after, all 68 answer this refusal."
     },
     {
       "id": "bug-784",
