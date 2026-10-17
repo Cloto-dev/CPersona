@@ -127,6 +127,11 @@ schema also stays untouched, which is a 2.5.x line invariant.
 
 - `token` accepts a literal or a `${ENV_VAR}` reference (resolved at load; an
   unset variable is a startup error — fail closed, §7).
+- A resolved token that no HTTP client can present is a startup error naming the
+  client: one with leading or trailing whitespace (a secret written with `echo`
+  ends in a newline), a control character, or a non-ASCII character. HTTP strips
+  the whitespace around a header value and cannot carry a control character, so
+  such a row would answer its client with `401` on every request.
 - `token: null` says the row carries grants for a principal some resolver
   asserts, rather than a credential a caller presents (§5.4). It contributes no
   token entry, so nothing can present it.

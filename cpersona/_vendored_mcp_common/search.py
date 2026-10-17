@@ -183,11 +183,17 @@ class DuckDuckGoProvider(SearchProvider):
                 if "uddg" in parsed:
                     url = parsed["uddg"][0]
 
-            # Extract snippet from nearby result__snippet
+            # Extract snippet from nearby result__snippet, looking no further than the
+            # next result's title anchor: a result without a snippet otherwise took the
+            # next result's, attributing that text to the wrong URL.
             snippet = ""
+            window = html[match.end() : match.end() + 2000]
+            next_result = re.search(r'<a[^>]*class="result__a"', window)
+            if next_result:
+                window = window[: next_result.start()]
             snippet_match = re.search(
                 r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>',
-                html[match.end() : match.end() + 2000],
+                window,
                 re.DOTALL,
             )
             if snippet_match:

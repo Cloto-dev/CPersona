@@ -24,8 +24,17 @@ def validate_int(arguments: dict, key: str, default: int = 0) -> int:
     """Extract an integer value, returning *default* if missing or wrong type.
 
     ``bool`` is explicitly excluded (``isinstance(True, int)`` is ``True``).
+
+    A float with no fractional part (``3.0``) is the integer it spells. JSON Schema
+    counts such a number as an ``integer``, so a tool whose input schema declares one
+    accepts it, and a client that serialises every number as a float sends it that
+    way; replacing it with the default would silently discard a value the schema
+    let through. ``3.5``, ``inf`` and ``nan`` are not integers and still give the
+    default.
     """
     val = arguments.get(key, default)
+    if isinstance(val, float) and val.is_integer():
+        return int(val)
     if isinstance(val, bool) or not isinstance(val, int):
         return default
     return val

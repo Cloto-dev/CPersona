@@ -87,6 +87,15 @@ class StreamState:
 # handlers.
 _active_streams: dict[int, StreamState] = {}
 
+# Streaming tools/call requests the MGP interceptor has forwarded whose handler has not
+# registered a StreamState yet, keyed by request id; the value is the reason of a cancel
+# that arrived in that window, None until one does. Such a cancel found nothing in
+# _active_streams, was answered not_active and forgotten, and the stream it named then
+# ran in full. The handler applies a recorded cancel as it registers. An entry leaves
+# when the handler registers or the tools/call ends; the interceptor bounds the table in
+# case a forwarded request never reaches a handler at all.
+_pending_streams: dict[int, str | None] = {}
+
 
 def _record_chunk(state: StreamState, index: int, content: dict) -> None:
     """Append a chunk to the ring-bounded buffer and update last_index."""
@@ -660,17 +669,30 @@ def parse_chat_think_result(config: ProviderConfig, response_data: dict) -> dict
     finish_reason = choice.get("finish_reason", "stop")
 
     if finish_reason == "tool_calls" or "tool_calls" in message_obj:
-        tool_calls_arr = message_obj.get("tool_calls", [])
+        # OpenAI-compatible backends send `"tool_calls": null` on a plain answer, and
+        # some send the arguments as a JSON object rather than the string the API
+        # documents. Either used to raise TypeError and turn the answer into an
+        # internal error, so a shape this loop cannot use is skipped instead.
+        tool_calls_arr = message_obj.get("tool_calls")
+        if not isinstance(tool_calls_arr, list):
+            tool_calls_arr = []
         calls = []
         for tc in tool_calls_arr:
+            if not isinstance(tc, dict):
+                continue
             tc_id = tc.get("id", "")
-            function = tc.get("function", {})
+            function = tc.get("function")
+            if not isinstance(function, dict):
+                function = {}
             name = function.get("name", "")
             arguments_str = function.get("arguments", "{}")
-            try:
-                arguments = json.loads(arguments_str)
-            except json.JSONDecodeError:
-                arguments = {}
+            if isinstance(arguments_str, dict):
+                arguments = arguments_str
+            else:
+                try:
+                    arguments = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {}
 
             if tc_id and name:
                 calls.append({"id": tc_id, "name": name, "arguments": arguments})
@@ -1165,6 +1187,12 @@ async def handle_think_with_tools_streaming(
 
     state = StreamState(request_id=request_id)
     _active_streams[request_id] = state
+    # A cancel that arrived before this registration; the loop below then stops at the
+    # first chunk, before any is sent.
+    early_cancel = _pending_streams.pop(request_id, None)
+    if early_cancel is not None:
+        state.cancelled_reason = early_cancel
+        state.cancel_event.set()
 
     try:
         agent = arguments.get("agent", {})
@@ -1207,7 +1235,14 @@ async def handle_think_with_tools_streaming(
                 delta_tool_calls = delta.get("tool_calls")
                 if isinstance(delta_tool_calls, list):
                     for tc in delta_tool_calls:
+                        # The streaming twin of parse_chat_think_result's shape guard: a
+                        # fragment that is not an object, or an index that is not a
+                        # non-negative integer, raised and dropped the whole answer.
+                        if not isinstance(tc, dict):
+                            continue
                         tc_index = tc.get("index", 0)
+                        if not isinstance(tc_index, int) or tc_index < 0:
+                            continue
                         while len(tool_calls_buffer) <= tc_index:
                             tool_calls_buffer.append({})
                         slot = tool_calls_buffer[tc_index]
@@ -1239,9 +1274,13 @@ async def handle_think_with_tools_streaming(
                     )
                     _record_chunk(state, index, chunk_content)
                     index += 1
-        except (httpx.TimeoutException, httpx.ConnectError, LlmApiError) as e:
+        except (httpx.TransportError, LlmApiError) as e:
             # Recoverable mid-stream errors — if we have at least one chunk
             # emitted, surface a partial result rather than discarding it.
+            # TransportError, not only timeouts and refused connections: a reset
+            # (ReadError) or a peer closing a chunked body early
+            # (RemoteProtocolError) also arrive after chunks were sent, and those
+            # went to the generic error path with the streamed text dropped.
             stream_error = e
 
         # --- Cancel path: return the partial snapshot immediately. ------------
@@ -1392,6 +1431,8 @@ async def run_server(server: Server, config: "ProviderConfig | None" = None):
                 inner_send,
                 write_stream,
                 _active_streams,
+                _pending_streams if config is not None else None,
+                (lambda request: _opens_stream(config, request)) if config is not None else None,
             )
             try:
                 init_options = server.create_initialization_options(
@@ -1585,6 +1626,24 @@ def _extract_stream_flag(req) -> bool:
     return bool(mgp.get("stream"))
 
 
+def _opens_stream(config: ProviderConfig, request) -> bool:
+    """Whether the server will stream this raw ``tools/call`` request.
+
+    The interceptor asks this before forwarding the request, so it can tell a cancel
+    that names a stream about to register from one that names nothing. It mirrors the
+    dispatch in :func:`create_llm_mcp_server`: ``think_with_tools``, opted into
+    streaming by ``params._mgp.stream``, on a provider that supports streaming.
+    """
+    params = request.params or {}
+    mgp = params.get("_mgp")
+    return (
+        config.supports_streaming
+        and params.get("name") == "think_with_tools"
+        and isinstance(mgp, dict)
+        and bool(mgp.get("stream"))
+    )
+
+
 def _install_mgp_stream_wrapper(server: Server) -> None:
     """Wrap ``server.request_handlers[CallToolRequest]`` to set a ContextVar.
 
@@ -1605,5 +1664,12 @@ def _install_mgp_stream_wrapper(server: Server) -> None:
             return await original(req)
         finally:
             _mgp_stream_requested.reset(token)
+            # A forwarded call that never registered a stream (streaming switched off,
+            # or no request context) leaves its pending entry behind; drop it, so a
+            # later cancel naming the same id is answered not_active.
+            try:
+                _pending_streams.pop(server.request_context.request_id, None)
+            except LookupError:
+                pass
 
     server.request_handlers[CallToolRequest] = _wrapped

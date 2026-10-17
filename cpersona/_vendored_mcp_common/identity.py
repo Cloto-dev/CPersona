@@ -24,8 +24,26 @@ class Principal:
     subject: str = ""
 
 
+def _unpresentable(token: str) -> str | None:
+    """Why no HTTP client could present ``token``, or None when one can.
+
+    A header value cannot carry a control character, and HTTP strips the whitespace
+    around it, so a token with either never matches what a client sends: the client
+    gets a 401 on every request and nothing names the cause. A secret written with
+    ``echo`` ends in a newline, which is how this usually happens. The reason never
+    contains the token.
+    """
+    if not token.isascii():
+        return "contains non-ASCII characters"
+    if token != token.strip():
+        return "has leading or trailing whitespace (often a trailing newline)"
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in token):
+        return "contains a control character"
+    return None
+
+
 def resolve_env_token(raw: str) -> str:
-    """Resolve whole ${ENV_VAR} references and reject missing/non-ASCII tokens."""
+    """Resolve whole ${ENV_VAR} references; reject missing and unpresentable tokens."""
     if not isinstance(raw, str) or not raw:
         raise CredentialError("token must be a non-empty string")
     ref = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", raw)
@@ -35,8 +53,9 @@ def resolve_env_token(raw: str) -> str:
             raise CredentialError("token environment variable is unset or empty")
     elif "${" in raw:
         raise CredentialError("token must use a whole-string ${ENV_VAR} reference")
-    if not raw.isascii():
-        raise CredentialError("bearer token contains non-ASCII characters")
+    reason = _unpresentable(raw)
+    if reason:
+        raise CredentialError(f"bearer token {reason}")
     return raw
 
 
@@ -50,6 +69,9 @@ def validate_token_entries(
     for token, _client_id in entries:
         if not isinstance(token, str) or not token or not token.isascii():
             raise CredentialError("static token must be non-empty ASCII")
+        reason = _unpresentable(token)
+        if reason:
+            raise CredentialError(f"static token {reason}")
         if token in seen:
             raise CredentialError("credential duplicates another credential")
         seen.add(token)

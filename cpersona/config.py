@@ -782,7 +782,9 @@ def reported_embedding_model() -> str:
 
 VECTOR_MIN_SIMILARITY = _parse_float("CPERSONA_VECTOR_MIN_SIMILARITY", 0.3)
 
-EMBEDDING_CACHE_SIZE = _parse_int("CPERSONA_EMBEDDING_CACHE_SIZE", 256)
+# bug-598: floored at 0 (no caching). A negative size made every cache write evict the
+# entry it had just stored and then pop an empty cache, raising after a successful embed.
+EMBEDDING_CACHE_SIZE = max(0, _parse_int("CPERSONA_EMBEDDING_CACHE_SIZE", 256))
 EMBEDDING_CACHE_TTL = _parse_int("CPERSONA_EMBEDDING_CACHE_TTL", 300)
 
 

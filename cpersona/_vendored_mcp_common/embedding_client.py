@@ -101,6 +101,19 @@ class EmbedOutcome:
     error: str | None = None
 
 
+# What a failure boundary turns into a failed outcome instead of letting it reach the
+# caller. httpx.InvalidURL is not a RequestError: httpx raises it while building the
+# request from a configured URL it cannot parse (a port that is not a number), so
+# without it a typo in the endpoint escaped every call instead of failing each one.
+_REQUEST_FAILURES = (
+    httpx.RequestError,
+    httpx.HTTPStatusError,
+    httpx.InvalidURL,
+    ValueError,
+    KeyError,
+)
+
+
 def _safe_endpoint(url: str) -> str:
     """Strip credentials and query parameters from a URL before it is reported."""
     if not url:
@@ -110,8 +123,17 @@ def _safe_endpoint(url: str) -> str:
     except ValueError:
         return "<unparsable>"
     host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
+    try:
+        port = parts.port
+    except ValueError:
+        # A port that is not a number, or not one in range. This runs inside the
+        # failure boundaries' except handlers, so raising here would replace the
+        # failure being reported with this one and carry it out of the boundary.
+        # The authority after any userinfo still names the host and the bad port.
+        host = parts.netloc.rpartition("@")[2]
+        port = None
+    if port:
+        host = f"{host}:{port}"
     return urlunsplit((parts.scheme, host, parts.path, "", "")) or "<unset>"
 
 
@@ -125,7 +147,12 @@ def _redact_one_url(match: re.Match) -> str:
     url = match.group(0)
     try:
         parts = urlsplit(url)
-        if parts.username is None and parts.password is None and not parts.query and not parts.fragment:
+        if (
+            parts.username is None
+            and parts.password is None
+            and not parts.query
+            and not parts.fragment
+        ):
             return url
         return _safe_endpoint(url)
     except ValueError:
@@ -372,6 +399,13 @@ class EmbeddingClient:
         self._client = None
         # LRU cache: key=text_hash, value=(embedding, timestamp)
         self._cache: OrderedDict[str, tuple[list[float], float]] = OrderedDict()
+        if cache_size < 0:
+            # A negative size made every cache write evict the entry it had just
+            # stored and then pop an empty cache, a KeyError raised after the request
+            # had succeeded and outside the failure boundary, so every single-text
+            # embed failed. Size 0 already means no caching.
+            logger.warning("Embedding cache size %d is negative; caching is off", cache_size)
+            cache_size = 0
         self._cache_size = cache_size
         self._cache_ttl = cache_ttl
         self._timeout = timeout
@@ -487,7 +521,7 @@ class EmbeddingClient:
             return _validate_identity(self._parse_within_budget(response)), EmbedOutcome(
                 attempted=True, ok=True
             )
-        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
+        except _REQUEST_FAILURES as e:
             safe = _safe_endpoint(url)
             # Either configured form of the URL can appear in the exception text, and
             # both carry the same userinfo and query string -- and so does httpx's own
@@ -552,7 +586,7 @@ class EmbeddingClient:
                     ),
                 )
             return _validate_token_info(raw, texts), EmbedOutcome(attempted=True, ok=True)
-        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
+        except _REQUEST_FAILURES as e:
             safe = _safe_endpoint(url)
             # Either configured form of the URL can appear in the exception text, and
             # both carry the same userinfo and query string -- and so does httpx's own
@@ -599,7 +633,7 @@ class EmbeddingClient:
                     ok=False,
                     error=f"mode={self.mode} is not a supported embedding mode",
                 )
-        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, KeyError) as e:
+        except _REQUEST_FAILURES as e:
             # bug-425: build the evidence first and log that, rather than logging the
             # exception and sanitising only the value handed back. httpx puts the
             # request URL inside its own message, so an endpoint configured with

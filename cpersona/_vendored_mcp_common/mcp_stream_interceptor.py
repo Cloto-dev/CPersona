@@ -23,7 +23,10 @@ Cancel flow (MGP §12.7)
     Interceptor looks up ``_active_streams[M]`` → sets ``cancel_event`` and
     writes a ``JSONRPCResponse`` with ``{cancelled: true, partial_result:
     {content: accumulated_text}}`` to the kernel. Main streaming loop observes
-    ``cancel_event`` on the next iteration and terminates cleanly.
+    ``cancel_event`` on the next iteration and terminates cleanly. A cancel that
+    arrives after a streaming ``tools/call`` was forwarded but before its handler
+    registered the stream is kept in ``pending_streams`` and applied by the handler
+    when it registers.
 
 Gap flow (MGP §12.9)
     Kernel sends ``notifications/mgp.stream.gap`` with ``missing_indices``.
@@ -37,6 +40,7 @@ Gap flow (MGP §12.9)
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from mcp.types import JSONRPCNotification, JSONRPCRequest
@@ -66,18 +70,35 @@ logger = logging.getLogger(__name__)
 # MGP error codes (see MGP_COMMUNICATION.md §14)
 _ERROR_INVALID_PARAMS = -32602
 
+# How many forwarded-but-unregistered streams are remembered. An entry normally leaves
+# within one dispatch; the bound only matters for a request that never reaches a handler.
+_PENDING_STREAMS_MAX = 256
+
+
+def _remember_pending(pending_streams: dict[int, str | None], request_id: int) -> None:
+    pending_streams[request_id] = None
+    while len(pending_streams) > _PENDING_STREAMS_MAX:
+        pending_streams.pop(next(iter(pending_streams)))
+
 
 async def mgp_message_interceptor(
     raw_read: MemoryObjectReceiveStream[SessionMessage | Exception],
     inner_send: MemoryObjectSendStream[SessionMessage | Exception],
     write_stream: MemoryObjectSendStream[SessionMessage],
     active_streams: dict[int, StreamState],
+    pending_streams: dict[int, str | None] | None = None,
+    opens_stream: Callable[[JSONRPCRequest], bool] | None = None,
 ) -> None:
     """Forward messages to ``inner_send``; intercept MGP method/notification calls.
 
     Exits when ``raw_read`` is closed (stdio EOF) or the task is cancelled.
     Exceptions from the stream are forwarded verbatim so the SDK can surface
     them through its normal error path.
+
+    With ``pending_streams`` and ``opens_stream``, a ``tools/call`` the server will
+    stream is recorded in ``pending_streams`` before it is forwarded, so a cancel
+    that arrives before its handler registers a stream is kept for that handler
+    (see ``llm_provider._pending_streams``) instead of being answered not_active.
     """
     async with raw_read, inner_send:
         async for msg in raw_read:
@@ -88,7 +109,7 @@ async def mgp_message_interceptor(
             root = msg.message.root
 
             if isinstance(root, JSONRPCRequest) and root.method == "mgp/stream/cancel":
-                await _handle_mgp_cancel(root, write_stream, active_streams)
+                await _handle_mgp_cancel(root, write_stream, active_streams, pending_streams)
                 continue  # consumed: do not forward to ServerSession
 
             if (
@@ -98,6 +119,16 @@ async def mgp_message_interceptor(
                 await _handle_mgp_gap(root, write_stream, active_streams)
                 continue  # consumed
 
+            if (
+                pending_streams is not None
+                and opens_stream is not None
+                and isinstance(root, JSONRPCRequest)
+                and root.method == "tools/call"
+                and isinstance(root.id, int)
+                and opens_stream(root)
+            ):
+                _remember_pending(pending_streams, root.id)
+
             await inner_send.send(msg)
 
 
@@ -105,6 +136,7 @@ async def _handle_mgp_cancel(
     request: JSONRPCRequest,
     write_stream: MemoryObjectSendStream[SessionMessage],
     active_streams: dict[int, StreamState],
+    pending_streams: dict[int, str | None] | None = None,
 ) -> None:
     """Respond to ``mgp/stream/cancel`` and signal the active stream to stop.
 
@@ -133,6 +165,17 @@ async def _handle_mgp_cancel(
         return
 
     state = active_streams.get(target_id)
+    if state is None and pending_streams is not None and target_id in pending_streams:
+        # Forwarded, but its handler has not registered the stream yet. Answering
+        # not_active here dropped the cancel and the stream then ran in full; the
+        # handler applies the recorded reason when it registers, before any chunk.
+        pending_streams[target_id] = str(reason)
+        await write_mgp_method_response(
+            write_stream,
+            request.id,
+            {"cancelled": True, "partial_result": {"content": ""}},
+        )
+        return
     if state is None:
         # Stream already completed or never existed. Not a protocol error —
         # respond success=false so the kernel can log and move on.
