@@ -11865,12 +11865,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/checks.py",
-      "pattern": "writable = _rewritable\\(rows, _MEMORY_ANNOTATION_PATTERN\\)",
+      "pattern": "writable = _rewritable\\(rows, _strip_annotations\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "data-integrity",
       "fix_sketch": "Clean the rows with utils._strip_annotations (then strip) instead of _MEMORY_ANNOTATION_PATTERN.sub, so the repair and the write seam produce the same text.",
-      "note": "Found while fixing bug-616 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-616 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "check_memory_annotation cleans each row with utils._strip_annotations, the function the write seam strips with, so the repair and a store produce the same text and a repaired row holds no annotation. Before the fix '[Memory fr[Memory from a] om b] keep this' was repaired to '[Memory from b] keep this' and reported again. Pinned by tests/test_audit_2611_siblings.py; mutation M449 restores the one-pass repair and turns its test red."
     },
     {
       "id": "bug-782",
@@ -11878,13 +11879,14 @@
       "severity": "LOW",
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
-      "file": "cpersona/checks.py",
-      "pattern": "\\\"UPDATE memories SET content = \\?, embedding = NULL, embedding_model = '' WHERE id = \\? AND locked = 0\\\",",
+      "file": "cpersona/maintenance_handlers.py",
+      "pattern": "await _queue_derived_builds\\(owner, items, session_key\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "index-divergence",
       "fix_sketch": "Collect the rewritten row ids during the fix run and queue their node and block builds after the run commits, as the merge path does.",
-      "note": "Found while fixing bug-625 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-625 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "The list the repairs record their deletes and rewrites in (checks.repair_effects, formerly remote_index_effects) is now collected on every fix run rather than only with remote search armed. After the commit, maintenance_handlers._after_repairs_commit tells the remote index when it is armed, as before, and queues node and block builds for each row whose final state is a rewrite, through admin_handlers._queue_derived_builds under the caller's session, as a merge does. check_health and deep_check both settle through it, and a check that crashed and rolled back drops its notes as before. Before the fix an annotation, mention or oversized-content repair queued nothing. Pinned by tests/test_audit_2611_siblings.py for all three repairs, with a report-only run and a row deleted on collision queueing nothing; mutations M451 (no queueing) and M452 (collecting only with remote search armed) turn them red."
     },
     {
       "id": "bug-783",
@@ -11949,12 +11951,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/database.py",
-      "pattern": "SELECT MAX\\(id\\) FROM memories",
+      "pattern": "SELECT COALESCE\\(MAX\\(CASE WHEN locked != 0 THEN id END\\), MAX\\(id\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check",
       "fix_sketch": "Choose the survivor as COALESCE(locked row, MIN/MAX(id)) per group, as check_dedup_msg_id_index now does.",
-      "note": "Found while fixing bug-638 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-638 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "Both v12 dedup steps keep a locked row when the group has one: the content step keeps COALESCE(MIN(locked id), MIN(id)) and the msg_id step COALESCE(MAX(locked id), MAX(id)), the choice check_dedup_msg_id_index makes. Only two locked colliders still leave an index skipped. Before the fix a schema 11 database with an unlocked row and a newer locked copy kept both and booted without idx_memories_dedup_content, and an older locked msg_id beside a newer unlocked one kept both msg_ids and skipped idx_memories_dedup_msg_id. Pinned by tests/test_audit_2611_siblings.py, which builds a schema 11 file with its full-text index and boots it through get_db(); mutations M453 (content) and M454 (msg_id) restore the old survivor and each turns its test red."
     },
     {
       "id": "bug-788",
@@ -11963,12 +11966,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/checks.py",
-      "pattern": "SELECT MIN\\(id\\) FROM memories",
+      "pattern": "SELECT COALESCE\\(MIN\\(CASE WHEN locked != 0 THEN id END\\), MIN\\(id\\)\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "health-check",
       "fix_sketch": "Prefer a locked row as the survivor, and repoint associations to it as the current repair repoints them to MIN(id).",
-      "note": "Found while fixing bug-638 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-638 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "check_duplicate_content keeps a locked row of each exact-bucket group when it has one, else the oldest, in the one predicate that counts and deletes. A deleted copy's declarations move to the kept channel '' copy, locked first, else to the copy kept in its own channel, locked first. Before the fix a group of an unlocked row and a newer locked copy reported total_extra 1 and repairable 0 on every run, and the repair deleted nothing. Pinned by tests/test_audit_2611_siblings.py; mutation M455 restores MIN(id) as the survivor, and M456 / M457 drop the locked-first choice of the repoint target in the shared and named channel, each turning a test red."
     },
     {
       "id": "bug-789",
@@ -11977,12 +11981,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/checks.py",
-      "pattern": "\\\"changes_since_build\\\": max\\(0, clock\\[2\\] - index\\.built_seq\\),",
+      "pattern": "issue\\[\\\"changes_since_build\\\"\\] = max\\(0, clock\\[2\\] - index\\.built_seq\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "isolation",
       "fix_sketch": "Report the checked agent's changed rows in an agent-scoped call (or omit the figure there), keeping the store-wide count for a whole-store call.",
-      "note": "Found while fixing bug-642 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-642 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "block_index_behind carries changes_since_build only in a whole-store call. The change clock counts every agent's block writes and the log keeps no owner for a deleted record, so an agent-scoped call is told the file is behind without the figure. Before the fix a call scoped to one agent reported the three block writes another agent made after the build. Pinned by tests/test_audit_2611_siblings.py; mutation M458 reports the figure in every call and turns its test red."
     },
     {
       "id": "bug-790",
@@ -12224,6 +12229,21 @@
       "fix_sketch": "Build the session manager in one function that production and the transport tests share, and pass the SDK a body limit it cannot reach, so the configurable budget is the only limit. Raise the mcp floor to the release that accepts the argument.",
       "fix_note": "server._http_session_manager() builds the stateless session manager with max_request_body_size set to sys.maxsize, and _run_http_server and tests/transport_harness.py both call it. The mcp floor is now 1.30.0: the argument first exists in 1.29.0, and pip keeps an installed mcp that satisfies the floor, so an upgrade over an older SDK would fail at HTTP startup; 1.30.0 is the release uv.lock tests. Pinned by three tests in tests/test_http_body_budget.py that drive the real transport: warn mode serves a 5 MiB body with and without a Content-Length and logs one crossing, a 6 MiB budget in reject mode serves 5 MiB and answers a 7 MiB body with its own JSON 413, and _run_http_server takes its manager from the factory. Removing the argument, setting it to the budget, building the manager inline in _run_http_server, or making the manager stateful each turns at least one of them red. The floor is pinned by test_runtime_dependency_floors_exclude_known_vulnerable_releases in tests/test_structural_gates.py, which lists mcp 1.29.1 as the last release the floor may not admit: lowering the floor to 1.26.0 or 1.29.0 turns it red.",
       "fixed_in": "2.6.11a4"
+    },
+    {
+      "id": "bug-806",
+      "summary": "(LOW) check_discord_mention's repair strips mentions with one regex pass, so it can assemble a new mention out of the text on either side of one it removed ('<@<@1>2>' becomes '<@2>'). The repaired row still holds a mention, and every later run rewrites it again. The sibling of bug-781 in the other content-rewriting repair that strips a pattern.",
+      "severity": "LOW",
+      "discovered": "2026-10-17T00:00:00Z",
+      "version": "2.6.11a4",
+      "file": "cpersona/checks.py",
+      "pattern": "writable = _rewritable\\(rows, _strip_mentions\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-integrity",
+      "fix_sketch": "Strip mentions to a fixed point, as the annotation repair now does.",
+      "note": "Found while fixing bug-781 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "utils._strip_mentions removes mentions to a fixed point in one left-to-right scan: a mention holds no '<' or '>', so two cannot overlap and every order of removal ends at the same text, which a stack reaches by dropping a mention as soon as its closing '>' completes one. Ordinary content takes the one-pass result. It matched repeated substitution on 200,000 random strings and strips 100,000 characters of nested mentions in about 10 ms. check_discord_mention uses it. Pinned by tests/test_audit_2611_siblings.py with nested, ordinary and near-miss inputs; mutation M450 returns the one-pass result and turns the nested cases red."
     }
   ]
 }

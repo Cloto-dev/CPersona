@@ -107,8 +107,9 @@ from cpersona.config import (
 from cpersona.database import FTS_TABLE_SQL, SCHEMA_VERSION, connection, release_read_probe_transaction
 from cpersona.utils import (
     _MEMORY_ANNOTATION_PATTERN,
-    _MENTION_PATTERN,
     _parse_timestamp_utc,
+    _strip_annotations,
+    _strip_mentions,
     canonical_source_types_sql,
     future_timestamp_boundary,
     json_dumps_finite,
@@ -210,28 +211,35 @@ _STALE_PROFILE_DAYS = 30
 # ---------------------------------------------------------------------------
 
 
+# What a fix run deleted and rewrote, for the work it owes after the commit.
+#
 # bug-539: in remote vector mode every memory row is also a vector in the remote
 # index (namespace cpersona:<owner>, id mem:<id>). The user-facing delete and update
 # handlers post /remove and /index for what they change; the repairs below delete
 # and rewrite rows too, and posted nothing, so a deleted row kept a ghost vector
 # that takes a top-K slot and rehydrates to nothing, and a rewritten row kept being
 # scored on text it no longer holds (the local NULL-and-re-embed of bug-028 never
-# reaches the remote arm). The repairs run inside the write transaction, where no
-# network call belongs, so they only record what they wrote here; the handler
-# posts it after the commit. None (the default) means nobody is collecting: a
-# report-only run, a local-mode run, or a direct runner call in a test.
+# reaches the remote arm).
+#
+# bug-782: a rewritten row also needs its overflow-node and block builds queued.
+# The content triggers drop both sets with the old text, so the record had neither
+# until a later sweep came round to it; update_memory and merge_memories queue them
+# after they rewrite text.
+#
+# The repairs run inside the write transaction, where no network call or queue
+# write belongs, so they only record what they wrote here; the handler does the
+# rest after the commit. None (the default) means nobody is collecting: a
+# report-only run, or a direct runner call in a test.
 #
 # Each entry is (owner agent_id, row id, new text) with None as the text for a
 # delete, appended only after the statement ran, so the list is exactly what the
 # run wrote. Order matters: a row rewritten by one check and deleted by a later
 # one ends deleted.
-remote_index_effects: contextvars.ContextVar[list | None] = contextvars.ContextVar(
-    "remote_index_effects", default=None
-)
+repair_effects: contextvars.ContextVar[list | None] = contextvars.ContextVar("repair_effects", default=None)
 
 
-def _note_remote(owner: str, row_id: int, text: str | None) -> None:
-    effects = remote_index_effects.get()
+def _note_effect(owner: str, row_id: int, text: str | None) -> None:
+    effects = repair_effects.get()
     if effects is not None:
         effects.append((owner, row_id, text))
 
@@ -249,7 +257,7 @@ def _note_remote(owner: str, row_id: int, text: str | None) -> None:
 async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> None:
     """Rewrite content for re-embedding, or delete an unlocked dedup collision."""
     owner = None
-    if remote_index_effects.get() is not None:
+    if repair_effects.get() is not None:
         found = await db.execute_fetchall("SELECT agent_id FROM memories WHERE id = ?", (row_id,))
         owner = found[0][0] if found else None
     try:
@@ -273,7 +281,7 @@ async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> 
         cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
         written = None
     if owner is not None and cursor.rowcount:
-        _note_remote(owner, row_id, written)
+        _note_effect(owner, row_id, written)
 
 
 # The three content-rewriting checks below share one shape: match a pattern,
@@ -295,11 +303,11 @@ def _unlocked(rows: list) -> list[tuple[int, str]]:
 # maintenance pass destroyed a vector for a text that did not change (under
 # EMBEDDING_MODE=none, permanently). Only rows the regex actually changes are
 # repairable, and only those are written.
-def _rewritable(rows: list, pattern: re.Pattern) -> list[tuple[int, str]]:
+def _rewritable(rows: list, clean) -> list[tuple[int, str]]:
     """(id, cleaned) for the unlocked rows whose rewrite is not a no-op."""
     out = []
     for row_id, content in _unlocked(rows):
-        cleaned = pattern.sub("", content).strip()
+        cleaned = clean(content).strip()
         if cleaned != content:
             out.append((row_id, cleaned))
     return out
@@ -313,7 +321,10 @@ async def check_memory_annotation(db, agent_id: str, fix: bool) -> list[dict]:
     )
     if not rows:
         return []
-    writable = _rewritable(rows, _MEMORY_ANNOTATION_PATTERN)
+    # bug-781: to the fixed point the write seam strips to (bug-616). One pass can
+    # assemble a new annotation out of the text on either side of the one it
+    # removed, and a row repaired that way kept an annotation the next run rewrote.
+    writable = _rewritable(rows, _strip_annotations)
     if fix:
         for row_id, cleaned in writable:
             await _rewrite_or_delete_on_collision(db, row_id, cleaned)
@@ -327,7 +338,8 @@ async def check_discord_mention(db, agent_id: str, fix: bool) -> list[dict]:
     )
     if not rows:
         return []
-    writable = _rewritable(rows, _MENTION_PATTERN)
+    # bug-806: to a fixed point, for the reason the annotation repair above does.
+    writable = _rewritable(rows, _strip_mentions)
     if fix:
         for row_id, cleaned in writable:
             await _rewrite_or_delete_on_collision(db, row_id, cleaned)
@@ -351,6 +363,12 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     # every recall scoped to its channel. The store draws the same line -- a
     # channel write is skipped only against the same channel or channel ''.
     #
+    # bug-788: the row an exact-bucket group keeps is a locked one when the group
+    # has one, else the oldest -- the choice check_dedup_msg_id_index makes since
+    # bug-638. Keeping the oldest beside a locked newer copy left both standing (a
+    # locked row is never deleted) and the group reported on every run, though
+    # deleting the unlocked one was all the repair had to do.
+    #
     # One fragment, every verb: the groups / total_extra report, the COUNT that
     # reports `repairable` and the DELETE that performs the repair select the
     # same rows, and a count that disagrees with its own delete is the defect
@@ -360,7 +378,8 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     covered = f"""FROM memories
                 WHERE (
                       id NOT IN (
-                          SELECT MIN(id) FROM memories
+                          SELECT COALESCE(MIN(CASE WHEN locked != 0 THEN id END), MIN(id))
+                          FROM memories
                           GROUP BY agent_id, project_id, channel, content
                       )
                       OR (channel != '' AND EXISTS (
@@ -390,12 +409,16 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
     if fix:
         # A deleted copy's declarations move to the row that covers it, which holds the
         # same text; the delete trigger would otherwise take them with the copy. That
-        # row is the oldest channel '' copy when there is one, and otherwise the oldest
-        # copy in the deleted row's own channel -- never a sibling channel's copy,
-        # which no reader of this row's channel sees. Only rows something declares
-        # about are read.
+        # row is the channel '' copy the group keeps when there is one, and otherwise
+        # the copy kept in the deleted row's own channel -- never a sibling channel's
+        # copy, which no reader of this row's channel sees. Each keeps a locked copy
+        # first, as the predicate above does. Only rows something declares about are
+        # read.
         for row_id, agent, keep in await db.execute_fetchall(
-            "SELECT id, agent_id, (SELECT COALESCE(MIN(CASE WHEN k.channel = '' THEN k.id END),"
+            "SELECT id, agent_id, (SELECT COALESCE("
+            "MIN(CASE WHEN k.channel = '' AND k.locked != 0 THEN k.id END),"
+            " MIN(CASE WHEN k.channel = '' THEN k.id END),"
+            " MIN(CASE WHEN k.channel = memories.channel AND k.locked != 0 THEN k.id END),"
             " MIN(CASE WHEN k.channel = memories.channel THEN k.id END))"
             " FROM memories k WHERE k.agent_id = memories.agent_id AND k.project_id = memories.project_id"
             f" AND k.content = memories.content) {surplus} AND {associations.names_memory_sql('memories.id')}",
@@ -405,11 +428,11 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
         # The same predicate, read under the same transaction just before the
         # DELETE, is the set the DELETE removes (bug-539).
         doomed = []
-        if remote_index_effects.get() is not None:
+        if repair_effects.get() is not None:
             doomed = await db.execute_fetchall(f"SELECT agent_id, id {surplus}", iso.params)
         await db.execute(f"DELETE {surplus}", iso.params)
         for owner, row_id in doomed:
-            _note_remote(owner, row_id, None)
+            _note_effect(owner, row_id, None)
     return [
         {
             "type": "duplicate_content",
@@ -2730,7 +2753,7 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
     )[0][0]
     if fix:
         doomed = []
-        if remote_index_effects.get() is not None:
+        if repair_effects.get() is not None:
             doomed = await db.execute_fetchall(
                 f"SELECT agent_id, id FROM memories WHERE {_EMPTY_CONTENT_WHERE} AND locked = 0{iso.and_clause}",
                 iso.params,
@@ -2740,7 +2763,7 @@ async def check_empty_content(db, agent_id: str, fix: bool) -> list[dict]:
             iso.params,
         )
         for owner, row_id in doomed:
-            _note_remote(owner, row_id, None)
+            _note_effect(owner, row_id, None)
     return [{"type": "empty_content", "count": empty, "repairable": repairable}]
 
 
@@ -3648,12 +3671,17 @@ async def check_block_index(db, agent_id: str = "", fix: bool = False) -> list[d
     cookie = (await db.execute_fetchall("PRAGMA schema_version"))[0][0]
     if block_index._current(index, clock) and cookie == index.schema_cookie:
         return []
-    return [{
+    issue = {
         "type": "block_index_behind",
-        "changes_since_build": max(0, clock[2] - index.built_seq),
         "repairable": 0,
         "hint": f"recalls read the block rows from SQLite until the file is built again; {hint}",
-    }]
+    }
+    # bug-789: the change clock counts every agent's block writes, so the figure is
+    # given to a whole-store call only. An agent-scoped call is told the file is
+    # behind, not how much the other agents wrote since the build (the bug-062 rule).
+    if not agent_id:
+        issue["changes_since_build"] = max(0, clock[2] - index.built_seq)
+    return [issue]
 
 
 # Group and other. The owner's own bits are not a finding: a file this package
@@ -4189,7 +4217,7 @@ async def run_health_checks(
         # commit: inside the run it would hold the write lock for that whole read
         # (bug-550). Every other repair runs only inside the run.
         check_fix = fix and (check.name in POST_COMMIT_REPAIRS) == after_commit
-        effects = remote_index_effects.get()
+        effects = repair_effects.get()
         effects_mark = len(effects) if effects is not None else 0
         try:
             if embedding_cache is not None and check.name in _EMBEDDING_CHECKS:
@@ -4203,8 +4231,8 @@ async def run_health_checks(
                 # row this rolls back to.
                 with contextlib.suppress(Exception):
                     await db.execute(f'ROLLBACK TO "{savepoint}"')
-                # The rows this check noted for the remote index are back as they
-                # were, so its notes go too (bug-539).
+                # The rows this check noted are back as they were, so its notes go
+                # too: nothing is owed for them after the commit (bug-539, bug-782).
                 if effects is not None:
                     del effects[effects_mark:]
             logger.warning("health check %s crashed: %s", check.name, e)
@@ -4397,7 +4425,7 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
             chunk = ids[start : start + _SHORT_CONTENT_DELETE_CHUNK]
             placeholders = ",".join("?" * len(chunk))
             doomed = []
-            if remote_index_effects.get() is not None:
+            if repair_effects.get() is not None:
                 doomed = await db.execute_fetchall(
                     f"SELECT id FROM memories WHERE id IN ({placeholders}) AND locked = 0", chunk
                 )
@@ -4410,7 +4438,7 @@ async def deep_short_content(db, agent_id: str, fix: bool) -> dict:
             fixed_count += cur.rowcount
             # The rows were selected by agent_id, so that is their namespace (bug-539).
             for (row_id,) in doomed:
-                _note_remote(agent_id, row_id, None)
+                _note_effect(agent_id, row_id, None)
     result = {"count": len(rows)}
     if fix:
         result["fixed"] = fixed_count
