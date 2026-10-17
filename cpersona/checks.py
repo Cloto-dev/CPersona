@@ -2435,6 +2435,60 @@ async def check_future_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
     return [{"type": "future_timestamp", "count": ahead, "repairable": repairable}]
 
 
+# An episode's span column ahead of the boundary; `{col}` is one of the two literal
+# column names below, never data.
+_EPISODE_AHEAD = "strftime('%Y-%m-%d %H:%M:%f', {col}) > strftime('%Y-%m-%d %H:%M:%f', ?)"
+
+
+async def check_future_episode_timestamp(db, agent_id: str, fix: bool) -> list[dict]:
+    """Episodes whose ``start_time`` or ``end_time`` names a moment ahead of this clock (bug-784).
+
+    The episode sibling of ``check_future_timestamp``. The span is what an episode
+    is scored, windowed and merged by, so a span ahead of the clock reads as this
+    instant and never ages, which is why ``archive_episode`` applies the same
+    verdict to it at the write seam (bug-690). This finds the episodes already
+    stored: ones archived before that, and ones restored by ``import_memories``,
+    which counts them (``future_episode_timestamps``) and imports them anyway, as it
+    does memories.
+
+    Counted per episode: one with either column ahead. The boundary is
+    ``future_timestamp_boundary``'s, for the reason the memories check gives. The
+    repair is the memories check's too: each column ahead takes the row's own
+    ``created_at`` in the canonical aware form, when ``created_at`` is not itself
+    ahead. ``episodes`` has no locked column, so nothing else narrows it.
+    """
+    cutoff = future_timestamp_boundary()
+    iso = isolation_where(agent_id=agent_id or None)
+    start_ahead = _EPISODE_AHEAD.format(col="start_time")
+    end_ahead = _EPISODE_AHEAD.format(col="end_time")
+    ahead = (
+        await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM episodes WHERE ({start_ahead} OR {end_ahead}){iso.and_clause}",
+            (cutoff, cutoff, *iso.params),
+        )
+    )[0][0]
+    if ahead == 0:
+        return []
+    honest_created_at = "datetime(created_at) IS NOT NULL AND datetime(created_at) <= datetime(?)"
+    repairable = (
+        await db.execute_fetchall(
+            f"""SELECT COUNT(*) FROM episodes
+                WHERE ({start_ahead} OR {end_ahead}) AND {honest_created_at}{iso.and_clause}""",
+            (cutoff, cutoff, cutoff, *iso.params),
+        )
+    )[0][0]
+    if fix:
+        for column in ("start_time", "end_time"):
+            await db.execute(
+                f"""UPDATE episodes
+                    SET {column} = strftime('%Y-%m-%dT%H:%M:%S+00:00', created_at)
+                    WHERE {_EPISODE_AHEAD.format(col=column)}
+                    AND {honest_created_at}{iso.and_clause}""",
+                (cutoff, cutoff, *iso.params),
+            )
+    return [{"type": "future_episode_timestamp", "count": ahead, "repairable": repairable}]
+
+
 async def check_missing_episode_start_time(db, agent_id: str, fix: bool) -> list[dict]:
     """Episodes with no ``start_time`` (bug-208), repaired from ``created_at``.
 
@@ -4067,6 +4121,10 @@ HEALTH_CHECKS: list[Check] = [
     # bug-245 residual: the episode columns hold the same drift class the check
     # above detects for memories, and nothing covered them.
     Check("episode_timestamp_format_drift", "warn", True, check_episode_timestamp_format_drift),
+    # After the two above, so it judges the span the backfill and the respelling
+    # left: a start_time the backfill copied from a created_at that is itself ahead
+    # is found here in the same run (and is not repairable, for that reason).
+    Check("future_episode_timestamp", "warn", True, check_future_episode_timestamp),
     Check("stale_pending_tasks", "warn", True, check_stale_pending_tasks),
     Check("missing_profile", "info", False, check_missing_profile),
     Check("empty_content", "warn", True, check_empty_content),

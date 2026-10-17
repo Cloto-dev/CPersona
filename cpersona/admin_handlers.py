@@ -3596,6 +3596,9 @@ class _ImportTally:
     # reported, never refused — see _import_memory_record for why a restore is
     # not the seam that gets to say no.
     future_timestamps: int = 0
+    # bug-784: the same count for episodes whose start_time or end_time is ahead,
+    # which the future_episode_timestamp check names and repairs afterwards.
+    future_episode_timestamps: int = 0
     errors: _ImportErrors = field(default_factory=_ImportErrors)
     # Rows restored from records that carry no project_id key. An export written
     # before the project and channel axes were exported looks like that, and its rows
@@ -4089,6 +4092,9 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     else:
         tally.seen_episode.add((aid, ep_pid, ep_chan, summary))
         tally.map_record("ep", record, None)
+    # As for a memory's timestamp: counted and imported, never refused.
+    if any(stamp and future_timestamp_issue(stamp) for stamp in (start_time, end_time)):
+        tally.future_episode_timestamps += 1
     if _lacks_isolation_axes(record):
         tally.axisless_episodes += 1
     tally.imported_episodes += 1
@@ -4431,6 +4437,8 @@ async def do_import_memories(
         result["associations"] = tally.associations
     if tally.future_timestamps:
         result["future_timestamps"] = tally.future_timestamps
+    if tally.future_episode_timestamps:
+        result["future_episode_timestamps"] = tally.future_episode_timestamps
     if tally.errors:
         result["errors"] = tally.errors.reported()
     return result

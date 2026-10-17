@@ -299,9 +299,10 @@ archive.
 Two things are deliberately outside this setting.
 
 A restore (`import_memories`) reports such rows and imports them anyway, in
-every mode. An export must be able to come back exactly as it left, and
-refusing here would make the round trip lossy for precisely the rows worth
-inspecting.
+every mode: `future_timestamps` counts the memories and
+`future_episode_timestamps` the episodes whose start or end is ahead. An
+export must be able to come back exactly as it left, and refusing here would
+make the round trip lossy for precisely the rows worth inspecting.
 
 An unreadable stamp is not this finding's business either: `invalid_timestamp`
 owns that row. Unreadable means no reader of the column can place it. A
@@ -314,7 +315,9 @@ replaces it with the row's `created_at`.
 
 For rows already stored, `check_health` reports `future_timestamp`, and
 `fix=true` restores each one from its own `created_at` — the insertion time the
-row still carries honestly — leaving locked rows untouched.
+row still carries honestly — leaving locked rows untouched. Episodes are
+`future_episode_timestamp`'s: `fix=true` restores a start or end that is ahead
+from the episode's own `created_at` the same way.
 
 **Discovery is off until you turn it on.** A client that supports OAuth looks
 for RFC 9728 metadata. Finding none, it falls through to asking a human to type

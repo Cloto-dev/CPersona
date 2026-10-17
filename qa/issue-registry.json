@@ -11912,12 +11912,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/checks.py",
-      "pattern": "Memories whose ``timestamp`` names a moment ahead of this clock",
+      "pattern": "Check\\(\"future_episode_timestamp\", \"warn\", True, check_future_episode_timestamp\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Extend the check (and the import's report) to episodes' start_time / end_time with the same boundary, and decide the repair: created_at, as for memories.",
-      "note": "Found while fixing bug-690 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-690 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "A future_episode_timestamp health check (warn, fix-capable) counts the episodes whose start_time or end_time is ahead of future_timestamp_boundary, the memories check's boundary, and fix=true sets each column that is ahead to the episode's own created_at in the canonical aware form, when created_at is not itself ahead (episodes have no locked column). It runs after missing_episode_start_time and episode_timestamp_format_drift, so it judges the span they leave. import_memories counts restored episodes with either column ahead as future_episode_timestamps and imports them anyway, as it does memories (future_timestamps). Documented beside the memories check in docs/configuration.md and its Japanese page; the behaviour golden gains the check's name in the six health scenarios' checks_run and nothing else."
     },
     {
       "id": "bug-785",

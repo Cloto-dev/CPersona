@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:f6bdce46ea7dd988d0b45a128afbe296dbc46ca2 -->
+<!-- i18n-source: docs/configuration.md@blob:10801adb6ff805cf48b5bd50c93c4b0d1934544f -->
 
 # 設定リファレンス
 
@@ -297,7 +297,8 @@ schema が名前を挙げていたのは最初の 2 つだけでした。
 この設定の外に置いてあるものが 2 つあります。
 
 復元 (`import_memories`) は、どのモードでも該当行を**報告したうえで取り込みます**。
-export したものはそのまま戻せなければならず、ここで拒否すると、まさに点検したい行に
+`future_timestamps` が記憶の件数を、`future_episode_timestamps` が開始か終了が先に
+あるエピソードの件数を数えます。export したものはそのまま戻せなければならず、ここで拒否すると、まさに点検したい行に
 ついてラウンドトリップが不可逆になるからです。
 
 読めない stamp は、この finding の担当ではありません。その行は `invalid_timestamp`
@@ -311,7 +312,9 @@ export したものはそのまま戻せなければならず、ここで拒否�
 
 すでに格納済みの行については `check_health` が `future_timestamp` を報告し、
 `fix=true` が各行を自身の `created_at` (その行が正直に保持している挿入時刻) から
-復元します。locked な行には触れません。
+復元します。locked な行には触れません。エピソードは `future_episode_timestamp` の
+担当で、`fix=true` は先にある開始・終了を、同じようにそのエピソード自身の
+`created_at` から復元します。
 
 **discovery は明示的に有効化するまで無効です。** OAuth に対応したクライアントは
 RFC 9728 の metadata を探し、見つからなければ人間に client id を手で入力させる段まで
