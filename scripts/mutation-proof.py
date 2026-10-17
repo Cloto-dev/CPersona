@@ -4992,6 +4992,36 @@ MUTATIONS += [
         breaks="a restore says nothing about the episodes it brought back ahead of the clock",
         expect='test_audit_2611_siblings.py::test_bug784_a_restore_counts_episodes_ahead_of_the_clock',
     ),
+    Mutation(
+        id='M490',
+        tests=('tests/test_2611_shared_client.py',),
+        target="validate_int — an integral float is the integer it spells (bug-512)",
+        file='cpersona/_vendored_mcp_common/validation.py',
+        find='    if isinstance(val, float) and val.is_integer():\n        return int(val)\n',
+        replace='',
+        breaks="an integer argument sent as 60.0 passes the input schema and is replaced by the default",
+        expect='test_2611_shared_client.py::test_an_integer_argument_sent_as_a_float_is_not_replaced_by_the_default',
+    ),
+    Mutation(
+        id='M491',
+        tests=('tests/test_2611_shared_client.py',),
+        target="config — the embedding cache size is floored at 0 (bug-598)",
+        file='cpersona/config.py',
+        find='EMBEDDING_CACHE_SIZE = max(0, _parse_int("CPERSONA_EMBEDDING_CACHE_SIZE", 256))\n',
+        replace='EMBEDDING_CACHE_SIZE = _parse_int("CPERSONA_EMBEDDING_CACHE_SIZE", 256)\n',
+        breaks="a negative cache size reaches the client, and every successful single-text embed raises",
+        expect='test_2611_shared_client.py::test_a_negative_embedding_cache_size_is_floored_at_zero',
+    ),
+    Mutation(
+        id='M492',
+        tests=('tests/test_2611_shared_client.py',),
+        target="ACL — a token no client can present is a startup error (bug-599)",
+        file='cpersona/_vendored_mcp_common/identity.py',
+        find='    reason = _unpresentable(raw)\n    if reason:\n        raise CredentialError(f"bearer token {reason}")\n',
+        replace='    if not raw.isascii():\n        raise CredentialError("bearer token contains non-ASCII characters")\n',
+        breaks="a token ending in a newline loads as a row its client can never present",
+        expect='test_2611_shared_client.py::test_an_acl_token_with_surrounding_whitespace_fails_at_load',
+    ),
 ]
 
 

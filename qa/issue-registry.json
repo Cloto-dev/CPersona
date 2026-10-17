@@ -7603,12 +7603,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/validation.py",
-      "pattern": "if isinstance\\(val, bool\\) or not isinstance\\(val, int\\):",
+      "pattern": "if isinstance\\(val, float\\) and val\\.is_integer\\(\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "In `validate_int`, accept a float whose `is_integer()` is true and return `int(val)`, so the validator agrees with the JSON Schema `integer` it sits behind. Optionally report any value that is still replaced by a default instead of dropping it silently.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced through the MCP request handler. The defect lives in the vendored shared client, so the fix lands upstream first and is then re-vendored."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced through the MCP request handler. The defect lives in the vendored shared client, so the fix lands upstream first and is then re-vendored.",
+      "fix_note": "validate_int returns int(val) for a float with no fractional part, so it agrees with the JSON Schema integer it sits behind; 2.5, inf and nan still give the default. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. Through the real CallToolRequest handler, pause_persistence(ttl_seconds=60.0) answered ttl_seconds 1800 before and 60 now; 2.5 is still refused by the input schema (tests/test_2611_shared_client.py)."
     },
     {
       "id": "bug-513",
@@ -8959,12 +8960,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/embedding_client.py",
-      "pattern": "^    if parts\\.port:$",
+      "pattern": "httpx\\.InvalidURL,",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Move the `parts.port` access inside `_safe_endpoint`'s try (or catch ValueError around it), and add `httpx.InvalidURL` to the boundary's except tuples, or validate the configured URLs once at client construction so a typo fails with a clear message at startup.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same class as bug-424 and bug-511 (an exception escaping the same boundary). The defect lives in the vendored shared client, so the fix lands upstream first and is then resynced here."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. Same class as bug-424 and bug-511 (an exception escaping the same boundary). The defect lives in the vendored shared client, so the fix lands upstream first and is then resynced here.",
+      "fix_note": "httpx.InvalidURL joins the failure boundaries' except tuple (_REQUEST_FAILURES), and _safe_endpoint keeps the authority text instead of raising when the port is not a number in range. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. Upstream tests: with ports :abc and :443x each of embed, capabilities and count_tokens raised InvalidURL before and returns a failed outcome naming it now; with :99999 and a 503 backend each raised ValueError: Port out of range before and reports the 503 now."
     },
     {
       "id": "bug-598",
@@ -8973,12 +8975,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/embedding_client.py",
-      "pattern": "while len\\(self\\._cache\\) > self\\._cache_size:",
+      "pattern": "if cache_size < 0:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Clamp or reject a negative cache size, both where the client stores it and where CPersona parses the environment variable, and keep the cache write from raising out of the embed call.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first; the missing lower bound in config.py can be fixed here."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first; the missing lower bound in config.py can be fixed here.",
+      "fix_note": "The client logs a negative cache size and treats it as 0 (no caching), and config floors CPERSONA_EMBEDDING_CACHE_SIZE at 0 as it does the other sizes. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. Upstream, cache_size=-1 raised KeyError: 'dictionary is empty' from a successful single-text embed before and returns the vector on every call now; here, the setting -1 reads as 0 (tests/test_2611_shared_client.py)."
     },
     {
       "id": "bug-599",
@@ -8987,12 +8990,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/identity.py",
-      "pattern": "if not raw\\.isascii\\(\\):",
+      "pattern": "def _unpresentable\\(token: str\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Reject (or explicitly strip, with a startup warning) tokens containing leading or trailing whitespace or control characters in both `resolve_env_token` and `validate_token_entries`, so the misconfiguration fails at load with a message naming the client.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then resynced here."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then resynced here.",
+      "fix_note": "resolve_env_token and validate_token_entries refuse a token with leading or trailing whitespace or a control character, with a message that names the defect and not the token, so the ACL file fails at load naming the client, as the other ACL defects do. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. An ACL row whose token ends in a newline or a space loaded before and is now an AclConfigError naming the client (tests/test_2611_shared_client.py). A deployment holding such a row already gave that client a 401 on every request; it now stops at startup instead, so check the ACL tokens before deploying this."
     },
     {
       "id": "bug-600",
@@ -9001,12 +9005,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/llm_provider.py",
-      "pattern": "tool_calls_arr = message_obj\\.get\\(\"tool_calls\", \\[\\]\\)",
+      "pattern": "if isinstance\\(arguments_str, dict\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Treat a null or non-list `tool_calls` as no tool calls (`message_obj.get(\"tool_calls\") or []`), and accept an arguments value that is already a dict, or catch TypeError alongside JSONDecodeError.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client and has no import path from CPersona, so the fix lands upstream first and is then resynced here."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client and has no import path from CPersona, so the fix lands upstream first and is then resynced here.",
+      "fix_note": "parse_chat_think_result skips a tool_calls value that is not a list and entries or functions that are not objects, uses object-typed arguments as they are, and turns other non-string arguments into {} as unparseable ones already were. The streaming twin (a fragment that is not an object, or an index that is a string or negative) is fixed the same way. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. CPersona does not import this module."
     },
     {
       "id": "bug-601",
@@ -9015,12 +9020,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/llm_provider.py",
-      "pattern": "except \\(httpx\\.TimeoutException, httpx\\.ConnectError, LlmApiError\\) as e:",
+      "pattern": "except \\(httpx\\.TransportError, LlmApiError\\) as e:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Widen the inner catch to `httpx.TransportError` (or `httpx.HTTPError`), or map ReadError and RemoteProtocolError to `LlmApiError('upstream_truncated')` in `call_llm_api_streaming`, so every mid-stream transport failure takes the partial-result path.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then resynced here; for the other consumers of that library it is a MEDIUM contract violation."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then resynced here; for the other consumers of that library it is a MEDIUM contract violation.",
+      "fix_note": "The streaming handler's inner catch takes every httpx.TransportError, so a reset or an early-closed body after chunks were sent returns the documented partial result. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. Upstream, two deltas followed by ReadError or RemoteProtocolError returned error_code internal with no content before and the partial result with both deltas now. CPersona does not import this module."
     },
     {
       "id": "bug-602",
@@ -9029,12 +9035,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/mcp_stream_interceptor.py",
-      "pattern": "\\{\"cancelled\": False, \"reason\": \"not_active\"\\},",
+      "pattern": "_remember_pending\\(pending_streams, root\\.id\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Remember a cancel whose request_id names a `tools/call` the interceptor has forwarded but whose stream has not registered yet (for example a pending-cancel set keyed by request id that the handler checks when it registers), and answer it as cancelled rather than not_active.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then re-vendored."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then re-vendored.",
+      "fix_note": "The interceptor records a forwarded tools/call the server will stream, keeps a cancel that names it before its handler registers, and the handler applies that cancel as it registers, before any chunk; the entry is dropped when the call ends and the table is bounded. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. Upstream, with the record removed the cancel was answered not_active and the stream returned the full answer; with it, the cancel is answered cancelled and the handler sends no chunk. CPersona does not import this module."
     },
     {
       "id": "bug-603",
@@ -9043,12 +9050,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/_vendored_mcp_common/search.py",
-      "pattern": "html\\[match\\.end\\(\\) : match\\.end\\(\\) \\+ 2000\\],",
+      "pattern": "next_result = re\\.search\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Bound the snippet search at the start of the next `result__a` match (or parse each result block separately), so a result without a snippet gets an empty one.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then re-vendored."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; confirmed by reading the code, not reproduced. The defect lives in the vendored shared client, so the fix lands upstream first and is then re-vendored.",
+      "fix_note": "The DuckDuckGo snippet window ends at the next result's title anchor, so a result without a snippet gets an empty one. Fixed upstream in mgp-py (packages/mcp-common, commit 20fb7b5) and resynced here unchanged. CPersona does not import this module."
     },
     {
       "id": "bug-604",

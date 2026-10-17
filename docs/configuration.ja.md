@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:10801adb6ff805cf48b5bd50c93c4b0d1934544f -->
+<!-- i18n-source: docs/configuration.md@blob:2415fa43f3292fe12462852bc2a5ec2eabce5c3e -->
 
 # 設定リファレンス
 
@@ -23,7 +23,7 @@
 | `CPERSONA_EMBEDDING_API_KEY` | *(未設定)* | `api` モードがベアラートークンとして送るキー |
 | `CPERSONA_EMBEDDING_MODEL` | `text-embedding-3-small` | `api` モードが要求するモデル。`http` モードはモデル名を送らず、バックエンドが選ぶため、そこでのこの値は保存したものに付けるラベルにすぎず、バックエンドが指紋を返さないときに使われます (`CPERSONA_EMBEDDING_MODEL_MODE` を参照) |
 | `CPERSONA_EMBEDDING_TIMEOUT_SECS` | `30` | 埋め込みリクエスト 1 回に許す秒数 |
-| `CPERSONA_EMBEDDING_CACHE_SIZE` | `256` | メモリに保持するクエリの埋め込みの数。同じクエリ文を再び埋め込まずに済みます。キャッシュするのは 1 件だけのリクエストです |
+| `CPERSONA_EMBEDDING_CACHE_SIZE` | `256` | メモリに保持するクエリの埋め込みの数。同じクエリ文を再び埋め込まずに済みます。キャッシュするのは 1 件だけのリクエストです。負の値は `0` (キャッシュしない) として扱います |
 | `CPERSONA_EMBEDDING_CACHE_TTL` | `300` | キャッシュしたクエリの埋め込みを使える秒数 |
 | `CPERSONA_EMBEDDING_MODEL_MODE` | `warn` | 保存されたベクトルに、現在と違うモデルのラベルが付いていたときの扱い。ベクトルは、それを作ったものを示すラベル付きで書き込まれます: バックエンドが `GET /capabilities` で返す指紋 (CEmbedding 0.9.0 以降)、それが無ければ `api` トランスポートが送るモデル名か設定したモデル名、どれも無ければ空です。ラベルを比べるのは、現在の識別子があるとき (指紋が返ってきたとき、または `api` トランスポートのモデル) だけです。`warn` は別のモデルが書いたベクトルを `check_health` (`embedding_model`) で報告し、recall の結果は何も変えません。`reject` はそのベクトルを問いと比べなくなり、該当する行はキーワードでだけ見つかり、ベクトルの票なしで採点されます。`off` は報告を外します。2.6.3 より前に保存したベクトルにはラベルが無く、数えられません |
 | `CPERSONA_VECTOR_SEARCH_MODE` | `local` | ベクトル検索の実行場所 (`local` = プロセス内コサイン、`remote` = 外部委譲)。`remote` は `/index`・`/search`・`/remove`・`/purge` を `CPERSONA_EMBEDDING_URL` と同じ階層のルートへクエリ文字列ごと送るため、その URL は `/embed` で終わる必要があります。それ以外の URL ではリモート呼び出しを行わず、その旨の警告を 1 度だけ出します |
