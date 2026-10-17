@@ -1492,17 +1492,21 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         # stores on the shared connection. The store path now uses
         # INSERT OR IGNORE + cursor.lastrowid; these UNIQUE indexes are the
         # constraint OR IGNORE resolves against. Unlocked exact duplicates are
-        # collapsed first with the same keep-MIN(id), never-touch-locked
-        # policy as check_health's duplicate_content repair. If a locked
-        # duplicate still blocks index creation, the index is skipped
-        # non-fatally below (SELECT-based dedup stays as the fallback), same
-        # doctrine as the isolation index.
+        # collapsed first with the same survivor and never-touch-locked policy
+        # as check_health's duplicate_content repair: a locked row when the group
+        # has one, else the oldest. Keeping the oldest beside a locked newer copy
+        # left both standing and the index skipped, though deleting the unlocked
+        # one was all it took (bug-787). Only two locked duplicates still block
+        # index creation; the index is then skipped non-fatally below
+        # (SELECT-based dedup stays as the fallback), same doctrine as the
+        # isolation index.
         if current < 12:
             await db.execute(
                 """DELETE FROM memories
                    WHERE locked = 0
                      AND id NOT IN (
-                         SELECT MIN(id) FROM memories
+                         SELECT COALESCE(MIN(CASE WHEN locked != 0 THEN id END), MIN(id))
+                         FROM memories
                          GROUP BY agent_id, project_id, channel, content
                      )"""
             )
@@ -1515,18 +1519,20 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
             # and the partial UNIQUE index CREATE below fails permanently (the
             # per-index try/except swallows it as a warning and no remediation
             # path exists). Resolve non-destructively BEFORE creating the index:
-            # keep the newest (MAX id) colliding row's msg_id and blank the older
-            # unlocked colliders' msg_id ('' is excluded by the index's
-            # WHERE msg_id != ''). Never delete a row, never touch content, and
-            # honour the locked invariant (bug-098) — a locked collider still
-            # blocks the index, the same "locked row wins" fallback as content.
+            # keep one colliding row's msg_id -- a locked row's when the group has
+            # one, else the newest's, as check_dedup_msg_id_index chooses (bug-638,
+            # bug-787) -- and blank the unlocked others' ('' is excluded by the
+            # index's WHERE msg_id != ''). Never delete a row, never touch content,
+            # and honour the locked invariant (bug-098) — only two locked colliders
+            # still block the index.
             await db.execute(
                 """UPDATE memories
                    SET msg_id = ''
                    WHERE locked = 0
                      AND msg_id != ''
                      AND id NOT IN (
-                         SELECT MAX(id) FROM memories
+                         SELECT COALESCE(MAX(CASE WHEN locked != 0 THEN id END), MAX(id))
+                         FROM memories
                          WHERE msg_id != ''
                          GROUP BY agent_id, project_id, msg_id
                      )"""

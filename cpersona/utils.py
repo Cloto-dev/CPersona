@@ -211,6 +211,38 @@ def _strip_annotations(content: str) -> str:
     return "".join(kept)
 
 
+def _strip_mentions(content: str) -> str:
+    """``content`` with every Discord mention (``<@123>``, ``<@!123>``) removed, to a fixed point.
+
+    One ``sub`` pass leaves a mention it assembled out of the text on either side of
+    one it removed ('<@<@1>2>' becomes '<@2>'), as ``_strip_annotations`` describes
+    for annotations, so the mention repair rewrote such a row again on every run.
+    A mention holds no '<' or '>', so two can never overlap, and every order of
+    removal ends at the same text. A stack reaches it in one scan: a mention is
+    dropped as soon as its closing '>' completes one at the end of what is kept.
+    A '>' that completes none is never removed later, so the digits before it are
+    read once and the scan stays linear.
+    """
+    once = _MENTION_PATTERN.sub("", content)
+    if not _MENTION_PATTERN.search(once):
+        return once
+    kept: list[str] = []
+    for ch in content:
+        kept.append(ch)
+        if ch != ">":
+            continue
+        i = len(kept) - 2
+        while i >= 0 and kept[i].isdecimal():
+            i -= 1
+        if i == len(kept) - 2:
+            continue
+        if i >= 0 and kept[i] == "!":
+            i -= 1
+        if i >= 1 and kept[i] == "@" and kept[i - 1] == "<":
+            del kept[i - 1 :]
+    return "".join(kept)
+
+
 def content_cap() -> int:
     """The memory/episode cap ``sanitize_content_with_flag`` cuts at.
 
