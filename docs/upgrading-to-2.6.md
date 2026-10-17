@@ -46,7 +46,7 @@ recorded as done, so it is retried on the next start.
 | 19 | 2.6.7a2 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **Built for you** on the queue, unless you turn the file off ([below](#the-block-index-file-is-on-by-default)) |
 | 20 | 2.6.11a2 | `vector_log_clock`, `record_vector_changes`: the log of which rows held by the vector index files changed, kept only while one of those files exists ([design §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **Yes, if you build the vector index**: build it again ([below](#build-the-vector-index-again)) |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1, 2.6.7, 2.6.8a1, 2.6.8, 2.6.9a1, 2.6.9, 2.6.10a1, 2.6.10a2, 2.6.10a3, 2.6.10a4, 2.6.10, 2.6.11a1, 2.6.11a3, 2.6.11a4 and 2.6.11a5 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1, 2.6.7, 2.6.8a1, 2.6.8, 2.6.9a1, 2.6.9, 2.6.10a1, 2.6.10a2, 2.6.10a3, 2.6.10a4, 2.6.10, 2.6.11a1, 2.6.11a3, 2.6.11a4, 2.6.11a5 and 2.6.11a6 changed no schema.
 
 ## After the first start
 
@@ -263,6 +263,12 @@ Check these against what your deployment relies on. Each is off, or equal to
   string is refused; a failing node or block build no longer holds the other
   queued tasks; in `api` embedding mode the node check no longer reads every
   record's text.
+- **An ACL token no client can present stops the server at startup**
+  (2.6.11a6). A token with leading or trailing whitespace (a secret written with
+  `echo` ends in a newline) or a control character used to load as a row that
+  answered its client `401` on every request. The startup error names the client.
+  Check the values your `${ENV}` references resolve to, as well as literal tokens,
+  before you upgrade ([ACL design](ACL_DESIGN.md)).
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with
