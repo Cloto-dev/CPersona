@@ -702,14 +702,12 @@ def _remote_vector_arm_armed() -> bool:
 
     The same predicate the write and read paths gate their remote calls on
     (``memory_handlers`` /index, ``vector._search_vector`` /search): remote mode
-    is not enough, the client also needs an HTTP endpoint. Read at call time so
-    a test patching this module's copy steers it.
+    is not enough, the client also needs an HTTP endpoint the service's routes
+    derive from. A URL that does not end in /embed names none, so every remote
+    call is skipped (bug-669) and this must not report an arm that never runs
+    (bug-786). Read at call time so a test patching this module's copy steers it.
     """
-    return bool(
-        VECTOR_SEARCH_MODE == "remote"
-        and vector._embedding_client
-        and vector._embedding_client._http_url
-    )
+    return vector.remote_arm_armed(VECTOR_SEARCH_MODE)
 
 
 def _null_embedding_severity(null_count: int, total: int, *, blobs_expected: bool = True) -> str:

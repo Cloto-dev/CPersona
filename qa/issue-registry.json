@@ -11837,12 +11837,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/maintenance_handlers.py",
-      "pattern": "for start in range\\(0, len\\(removed\\), _REMOTE_SYNC_CHUNK\\):",
+      "pattern": "Skipped the remaining remote index posts after a timeout",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Read the timed_out value _post_remote_side_effect returns and stop posting the remaining chunks for that namespace after a timeout, logging how many rows stay out of step, as _remove_moved_source_vectors does.",
-      "note": "Found while fixing bug-608 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-608 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "_sync_remote_index lays out every post in order and stops at the first that times out, logging how many repaired rows stay out of step with the remote index. It stops the whole sync rather than one namespace: every post goes to the one service. A refusal or a refused connection answers at once and the sync goes on, as the merge's removals do. Before the fix, with every post timing out, 300 deletes and 5 rewrites spent four deadlines. Pinned by tests/test_audit_2611_siblings.py with a timing-out and an answering service; mutation M469 ignores the timeout and turns it red."
     },
     {
       "id": "bug-780",
@@ -11923,12 +11924,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/coverage.py",
-      "pattern": "f\\\"SELECT id, \\{column\\} FROM \\{table\\} WHERE agent_id = \\? AND id IN \\(\\{marks\\}\\)\\\",",
+      "pattern": "rows = await vector\\._fetch_rows_by_id\\(",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Read the ids through vector._fetch_rows_by_id, or chunk them at _ID_FETCH_CHUNK.",
-      "note": "Found while fixing bug-682 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-682 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "coverage.stored_texts reads the memories and episodes a traced recall returned through vector._fetch_rows_by_id, in chunks of _ID_FETCH_CHUNK with the ownership predicate on every chunk, as the other id reads on the recall path do. Before the fix, on a connection whose bound-variable limit was lowered to 8, twelve refs raised 'too many SQL variables'. Pinned by tests/test_audit_2611_siblings.py, which lowers the limit and the chunk width and checks that another agent's record and the profile are still not read; mutation M460 restores the single IN (...) and turns it red."
     },
     {
       "id": "bug-786",
@@ -11936,13 +11938,14 @@
       "severity": "LOW",
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
-      "file": "cpersona/coarse_notice.py",
-      "pattern": "return not \\(vector\\.VECTOR_SEARCH_MODE == \\\"remote\\\" and client\\._http_url\\)",
+      "file": "cpersona/vector.py",
+      "pattern": "return mode == \\\"remote\\\" and remote_route\\(\\\"search\\\"\\) is not None",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Use vector.remote_route(\"search\") is not None as the predicate, the one the search and the single-arm marking use.",
-      "note": "Found while fixing bug-669 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-669 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "vector.remote_arm_armed(mode) is the one predicate for whether the remote vector arm runs: remote mode and a URL the service's routes derive from (remote_route). checks._remote_vector_arm_armed, coarse_notice.local_vector_search, the single-arm marking in recall and the boot notice all call it, each passing the mode copy it acts on. The boot notice moved out of main() into server._log_vector_fallback_trade so it can be tested, and its warning now says the URL has to end in /embed. Before the fix, with an endpoint ending /v1/embeddings, the maintenance hint and the boot notice described a remote /search outage risk, and the coarse-index suggestion was withheld as if the service ranked recall, though no remote call is made and recall ranks the local store. Pinned by tests/test_audit_2611_siblings.py for routed, routed-with-query, unrouted and empty URLs; mutations M461 (the predicate), M462 (checks), M463 (coarse notice) and M464 (boot notice) each restore a URL-only test and turn a test red."
     },
     {
       "id": "bug-787",
@@ -11996,12 +11999,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/excerpts.py",
-      "pattern": "start, end, _ = blocks\\.context_range\\(text, spans, row\\[0\\]\\)",
+      "pattern": "block_start, block_end = spans\\[row\\[0\\]\\]",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "read-path-budget",
       "fix_sketch": "Skip a block that lies inside a taken range before computing its context range, using a sorted list and bisect as record_passages does.",
-      "note": "Found while fixing bug-705 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-705 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "fill_ranges keeps the taken ranges sorted, skips a block that lies inside one before computing its governing range, and tests overlap with one bisect rather than a scan of every taken range, as reconstruct.record_passages does. Its answers are unchanged: on 1,500 random records with shuffled rankings and caps from 20 to unbounded they equal the old scan's. On a record of 300 unterminated lines ranked middle-first, the context walks fall from 300 to 145. Pinned by tests/test_audit_2611_siblings.py; mutation M465 drops the skip and the blocks inside the first range are walked again, and M466 drops the overlap test and the answers diverge."
     },
     {
       "id": "bug-791",
@@ -12026,12 +12030,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/update_check.py",
-      "pattern": "process = await asyncio\\.create_subprocess_exec\\(",
+      "pattern": "env=\\{\\*\\*os\\.environ, \\\"GIT_TERMINAL_PROMPT\\\": \\\"0\\\", \\\"PIP_NO_INPUT\\\": \\\"1\\\"\\},",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "robustness",
       "fix_sketch": "Run the steps with GIT_TERMINAL_PROMPT=0 (and pip's --no-input) in the child environment, so a step that needs credentials fails at once with its own message.",
-      "note": "Found while fixing bug-736 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-736 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "_run_step runs every apply step with GIT_TERMINAL_PROMPT=0 and PIP_NO_INPUT=1 over the server's environment, and in a session of its own (start_new_session, POSIX), which has no controlling terminal for git, ssh or anything else to open. A step that needs credentials now fails at once with its own message. Before the fix a step inherited the operator's GIT_TERMINAL_PROMPT=1 and ran in the server's session. Pinned by tests/test_audit_2611_siblings.py with a step that prints what it was given; mutations M467 (environment) and M468 (session) each turn it red."
     },
     {
       "id": "bug-793",

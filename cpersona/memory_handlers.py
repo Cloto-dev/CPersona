@@ -805,7 +805,7 @@ async def _mark_single_arm_rows(db, lexical: list[tuple[tuple, dict]], query_emb
     client = vector._embedding_client
     # The predicate _search_vector_remote gates on, read from the same module. A URL
     # that names no search route sends nothing, so that service cannot have answered.
-    remote_armed = vector.VECTOR_SEARCH_MODE == "remote" and vector.remote_route("search") is not None
+    remote_armed = vector.remote_arm_armed(vector.VECTOR_SEARCH_MODE)
     if not client or (not query_embedded and not remote_armed):
         for _rid, r in lexical:
             r["_rrf_single_arm"] = True

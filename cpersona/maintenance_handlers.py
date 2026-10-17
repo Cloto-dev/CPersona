@@ -72,6 +72,12 @@ async def _sync_remote_index(effects: list) -> None:
 
     Posted through the same helper the delete and update handlers use, so a refusal
     or a connection failure is non-fatal and said once at WARNING, as there.
+
+    bug-779: a post that runs out the index deadline ends the sync. Every post goes
+    to the one service, so asking it for the next chunk would spend the same
+    deadline again for each remaining chunk of every namespace, as the merge's
+    removals stop after a timeout. A refusal or a refused connection answers at
+    once, so those keep going.
     """
     from cpersona.admin_handlers import _post_remote_side_effect
 
@@ -82,21 +88,26 @@ async def _sync_remote_index(effects: list) -> None:
             removed.append(f"mem:{row_id}")
         else:
             indexed.append({"id": f"mem:{row_id}", "text": text})
+    # (route, payload, action, namespace, rows) for each post, in the order they go.
+    posts: list[tuple[str, dict, str, str, int]] = []
     for namespace, (removed, indexed) in by_namespace.items():
         for start in range(0, len(removed), _REMOTE_SYNC_CHUNK):
-            await _post_remote_side_effect(
-                "remove",
-                {"namespace": namespace, "ids": removed[start : start + _REMOTE_SYNC_CHUNK]},
-                action="removal",
-                namespace=namespace,
-            )
+            chunk = removed[start : start + _REMOTE_SYNC_CHUNK]
+            posts.append(("remove", {"namespace": namespace, "ids": chunk}, "removal", namespace, len(chunk)))
         for start in range(0, len(indexed), _REMOTE_SYNC_CHUNK):
-            await _post_remote_side_effect(
-                "index",
-                {"namespace": namespace, "items": indexed[start : start + _REMOTE_SYNC_CHUNK]},
-                action="update",
-                namespace=namespace,
-            )
+            chunk = indexed[start : start + _REMOTE_SYNC_CHUNK]
+            posts.append(("index", {"namespace": namespace, "items": chunk}, "update", namespace, len(chunk)))
+    for n, (route, payload, action, namespace, _rows) in enumerate(posts):
+        timed_out = await _post_remote_side_effect(route, payload, action=action, namespace=namespace)
+        if timed_out:
+            skipped = sum(post[4] for post in posts[n + 1 :])
+            if skipped:
+                logger.warning(
+                    "Skipped the remaining remote index posts after a timeout; %d more repaired "
+                    "row(s) stay out of step with the remote index",
+                    skipped,
+                )
+            break
 
 
 async def do_check_health(

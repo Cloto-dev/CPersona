@@ -22,28 +22,54 @@ These are places where it was found:
   bug-789  check_block_index's block_index_behind finding reported the store-wide
            change count in an agent-scoped call, which told a caller with read on
            one agent how many block changes every other agent had made.
+  bug-779  The remote index sync after a repair run kept posting chunk after chunk
+           to a service that had stopped answering, one index deadline each.
+  bug-785  The coverage ledger read the returned records with one IN (...) over
+           every id, where every other id read on the recall path is chunked to
+           stay under SQLite's bound-variable limit.
+  bug-786  Three "is remote search armed" predicates tested only that an
+           embedding URL is set. A URL that does not end in /embed names no route,
+           so the remote calls are skipped, and those predicates described remote
+           search that never runs.
+  bug-790  excerpts.fill_ranges computed each ranked block's governing range
+           before asking whether the block already lay inside a range it took.
+  bug-792  check_update(apply=true) steps could prompt on the controlling
+           terminal (git credentials, an ssh passphrase), with nothing bounding
+           the step.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import random
+import sqlite3
+import sys
 
 import aiosqlite
 import pytest
 import pytest_asyncio
 
 from cpersona import (
+    admin_handlers,
     associations,
     block_index,
     blocks,
     checks,
+    coarse_notice,
     config,
+    coverage,
     database,
+    excerpts,
     maintenance_handlers,
     nodes,
+    server,
     session,
     tasks,
+    update_check,
     utils,
+    vector,
 )
 
 AGENT = "siblings.agent"
@@ -389,3 +415,212 @@ async def test_bug789_only_a_whole_store_call_reports_the_change_count(file_db, 
     assert "changes_since_build" not in scoped[0], (
         "an agent-scoped call reported how many block changes other agents made: " + repr(scoped)
     )
+
+
+# ==========================================================================
+# bug-785: the coverage ledger reads its records in chunks
+# ==========================================================================
+
+
+@pytest.mark.asyncio
+async def test_bug785_the_coverage_read_stays_under_the_bound_variable_limit(file_db, monkeypatch):
+    db = file_db
+    ids = [await _insert_memory(db, f"record {n}") for n in range(12)]
+    foreign = await _insert_memory(db, "another agent's record", agent=OTHER)
+    cur = await db.execute(
+        "INSERT INTO episodes (agent_id, summary) VALUES (?, 'an episode summary')", (AGENT,)
+    )
+    episode = cur.lastrowid
+    await db.commit()
+    # A connection that binds at most 8 variables a statement, and chunks of 4.
+    monkeypatch.setattr(vector, "_ID_FETCH_CHUNK", 4)
+    async with database.connection() as read:
+        await read._execute(read._connection.setlimit, sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 8)
+
+    refs = [f"mem:{i}" for i in ids] + [f"mem:{foreign}", f"ep:{episode}", "profile"]
+    texts = await coverage.stored_texts(AGENT, refs)
+
+    expected = {f"mem:{i}": f"record {n}" for n, i in enumerate(ids)}
+    expected[f"ep:{episode}"] = "an episode summary"
+    assert texts == expected
+
+
+# ==========================================================================
+# bug-786: one predicate says whether the remote vector arm runs
+# ==========================================================================
+
+
+_ROUTED = "http://embed.test/embed"
+_UNROUTED = "http://embed.test/v1/embeddings"
+
+
+@pytest.fixture
+def remote_mode(monkeypatch, fake_embedding_client):
+    for module in (vector, checks, server):
+        monkeypatch.setattr(module, "VECTOR_SEARCH_MODE", "remote")
+
+    def configure(url):
+        monkeypatch.setattr(fake_embedding_client, "_http_url", url, raising=False)
+
+    return configure
+
+
+@pytest.mark.parametrize(
+    "url, armed",
+    [(_ROUTED, True), (_ROUTED + "?key=k", True), (_UNROUTED, False), ("", False)],
+)
+def test_bug786_the_remote_arm_runs_only_where_a_route_derives(remote_mode, url, armed):
+    remote_mode(url)
+    assert vector.remote_arm_armed("remote") is armed
+    assert vector.remote_arm_armed("local") is False
+    assert checks._remote_vector_arm_armed() is armed
+    # A recall ranks the local store exactly when the remote arm does not run.
+    assert coarse_notice.local_vector_search() is not armed
+
+
+@pytest.mark.parametrize("url, level", [(_UNROUTED, logging.WARNING), (_ROUTED, logging.INFO)])
+def test_bug786_the_boot_notice_names_an_unrouted_endpoint_as_no_arm(remote_mode, monkeypatch, caplog, url, level):
+    remote_mode(url)
+    monkeypatch.setattr(server, "STORE_BLOB", False)
+    with caplog.at_level(logging.INFO, logger=server.logger.name):
+        server._log_vector_fallback_trade()
+    (record,) = [r for r in caplog.records if "CPERSONA_STORE_BLOB=false" in r.getMessage()]
+    assert record.levelno == level, record.getMessage()
+
+
+# ==========================================================================
+# bug-790: fill_ranges skips a block already inside a taken range
+# ==========================================================================
+
+
+def _old_fill_ranges(text, spans, ranked, cap):
+    """fill_ranges as it was before bug-790, the reference its answers must equal."""
+    chosen = []
+    used = 0
+    for row in ranked:
+        start, end, _ = blocks.context_range(text, spans, row[0])
+        if any(start < e and s < end for s, e in chosen):
+            continue
+        touching = any(start == e or end == s for s, e in chosen)
+        cost = (end - start) + (len(excerpts.SEPARATOR) if chosen and not touching else 0)
+        if used + cost > cap:
+            if not chosen:
+                return [(start, start + cap)], True
+            break
+        chosen.append((start, end))
+        used += cost
+    return excerpts._joined(sorted(chosen)), False
+
+
+def _blocks_of(text):
+    rows = [(i, s.start, s.end, None) for i, s in enumerate(blocks.segment(text))]
+    return rows, [(r[1], r[2]) for r in rows]
+
+
+def test_bug790_the_ranges_are_the_ones_the_old_scan_chose():
+    rng = random.Random(790)
+    words = ["alpha", "beta", "however", "but", "so", "the cat sat.", "Yes!", "and then", "end.", "## Head", "x" * 30]
+    compared = 0
+    for _ in range(1500):
+        parts = []
+        for _ in range(rng.randint(1, 50)):
+            parts.append(" ".join(rng.choice(words) for _ in range(rng.randint(1, 6))))
+            parts.append(rng.choice(["\n", "\n\n", " ", ". ", "\n- "]))
+        text = "".join(parts)
+        rows, spans = _blocks_of(text)
+        if len(rows) < 2:
+            continue
+        ranked = rows[:]
+        rng.shuffle(ranked)
+        cap = rng.choice([20, 80, 200, 600, 2000, 10**6])
+        assert excerpts.fill_ranges(text, spans, ranked, cap) == _old_fill_ranges(text, spans, ranked, cap), text
+        compared += 1
+    assert compared > 1000
+    # Long records of unterminated lines. A governing range reaches into a taken one
+    # without containing its own block only where a range stopped at the character
+    # limit, which the short records above seldom reach.
+    for _ in range(200):
+        text = "\n".join(f"item {i} on the list" for i in range(rng.randint(40, 400)))
+        rows, spans = _blocks_of(text)
+        ranked = rows[:]
+        rng.shuffle(ranked)
+        cap = rng.choice([600, 2000, 10**6])
+        assert excerpts.fill_ranges(text, spans, ranked, cap) == _old_fill_ranges(text, spans, ranked, cap)
+
+
+def test_bug790_a_block_inside_a_taken_range_gets_no_context_walk(monkeypatch):
+    # Lines that end no sentence, so each governing range reaches over its neighbours.
+    text = "\n".join(f"item number {i} on the list" for i in range(300))
+    rows, spans = _blocks_of(text)
+    first = rows[20]
+    taken_start, taken_end, _ = blocks.context_range(text, spans, first[0])
+    inside = {r[0] for r in rows if taken_start <= r[1] and r[2] <= taken_end} - {first[0]}
+    assert len(inside) > 10, "the fixture has to put blocks inside the first range"
+    walked = []
+    real = blocks.context_range
+
+    def spy(text_, spans_, index, *args, **kwargs):
+        walked.append(index)
+        return real(text_, spans_, index, *args, **kwargs)
+
+    monkeypatch.setattr(blocks, "context_range", spy)
+    excerpts.fill_ranges(text, spans, [first, *[r for r in rows if r is not first]], 10**6)
+
+    assert walked[0] == first[0]
+    assert not inside & set(walked), sorted(inside & set(walked))[:5]
+
+
+# ==========================================================================
+# bug-792: an apply step cannot prompt
+# ==========================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="sessions and controlling terminals are POSIX")
+async def test_bug792_an_apply_step_is_told_not_to_prompt_and_has_no_terminal(monkeypatch):
+    # An operator's own setting is overridden for the step; the rest of the
+    # environment reaches it.
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+    monkeypatch.setenv("CPERSONA_SIBLINGS_MARK", "kept")
+    probe = (
+        "import os; print(os.environ.get('GIT_TERMINAL_PROMPT'), os.environ.get('PIP_NO_INPUT'),"
+        " os.environ.get('CPERSONA_SIBLINGS_MARK'), os.getsid(0) == os.getpid())"
+    )
+    code, output = await update_check._run_step([sys.executable, "-c", probe])
+    assert code == 0, output
+    assert output.strip().splitlines()[-1] == "0 1 kept True", output
+
+
+# ==========================================================================
+# bug-779: the remote sync stops after a post times out
+# ==========================================================================
+
+
+def _sync_effects():
+    """300 deletes and 5 rewrites under one agent: three removal posts, one index post."""
+    effects = [(AGENT, row_id, None) for row_id in range(1, 301)]
+    effects += [(AGENT, row_id, f"text {row_id}") for row_id in range(301, 306)]
+    return effects
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("times_out, posts", [(True, 1), (False, 4)], ids=["timeout", "answered"])
+async def test_bug779_the_remote_sync_stops_after_a_timeout(monkeypatch, caplog, times_out, posts):
+    sent = []
+
+    async def fake_post(route, payload, *, action, namespace):
+        sent.append((route, len(payload.get("ids") or payload.get("items"))))
+        return times_out
+
+    monkeypatch.setattr(admin_handlers, "_post_remote_side_effect", fake_post)
+    with caplog.at_level(logging.WARNING, logger=maintenance_handlers.logger.name):
+        await maintenance_handlers._sync_remote_index(_sync_effects())
+
+    assert len(sent) == posts, sent
+    skipped = [r.getMessage() for r in caplog.records if "Skipped the remaining remote index posts" in r.getMessage()]
+    if times_out:
+        # 300 - 128 removals and 5 rewrites never reached the service.
+        assert skipped and "177 more repaired row(s)" in skipped[0], skipped
+    else:
+        assert sent == [("remove", 128), ("remove", 128), ("remove", 44), ("index", 5)]
+        assert not skipped

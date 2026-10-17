@@ -94,17 +94,23 @@ async def stored_texts(agent_id: str, refs: list[str]) -> dict[str, str]:
         kind, _, raw = ref.partition(":")
         if kind in ids and raw.isdigit():
             ids[kind].append(int(raw))
+    from . import vector
+
     out: dict[str, str] = {}
     async with connection() as db:
         for kind, table, column in (("mem", "memories", "content"), ("ep", "episodes", "summary")):
             if not ids[kind]:
                 continue
-            marks = ",".join("?" * len(ids[kind]))
-            rows = await db.execute_fetchall(
-                f"SELECT id, {column} FROM {table} WHERE agent_id = ? AND id IN ({marks})",
-                (agent_id, *ids[kind]),
+            # In chunks, as every other id read on the recall path (bug-785): the
+            # list grows with the caller's limit, and one IN (...) over all of it
+            # can pass SQLite's bound-variable limit.
+            rows = await vector._fetch_rows_by_id(
+                db,
+                f"SELECT id, {column} FROM {table} WHERE id IN ({{ph}}) AND agent_id = ?",
+                ids[kind],
+                (agent_id,),
             )
-            for row_id, text in rows:
+            for row_id, text in rows.values():
                 out[f"{kind}:{row_id}"] = text or ""
     return out
 

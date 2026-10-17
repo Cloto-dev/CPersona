@@ -3881,6 +3881,41 @@ async def _assert_no_reserved_agent_ids() -> None:
         )
 
 
+def _log_vector_fallback_trade() -> None:
+    """State at boot what recall has to fall back on when no local embedding is stored.
+
+    bug-180: in this configuration the local cosine scan -- the fallback for a
+    remote /search outage -- has no rows to scan, and the degraded advisory watches
+    the embed boundary only, so the first symptom would otherwise be recall quietly
+    returning FTS/keyword hits alone. check_vector_fallback_config reports the same
+    thing on the maintenance surface.
+
+    bug-371: the notice named the risk before asking whether the remote arm was
+    armed. With no HTTP endpoint -- the shape an api-mode embedding configuration
+    leaves -- there is no arm to lose to an outage: recall holds no vector for any
+    row from the first write onward. That is worth more than an info line. An
+    endpoint whose URL does not end in /embed is the same case: no index route
+    derives from it, so nothing is pushed or searched remotely (bug-669, bug-786).
+    """
+    if local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
+        return
+    if not vector.remote_arm_armed(VECTOR_SEARCH_MODE):
+        logger.warning(
+            "Vector search mode=%s with CPERSONA_STORE_BLOB=false and no remote "
+            "embedding endpoint configured whose URL ends in /embed: memories keep "
+            "no local embedding and none is pushed remotely, so recall runs on "
+            "FTS/keyword only for every row written in this configuration — set "
+            "CPERSONA_STORE_BLOB=true, or configure the endpoint this mode pushes to",
+            VECTOR_SEARCH_MODE,
+        )
+    else:
+        logger.info(
+            "Vector search mode=%s with CPERSONA_STORE_BLOB=false: memories keep no "
+            "local embedding, so a remote /search outage leaves recall with FTS/keyword only",
+            VECTOR_SEARCH_MODE,
+        )
+
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -3965,35 +4000,7 @@ async def main():
                 "it is asked again when it is first needed",
                 STARTUP_IDENTITY_PROBE_SECONDS,
             )
-        if not local_blobs_stored(VECTOR_SEARCH_MODE, STORE_BLOB):
-            # bug-180: state the trade at boot. In this configuration the local
-            # cosine scan — the fallback for a remote /search outage — has no rows
-            # to scan, and the degraded advisory watches the embed boundary only,
-            # so the first symptom would otherwise be recall quietly returning
-            # FTS/keyword hits alone. check_vector_fallback_config reports the same
-            # thing on the maintenance surface.
-            # bug-371: the notice named the risk before asking whether the
-            # remote arm was armed. With no HTTP endpoint — the shape an
-            # api-mode embedding configuration leaves — there is no arm to lose
-            # to an outage: recall holds no vector for any row from the first
-            # write onward. That is worth more than an info line.
-            if VECTOR_SEARCH_MODE == "remote" and not (
-                vector._embedding_client and vector._embedding_client._http_url
-            ):
-                logger.warning(
-                    "Vector search mode=%s with CPERSONA_STORE_BLOB=false and no remote "
-                    "embedding endpoint configured: memories keep no local embedding and "
-                    "none is pushed remotely, so recall runs on FTS/keyword only for every "
-                    "row written in this configuration — set CPERSONA_STORE_BLOB=true, or "
-                    "configure the endpoint this mode pushes to",
-                    VECTOR_SEARCH_MODE,
-                )
-            else:
-                logger.info(
-                    "Vector search mode=%s with CPERSONA_STORE_BLOB=false: memories keep no "
-                    "local embedding, so a remote /search outage leaves recall with FTS/keyword only",
-                    VECTOR_SEARCH_MODE,
-                )
+        _log_vector_fallback_trade()
     else:
         logger.info("Embedding disabled (mode=none), using FTS5 + keyword only")
 

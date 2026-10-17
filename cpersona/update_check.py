@@ -1119,6 +1119,15 @@ async def _run_step(argv: list[str]) -> tuple[int, str]:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            # bug-792: an empty stdin does not stop a prompt that opens the
+            # controlling terminal itself, as git does for credentials and ssh
+            # for a passphrase or a host key, and nothing bounds a step, so an
+            # apply could wait forever on a prompt nobody sees. git and pip are
+            # told not to prompt, so a step that needs credentials fails at once
+            # with its own message, and the step runs in a session of its own,
+            # which has no controlling terminal for anything else to open.
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PIP_NO_INPUT": "1"},
+            start_new_session=True,
         )
     except Exception as exc:  # noqa: BLE001
         return 127, f"could not run {argv[0]!r}: {exc}"
