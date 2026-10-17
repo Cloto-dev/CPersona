@@ -995,3 +995,73 @@ async def test_bug796_dropping_an_agent_rewrites_the_sidecar_under_the_lock(degr
     assert held == [("read", True), ("save", True)]
     assert not _lock_is_held(lock), "the lock was not released"
     assert CAL_AGENT not in _stored(degraded_gate)["agent_thresholds"]
+
+
+# ---------------------------------------------------------------------------
+# bug-784 — an episode span ahead of the clock is found, repaired and reported
+# ---------------------------------------------------------------------------
+
+AHEAD = "2099-01-01T00:00:00+00:00"
+PAST = "2026-01-01T00:00:00+00:00"
+CREATED = "2026-02-01 00:00:00"
+
+
+async def _episode(db, summary, start, end, created=CREATED, agent=CAL_AGENT):
+    cur = await db.execute(
+        "INSERT INTO episodes (agent_id, summary, start_time, end_time, created_at) VALUES (?, ?, ?, ?, ?)",
+        (agent, summary, start, end, created),
+    )
+    return cur.lastrowid
+
+
+@pytest.mark.asyncio
+async def test_bug784_an_episode_span_ahead_of_the_clock_is_found_and_repaired(file_db):
+    ends_ahead = await _episode(file_db, "ends ahead", PAST, AHEAD)
+    both_ahead = await _episode(file_db, "both ahead", AHEAD, AHEAD)
+    clock_was_ahead = await _episode(file_db, "created ahead too", PAST, AHEAD, created="2099-01-01 00:00:00")
+    honest = await _episode(file_db, "honest", PAST, PAST)
+    other_agent = await _episode(file_db, "another agent's", PAST, AHEAD, agent="agent.other")
+    await file_db.commit()
+
+    found = await checks.check_future_episode_timestamp(file_db, CAL_AGENT, fix=False)
+    assert found == [{"type": "future_episode_timestamp", "count": 3, "repairable": 2}]
+
+    await checks.check_future_episode_timestamp(file_db, CAL_AGENT, fix=True)
+    spans = {
+        row[0]: (row[1], row[2])
+        for row in await file_db.execute_fetchall("SELECT id, start_time, end_time FROM episodes")
+    }
+    restored = "2026-02-01T00:00:00+00:00"
+    assert spans[ends_ahead] == (PAST, restored)
+    assert spans[both_ahead] == (restored, restored)
+    assert spans[clock_was_ahead] == (PAST, AHEAD), "a created_at ahead of the clock was copied over"
+    assert spans[honest] == (PAST, PAST)
+    assert spans[other_agent] == (PAST, AHEAD), "the repair reached another agent"
+    assert await checks.check_future_episode_timestamp(file_db, CAL_AGENT, fix=False) == [
+        {"type": "future_episode_timestamp", "count": 1, "repairable": 0}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bug784_the_health_run_includes_the_episode_check(file_db):
+    await _episode(file_db, "ends ahead", PAST, AHEAD)
+    await file_db.commit()
+
+    issues, _ = await checks.run_health_checks(file_db, agent_id=CAL_AGENT, fix=False)
+
+    assert [i["count"] for i in issues if i["type"] == "future_episode_timestamp"] == [1]
+
+
+@pytest.mark.asyncio
+async def test_bug784_a_restore_counts_episodes_ahead_of_the_clock(file_db, tmp_path):
+    path = tmp_path / "backup.jsonl"
+    with open(path, "w", encoding="utf-8") as fh:
+        for summary, start, end in (("ends ahead", PAST, AHEAD), ("honest", PAST, PAST)):
+            record = {"_type": "episode", "agent_id": CAL_AGENT, "summary": summary,
+                      "start_time": start, "end_time": end}
+            fh.write(json.dumps(record) + "\n")
+
+    result = await admin_handlers.do_import_memories(str(path), target_agent_id=CAL_AGENT)
+
+    assert result["ok"] is True and result["imported_episodes"] == 2, result
+    assert result["future_episode_timestamps"] == 1, result

@@ -219,6 +219,23 @@ async def _s_future_timestamp(conn):
     yield conn
 
 
+@seeder("future_episode_timestamp")
+async def _s_future_episode_timestamp(conn):
+    # No locked column on episodes. One span ahead of the clock with an honest
+    # created_at (repairable), one whose created_at is ahead too (the repair would
+    # copy one future stamp over another, so it is not).
+    await conn.execute(
+        "INSERT INTO episodes (agent_id, summary, start_time, end_time) VALUES (?, ?, ?, ?)",
+        (AGENT, "ends ahead of the clock", UTC_TS, "2099-01-01T00:00:00+00:00"),
+    )
+    await conn.execute(
+        """INSERT INTO episodes (agent_id, summary, start_time, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (AGENT, "written by a host whose clock was ahead", "2099-01-01T00:00:00+00:00", "2099-01-01 00:00:00"),
+    )
+    yield conn
+
+
 @seeder("timestamp_format_drift")
 async def _s_timestamp_format_drift(conn):
     await _mem(conn, "utc row", timestamp=UTC_TS)
@@ -304,6 +321,7 @@ EXPECTED_REPAIRABLE = {
     "null_episode_embedding": 1,
     "missing_episode_start_time": 1,  # `episodes` has no locked column
     "episode_timestamp_format_drift": 2,  # ditto: one aware + one backfill copy
+    "future_episode_timestamp": 1,  # ditto; the other one's created_at is ahead too
     "stale_pending_tasks": 1,  # queue rows, not memories
     "oversized_profile": 1,  # `profiles` has no locked column
     # object-scoped: one rebuild / one CREATE, always attempted
