@@ -34,6 +34,7 @@ the recall already embedded.
 """
 from __future__ import annotations
 
+import bisect
 from types import SimpleNamespace
 
 from cpersona import blocks, nodes
@@ -57,11 +58,23 @@ def fill_ranges(
     text: str, spans: list[tuple[int, int]], ranked: list[tuple], cap: int
 ) -> tuple[list[tuple[int, int]], bool]:
     """The ranges `fill` shows, in text order, and whether the best one was cut to the cap."""
+    # The ranges taken so far, kept sorted, as reconstruct.record_passages keeps them
+    # (bug-705). They do not overlap, so a range overlaps one of them exactly when the
+    # last taken range that starts before its end reaches past its start: one search
+    # per block, not a scan of every range taken. A governing range always contains
+    # its own block, so a block already inside a taken range is skipped before its
+    # range is computed: that range would overlap and be thrown away, and a record of
+    # many short lines paid a context walk for every block (bug-790).
     chosen: list[tuple[int, int]] = []
     used = 0
     for row in ranked:
+        block_start, block_end = spans[row[0]]
+        before = bisect.bisect_left(chosen, (block_end,))
+        if before and chosen[before - 1][1] > block_start:
+            continue
         start, end, _ = blocks.context_range(text, spans, row[0])
-        if any(start < e and s < end for s, e in chosen):
+        before = bisect.bisect_left(chosen, (end,))
+        if before and chosen[before - 1][1] > start:
             continue
         # A range that touches one already taken joins it and costs no separator.
         touching = any(start == e or end == s for s, e in chosen)
@@ -70,9 +83,9 @@ def fill_ranges(
             if not chosen:
                 return [(start, start + cap)], True
             break
-        chosen.append((start, end))
+        bisect.insort(chosen, (start, end))
         used += cost
-    return _joined(sorted(chosen)), False
+    return _joined(chosen), False
 
 
 def _joined(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:

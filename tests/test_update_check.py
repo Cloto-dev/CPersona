@@ -736,8 +736,11 @@ async def test_apply_runs_an_argv_list_never_a_shell(monkeypatch):
     ]
     for _, kwargs in seen:
         # stdin is closed off on purpose: under stdio it is the client's stream.
-        assert set(kwargs) == {"stdin", "stdout", "stderr"}, kwargs
+        # The environment and the session keep a step from prompting (bug-792).
+        assert set(kwargs) == {"stdin", "stdout", "stderr", "env", "start_new_session"}, kwargs
         assert kwargs["stdin"] == asyncio.subprocess.DEVNULL
+        assert kwargs["start_new_session"] is True
+        assert (kwargs["env"]["GIT_TERMINAL_PROMPT"], kwargs["env"]["PIP_NO_INPUT"]) == ("0", "1")
     assert any("Successfully installed" in line for line in result["output_tail"])
 
 

@@ -2287,8 +2287,8 @@ MUTATIONS += [
         tests=('tests/test_coverage_ledger.py',),
         target="coverage ledger — another agent's record is not read",
         file='cpersona/coverage.py',
-        find='WHERE agent_id = ? AND id IN',
-        replace='WHERE (agent_id = ? OR 1) AND id IN',
+        find=' AND agent_id = ?",\n',
+        replace=' AND (agent_id = ? OR 1)",\n',
         breaks="a ref naming another agent's row reads that row's text",
         expect='test_coverage_ledger.py::test_another_agents_record_is_not_read',
     ),
@@ -2949,8 +2949,8 @@ MUTATIONS += [
         tests=('tests/test_reconstruct_v1_2.py',),
         target='reconstruct v1.2 — touching passages are one passage',
         file='cpersona/excerpts.py',
-        find='    return _joined(sorted(chosen)), False\n',
-        replace='    return sorted(chosen), False\n',
+        find='    return _joined(chosen), False\n',
+        replace='    return chosen, False\n',
         breaks='a sentence running across two blocks is cut by a separator',
         expect='test_reconstruct_v1_2.py::test_touching_passages_are_joined_without_a_separator',
     ),
@@ -4664,6 +4664,127 @@ MUTATIONS += [
         replace='    if True:\n        issue["changes_since_build"]',
         breaks='an agent-scoped call reports how many block changes the other agents made',
         expect='test_audit_2611_siblings.py::test_bug789_only_a_whole_store_call_reports_the_change_count',
+    ),
+    Mutation(
+        id='M460',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='coverage ledger — the records are read in chunks (bug-785)',
+        file='cpersona/coverage.py',
+        find=(
+            '            rows = await vector._fetch_rows_by_id(\n'
+            '                db,\n'
+            '                f"SELECT id, {column} FROM {table} WHERE id IN ({{ph}}) AND agent_id = ?",\n'
+            '                ids[kind],\n'
+            '                (agent_id,),\n'
+            '            )\n'
+        ),
+        replace=(
+            '            marks = ",".join("?" * len(ids[kind]))\n'
+            '            rows = {r[0]: r for r in await db.execute_fetchall(\n'
+            '                f"SELECT id, {column} FROM {table} WHERE id IN ({marks}) AND agent_id = ?",\n'
+            '                (*ids[kind], agent_id),\n'
+            '            )}\n'
+        ),
+        breaks="a traced recall's ledger read binds every returned id in one statement and can pass SQLite's limit",
+        expect='test_audit_2611_siblings.py::test_bug785_the_coverage_read_stays_under_the_bound_variable_limit',
+    ),
+    Mutation(
+        id='M461',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='vector.remote_arm_armed — the remote arm runs only where a route derives (bug-786)',
+        file='cpersona/vector.py',
+        find='    return mode == "remote" and remote_route("search") is not None\n',
+        replace='    return mode == "remote" and bool(getattr(_embedding_client, "_http_url", None))\n',
+        breaks='a URL that names no route is reported as remote search that never runs',
+        expect='test_audit_2611_siblings.py::test_bug786_the_remote_arm_runs_only_where_a_route_derives',
+    ),
+    Mutation(
+        id='M462',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='check_vector_fallback_config — the remote arm predicate is the shared one (bug-786)',
+        file='cpersona/checks.py',
+        find='    return vector.remote_arm_armed(VECTOR_SEARCH_MODE)\n',
+        replace=(
+            '    return bool(VECTOR_SEARCH_MODE == "remote" and vector._embedding_client'
+            ' and vector._embedding_client._http_url)\n'
+        ),
+        breaks='the maintenance hint describes a remote outage risk for an endpoint no remote call reaches',
+        expect='test_audit_2611_siblings.py::test_bug786_the_remote_arm_runs_only_where_a_route_derives',
+    ),
+    Mutation(
+        id='M463',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='coarse_notice.local_vector_search — the shared remote arm predicate (bug-786)',
+        file='cpersona/coarse_notice.py',
+        find='    return not vector.remote_arm_armed(vector.VECTOR_SEARCH_MODE)\n',
+        replace='    return not (vector.VECTOR_SEARCH_MODE == "remote" and vector._embedding_client._http_url)\n',
+        breaks='the coarse-index suggestion is withheld for a recall that ranks the local store',
+        expect='test_audit_2611_siblings.py::test_bug786_the_remote_arm_runs_only_where_a_route_derives',
+    ),
+    Mutation(
+        id='M464',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='boot notice — an unrouted endpoint is named as no remote arm (bug-786)',
+        file='cpersona/server.py',
+        find='    if not vector.remote_arm_armed(VECTOR_SEARCH_MODE):\n',
+        replace='    if not (vector._embedding_client and vector._embedding_client._http_url):\n',
+        breaks='the boot notice tells an operator with no remote arm to expect only an outage risk',
+        expect='test_audit_2611_siblings.py::test_bug786_the_boot_notice_names_an_unrouted_endpoint_as_no_arm',
+    ),
+    Mutation(
+        id='M465',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='excerpts.fill_ranges — a block inside a taken range is skipped before its walk (bug-790)',
+        file='cpersona/excerpts.py',
+        find=(
+            '        block_start, block_end = spans[row[0]]\n'
+            '        before = bisect.bisect_left(chosen, (block_end,))\n'
+            '        if before and chosen[before - 1][1] > block_start:\n'
+            '            continue\n'
+        ),
+        replace='',
+        breaks='a record of many short lines pays a context walk for every block',
+        expect='test_audit_2611_siblings.py::test_bug790_a_block_inside_a_taken_range_gets_no_context_walk',
+    ),
+    Mutation(
+        id='M466',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='excerpts.fill_ranges — a range overlapping a taken one is not taken (bug-790)',
+        file='cpersona/excerpts.py',
+        find='        if before and chosen[before - 1][1] > start:\n',
+        replace='        if False:\n',
+        breaks='an excerpt shows overlapping ranges',
+        expect='test_audit_2611_siblings.py::test_bug790_the_ranges_are_the_ones_the_old_scan_chose',
+    ),
+    Mutation(
+        id='M467',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='check_update apply — git and pip are told not to prompt (bug-792)',
+        file='cpersona/update_check.py',
+        find='            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PIP_NO_INPUT": "1"},\n',
+        replace='',
+        breaks='a step that needs credentials prompts instead of failing with its own message',
+        expect='test_audit_2611_siblings.py::test_bug792_an_apply_step_is_told_not_to_prompt_and_has_no_terminal',
+    ),
+    Mutation(
+        id='M468',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='check_update apply — a step runs without a controlling terminal (bug-792)',
+        file='cpersona/update_check.py',
+        find='            start_new_session=True,\n',
+        replace='',
+        breaks='ssh or git can open the server terminal and wait on a prompt nobody sees',
+        expect='test_audit_2611_siblings.py::test_bug792_an_apply_step_is_told_not_to_prompt_and_has_no_terminal',
+    ),
+    Mutation(
+        id='M469',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='repair run remote sync — a timeout ends the sync (bug-779)',
+        file='cpersona/maintenance_handlers.py',
+        find='        if timed_out:\n            skipped = sum(post[4] for post in posts[n + 1 :])\n',
+        replace='        if False:\n            skipped = sum(post[4] for post in posts[n + 1 :])\n',
+        breaks='a repair run spends one index deadline per remaining chunk on a service that stopped answering',
+        expect='test_audit_2611_siblings.py::test_bug779_the_remote_sync_stops_after_a_timeout',
     ),
 ]
 

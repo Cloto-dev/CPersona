@@ -151,6 +151,19 @@ def stored_blob_is_finite(blob: object) -> bool:
 _remote_route_refusal_logged = False
 
 
+def remote_arm_armed(mode: str) -> bool:
+    """Whether the remote half of the vector arm runs under ``mode``.
+
+    Remote mode, and a configured URL the service's routes derive from: a URL that
+    does not end in /embed names none, so every remote call is skipped (bug-669).
+    One predicate for every reader that reports or gates on the remote arm, so none
+    of them describes remote search that never runs (bug-786). Takes the mode as an
+    argument, as ``config.local_blobs_stored`` does, so each caller passes the copy
+    it acts on.
+    """
+    return mode == "remote" and remote_route("search") is not None
+
+
 def remote_route(route: str) -> str | None:
     """The remote index service's ``route`` beside the configured ``/embed`` URL, or None.
 

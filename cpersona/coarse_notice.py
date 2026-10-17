@@ -55,12 +55,12 @@ def local_vector_search() -> bool:
     The time cue's vector half, and so its remainder, exists only then: without an
     embedding client there is no query vector, and with remote vector search the
     service ranks under its own window. The predicate the recall path gates the
-    remote branch on, read from the same module.
+    remote branch on, read from the same module: a URL that does not end in /embed
+    names no search route, so such a recall ranks the local store (bug-786).
     """
-    client = vector._embedding_client
-    if not client:
+    if not vector._embedding_client:
         return False
-    return not (vector.VECTOR_SEARCH_MODE == "remote" and client._http_url)
+    return not vector.remote_arm_armed(vector.VECTOR_SEARCH_MODE)
 
 
 def _told(session_key: str, declared: bool) -> bool:
