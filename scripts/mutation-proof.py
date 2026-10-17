@@ -4786,6 +4786,32 @@ MUTATIONS += [
         breaks='a repair run spends one index deadline per remaining chunk on a service that stopped answering',
         expect='test_audit_2611_siblings.py::test_bug779_the_remote_sync_stops_after_a_timeout',
     ),
+    Mutation(
+        id='M470',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='block index load — every array comes from the handle the header came from (bug-793)',
+        file='cpersona/block_index.py',
+        find='    _map = vector_index._array_reader(fh)\n',
+        replace=(
+            '    def _map(offset, dtype, shape):\n'
+            '        if vector_index._maps_files():\n'
+            '            return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)\n'
+            '        items = int(np.prod(shape))\n'
+            '        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)\n'
+        ),
+        breaks="a rebuild landing mid-load pairs one file's header with the other's bytes",
+        expect='test_audit_2611_siblings.py::test_bug793_a_rebuild_landing_mid_load_is_not_mixed_in',
+    ),
+    Mutation(
+        id='M471',
+        tests=('tests/test_audit_2611_siblings.py',),
+        target='cached_block_index — the replaced index is released before its successor loads (bug-793)',
+        file='cpersona/block_index.py',
+        find='    # holding the old entry through the load kept two copies resident at once.\n    _cache.pop(src, None)\n',
+        replace='    # holding the old entry through the load kept two copies resident at once.\n',
+        breaks='on Windows two copies of the block index are resident during a reload',
+        expect='test_audit_2611_siblings.py::test_bug793_the_replaced_index_is_released_before_its_successor_loads',
+    ),
 ]
 
 

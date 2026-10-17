@@ -438,20 +438,16 @@ def load_block_index(path: str | None = None) -> BlockIndex | None:
     src = path or index_path()
     if not os.path.exists(src):
         return None
-
-    size = os.path.getsize(src)
+    # One open for the header, the size check and every array, as the vector and
+    # coarse loaders read theirs (bug-745, bug-793): a rebuild moves a new file over
+    # this path, and reopening it by path for each array paired this header's offsets
+    # with the other file's bytes when the move landed between two of them.
     with open(src, "rb") as fh:
-        head = fh.read(len(MAGIC) + 4)
-        if len(head) < len(MAGIC) + 4 or head[: len(MAGIC)] != MAGIC:
-            raise IndexUnusable(f"{src}: bad magic")
-        header_len = struct.unpack("<I", head[len(MAGIC):])[0]
-        raw = fh.read(header_len)
-        if len(raw) != header_len:
-            raise IndexUnusable(f"{src}: header truncated")
-        try:
-            header = json.loads(raw.decode("utf-8"))
-        except ValueError as exc:
-            raise IndexUnusable(f"{src}: header is not JSON ({exc})") from exc
+        return _load_open(fh, src)
+
+
+def _load_open(fh, src: str) -> BlockIndex:
+    header, base, size = vector_index._read_header(fh, src, MAGIC)
 
     if header.get("format") != FORMAT_VERSION:
         raise IndexUnusable(f"{src}: format {header.get('format')} != {FORMAT_VERSION}")
@@ -466,18 +462,11 @@ def load_block_index(path: str | None = None) -> BlockIndex | None:
     if width < 1 or count < 0:
         raise IndexUnusable(f"{src}: width {width} / count {count}")
 
-    base = len(MAGIC) + 4 + header_len
     expect = base + count * (8 + 4 + 3 * 4 + 2 + 1 + 1 + width)
     if size != expect:
         raise IndexUnusable(f"{src}: expected {expect} bytes for {count} rows of width {width}, found {size}")
 
-    mapped = vector_index._maps_files()
-
-    def _map(offset: int, dtype: str, shape) -> np.ndarray:
-        if mapped:
-            return np.memmap(src, dtype=dtype, mode="r", offset=offset, shape=shape)
-        items = int(np.prod(shape))
-        return np.fromfile(src, dtype=dtype, count=items, offset=offset).reshape(shape)
+    _map = vector_index._array_reader(fh)
 
     off = base
     arrays = {}
@@ -519,6 +508,10 @@ def cached_block_index(path: str | None = None) -> BlockIndex | None:
     hit = _cache.get(src)
     if hit is not None and hit[0] == key:
         return hit[1]
+    # Let go of the replaced index before reading its successor, as cached_index
+    # does (bug-744, bug-793): on Windows the arrays are read into memory, so
+    # holding the old entry through the load kept two copies resident at once.
+    _cache.pop(src, None)
     index = load_block_index(src)
     _cache[src] = (key, index)
     return index

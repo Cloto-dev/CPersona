@@ -12045,12 +12045,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/block_index.py",
-      "pattern": "return np\\.fromfile\\(src, dtype=dtype, count=items, offset=offset\\)\\.reshape\\(shape\\)",
+      "pattern": "_map = vector_index\\._array_reader\\(fh\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Load through vector_index._read_header / _array_reader from one open handle, and pop the stale cache entry before loading, as cached_index does.",
-      "note": "Found while fixing bug-744 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-744 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "load_block_index reads the header, the size check and every array from one open handle through vector_index._read_header and _array_reader, as the vector and coarse loaders do, so a rebuild that lands on the path mid-load is not mixed in: the handle keeps the file the header came from. cached_block_index pops the replaced entry before loading its successor. Before the fix, a file moved over the path between the header read and the array reads gave parents 101-103 under the first file's header (mapped and read alike), and the replaced index was still cached while its successor loaded. Pinned by tests/test_audit_2611_siblings.py; mutations M470 (reopen by path per array) and M471 (keep the stale entry) each turn a test red."
     },
     {
       "id": "bug-794",

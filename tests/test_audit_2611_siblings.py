@@ -33,6 +33,9 @@ These are places where it was found:
            search that never runs.
   bug-790  excerpts.fill_ranges computed each ranked block's governing range
            before asking whether the block already lay inside a range it took.
+  bug-793  The block index loader reopened its path for each array, and the cache
+           held the replaced index while its successor loaded. The vector and
+           coarse loaders read from one handle and let go first (bug-744/745).
   bug-792  check_update(apply=true) steps could prompt on the controlling
            terminal (git credentials, an ssh passphrase), with nothing bounding
            the step.
@@ -70,6 +73,7 @@ from cpersona import (
     update_check,
     utils,
     vector,
+    vector_index,
 )
 
 AGENT = "siblings.agent"
@@ -624,3 +628,59 @@ async def test_bug779_the_remote_sync_stops_after_a_timeout(monkeypatch, caplog,
     else:
         assert sent == [("remove", 128), ("remove", 128), ("remove", 44), ("index", 5)]
         assert not skipped
+
+
+# ==========================================================================
+# bug-793: the block index loads from one handle, and the cache lets go first
+# ==========================================================================
+
+
+async def _two_block_files(db, tmp_path):
+    """Two built block index files of one shape: parents 1-3, then 101-103."""
+    await db.executemany(_BLOCK_INSERT, [(i, AGENT, bytes([i]) * 4) for i in range(1, 4)])
+    await db.commit()
+    first, second = str(tmp_path / "first.blk"), str(tmp_path / "second.blk")
+    assert (await block_index.build_block_index(first))["built"]
+    await db.execute("UPDATE record_blocks SET parent_id = parent_id + 100")
+    await db.commit()
+    assert (await block_index.build_block_index(second))["built"]
+    return first, second
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("maps", [True, False], ids=["mapped", "read"])
+async def test_bug793_a_rebuild_landing_mid_load_is_not_mixed_in(file_db, monkeypatch, tmp_path, maps):
+    first, second = await _two_block_files(file_db, tmp_path)
+    moved = []
+
+    def move_then_answer():
+        # Between the header read and the array reads: a rebuild lands on the path.
+        if not moved:
+            os.replace(second, first)
+            moved.append(True)
+        return maps
+
+    monkeypatch.setattr(vector_index, "_maps_files", move_then_answer)
+    index = block_index.load_block_index(first)
+
+    assert moved, "the hook never ran, so nothing was tested"
+    assert sorted(int(v) for v in index.parent_id) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_bug793_the_replaced_index_is_released_before_its_successor_loads(file_db, monkeypatch, tmp_path):
+    first, second = await _two_block_files(file_db, tmp_path)
+    assert sorted(int(v) for v in block_index.cached_block_index(first).parent_id) == [1, 2, 3]
+    os.replace(second, first)
+    held_during_load = []
+    real = block_index.load_block_index
+
+    def watch(src=None):
+        held_during_load.append(src in block_index._cache)
+        return real(src)
+
+    monkeypatch.setattr(block_index, "load_block_index", watch)
+    reloaded = block_index.cached_block_index(first)
+
+    assert held_during_load == [False], "the replaced index was still cached while its successor loaded"
+    assert sorted(int(v) for v in reloaded.parent_id) == [101, 102, 103]
