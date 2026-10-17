@@ -44,13 +44,16 @@ These are places where it was found:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import random
 import sqlite3
+import struct
 import sys
 
 import aiosqlite
+import numpy as np
 import pytest
 import pytest_asyncio
 
@@ -790,3 +793,94 @@ async def test_bug783_update_profile_is_refused_in_its_own_shape(file_db):
     assert own == {"ok": False, "profiles_updated": 0, "reason": "empty profile"}
     assert set(boundary) == set(own)
     assert boundary["profiles_updated"] == 0
+
+
+# ---------------------------------------------------------------------------
+# bug-780 — a new precision is not stored beside a gate measured at another
+# ---------------------------------------------------------------------------
+
+CAL_AGENT = "agent.cal"
+CAL_DIM = 8
+
+
+def _reset_calibration_state():
+    vector._agent_thresholds.clear()
+    vector._agent_fused_gates.clear()
+    vector._agent_betas.clear()
+    vector._global_fused_gate = None
+    vector._fused_gate_signal = None
+    vector._reset_calibration_authority()
+
+
+@pytest_asyncio.fixture
+async def degraded_gate(file_db, monkeypatch):
+    """60 embedded memories for CAL_AGENT and a fused-gate measurement that gives nothing,
+    as with no embedding client or a failing backend. Yields the sidecar's path."""
+    monkeypatch.setattr(config, "VECTOR_MIN_SIMILARITY", config.VECTOR_MIN_SIMILARITY)
+    monkeypatch.setattr(config, "FUSED_GATE_ENABLED", True)
+
+    async def nothing_measured(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(admin_handlers, "_calibrate_fused_gate_median", nothing_measured)
+    _reset_calibration_state()
+    rng = np.random.default_rng(780)
+    for i in range(60):
+        v = rng.standard_normal(CAL_DIM).astype(np.float32)
+        v /= float(np.linalg.norm(v))
+        await file_db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp, embedding) VALUES (?,?,?,?)",
+            (CAL_AGENT, f"memory {i}", f"2026-10-01T00:{i:02d}:00+00:00", struct.pack(f"<{CAL_DIM}f", *v.tolist())),
+        )
+    await file_db.commit()
+    try:
+        yield admin_handlers._calibration_sidecar_path()
+    finally:
+        _reset_calibration_state()
+
+
+def _hold(axis: str, value: float) -> None:
+    getattr(vector, f"_{axis}")[CAL_AGENT] = value
+    vector._record_agent_calibration_change(CAL_AGENT, axis)
+
+
+def _stored(path: str) -> dict:
+    with open(path) as fh:
+        return json.load(fh)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("current", "precision"), [(None, "strict"), (0.5, "")], ids=["set", "clear"])
+async def test_bug780_a_precision_whose_gate_was_not_measured_is_not_applied(degraded_gate, current, precision):
+    if current is not None:
+        _hold("agent_betas", current)
+    _hold("agent_fused_gates", 0.31)
+
+    result = await admin_handlers.do_set_recall_precision(CAL_AGENT, precision)
+
+    assert result["ok"] is False and "not applied" in result["error"], result
+    assert vector._agent_betas.get(CAL_AGENT) == current
+    stored = _stored(degraded_gate)  # what a restart restores
+    assert stored["agent_betas"].get(CAL_AGENT) == current
+    assert stored["agent_fused_gates"][CAL_AGENT] == 0.31
+
+
+@pytest.mark.asyncio
+async def test_bug780_an_agent_holding_no_gate_still_records_its_precision(degraded_gate):
+    result = await admin_handlers.do_set_recall_precision(CAL_AGENT, "strict")
+
+    assert result["ok"] is True and result["fused_gate"] is None, result
+    assert vector._agent_betas[CAL_AGENT] == 2.0
+    assert _stored(degraded_gate)["agent_betas"][CAL_AGENT] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_bug780_a_precision_that_keeps_the_beta_is_applied(degraded_gate):
+    _hold("agent_betas", 2.0)
+    _hold("agent_fused_gates", 0.31)
+
+    result = await admin_handlers.do_set_recall_precision(CAL_AGENT, "strict")
+
+    assert result["ok"] is True, result
+    stored = _stored(degraded_gate)
+    assert (stored["agent_betas"][CAL_AGENT], stored["agent_fused_gates"][CAL_AGENT]) == (2.0, 0.31)

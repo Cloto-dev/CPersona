@@ -11852,12 +11852,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "agent_betas\\[agent_id\\] = precision_override",
+      "pattern": "cal\\.get\\(\"precision_override_applied\"\\) is False",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration-staleness",
       "fix_sketch": "When precision_override names a new beta and fused_stats is None, either leave the stored beta unchanged and report that the precision was not applied, or persist the beta together with a marker that the gate must be re-measured.",
-      "note": "Found while fixing bug-613 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-613 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "do_calibrate_threshold keeps the stored beta when it was asked to record a new one (set_recall_precision's precision_override), the gate measured at that beta gave nothing, the beta differs from the agent's current one, and the agent holds a gate (in memory or in the sidecar), which was therefore measured at its current beta; its result then carries precision_override_applied: false, and set_recall_precision answers ok:false saying the override was not applied and adopts nothing. The same holds for a clear. An agent holding no gate has nothing to disagree with, so its beta is recorded as before, and a call that keeps the beta is applied. Against the previous code the two not-applied cases answered ok:true and stored the new beta (or dropped it, for a clear) beside the gate measured at the old one."
     },
     {
       "id": "bug-781",

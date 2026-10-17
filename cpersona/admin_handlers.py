@@ -1992,6 +1992,9 @@ async def do_calibrate_threshold(
     write records for the agent, while process memory keeps the current beta. The
     caller adopts the new beta only once this call has persisted it, so a calibration
     that fails leaves no tentative value anywhere another calibration could save it.
+    When no gate could be measured at the new beta and the agent holds one measured at
+    its current beta, the stored beta is kept and the result carries
+    ``precision_override_applied: false``.
     """
     import numpy as np
 
@@ -2254,10 +2257,27 @@ async def do_calibrate_threshold(
         vector._record_agent_calibration_change(agent_id, "agent_fused_gates")
         vector._record_global_calibration_change("fused_gate_signal")
 
+    unpaired_override = False
     if may_replace:
         carried = _stored_calibration_to_carry(embedding_dim, stored_state)
         agent_betas = {**carried.get("agent_betas", {}), **dict(vector._agent_betas)}
-        if precision_override is None:
+        # A new beta is recorded with the gate measured at it. When that measurement
+        # gave nothing (no embedding client, a failing backend, too little data) and the
+        # agent holds a gate measured at its current beta, recording the beta alone
+        # stored it beside that gate, and a restart restored the pair that disagrees.
+        # The stored beta stays, and set_recall_precision reports the change as not
+        # applied. An agent holding no gate has nothing to disagree with, so its beta is
+        # recorded as before, and its gate is measured at it once one can be.
+        unpaired_override = (
+            precision_override is not _CURRENT_PRECISION
+            and gate_beta is not None
+            and fused_stats is None
+            and gate_beta != vector._get_precision_beta(agent_id)
+            and (agent_id in vector._agent_fused_gates or agent_id in carried.get("agent_fused_gates", {}))
+        )
+        if unpaired_override:
+            pass  # the stored beta stays
+        elif precision_override is None:
             agent_betas.pop(agent_id, None)
         elif precision_override is not _CURRENT_PRECISION:
             agent_betas[agent_id] = precision_override
@@ -2315,6 +2335,8 @@ async def do_calibrate_threshold(
         result["pos_mean"] = stats["pos_mean"]
     if fused_stats is not None:
         result["fused_gate"] = fused_stats
+    if unpaired_override:
+        result["precision_override_applied"] = False
     logger.info(
         "Calibrated threshold [%s]: %.4f -> %.4f (method=%s z=%.1f pct=%.2f of %d pairs, "
         "mean=%.4f std=%.4f admit=%.3f dim=%d)",
@@ -2445,6 +2467,20 @@ async def do_set_recall_precision(
             "error": (
                 "the calibration sidecar could not be written, so the change would not "
                 "survive a restart; the precision override was not applied"
+            ),
+        }
+    # bug-780: no gate could be measured at the new beta while the agent holds one
+    # measured at its current beta, so the calibration kept the stored beta rather than
+    # pair the new one with that gate.
+    if cal.get("ok") and cal.get("precision_override_applied") is False:
+        cal = {
+            **cal,
+            "ok": False,
+            "error": (
+                "the recall gate could not be measured at the new precision, and the "
+                "agent's gate was measured at its current one, so the new precision would "
+                "have been stored beside a gate that does not belong to it; the precision "
+                "override was not applied"
             ),
         }
     if not cal.get("ok") or cal.get("persisted") is False:
