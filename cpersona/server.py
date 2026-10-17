@@ -26,6 +26,7 @@ import ipaddress
 import logging
 import os
 import sys
+from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlparse
 
@@ -104,7 +105,7 @@ from cpersona.memory_handlers import (
 from cpersona.reconstruct import do_reconstruct
 from cpersona import checks as checks_module
 from cpersona.checks import HEALTH_CHECK_NAMES
-from cpersona.utils import CANONICAL_SOURCE_TYPES, error_response, source_type_alias_summary
+from cpersona.utils import CANONICAL_SOURCE_TYPES, error_response, lone_surrogate_in, source_type_alias_summary
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +353,24 @@ async def do_store_boundary(
     return _oc_annotate(result, project_id, resolved, warning)
 
 
+def _declare_refused(error: str) -> dict:
+    """A declare_associations call refused before anything was declared.
+
+    `result` is on every other response this tool gives (declared, skipped), so a
+    refusal carries it too, in the word store's refusal uses, with the empty lists
+    and count the other responses carry.
+    """
+    return {
+        "ok": False,
+        "error": error,
+        "result": "rejected",
+        "entities": [],
+        "mentions": 0,
+        "relations": [],
+        "dropped": [],
+    }
+
+
 async def do_declare_associations_boundary(
     agent_id: str,
     associations: dict | None = None,
@@ -363,16 +382,7 @@ async def do_declare_associations_boundary(
 ) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
     if error:
-        # `result` is on every other response this tool gives (declared, skipped),
-        # so the gate refusal carries it too, in the word store's refusal uses.
-        return {
-            **_oc_reject(error),
-            "result": "rejected",
-            "entities": [],
-            "mentions": 0,
-            "relations": [],
-            "dropped": [],
-        }
+        return {**_oc_reject(error), **_declare_refused(error)}
     key, _declared = resolve_session_key(session_key)
     if session.is_paused_for(key):
         return session.make_skipped_response(
@@ -2775,6 +2785,48 @@ registry.auto_tool(
     # annotation-truthfulness class).
     annotations=ToolAnnotations(readOnlyHint=False),
 )
+
+
+# Half of a UTF-16 surrogate pair (JSON "\udfff" on its own) decodes to a code
+# point no UTF-8 encoder accepts, and SQLite binds text as UTF-8. store,
+# archive_episode, recall, reconstruct and get_contents refused it over the fields
+# they bind (bug-633); every other tool raised out of the first statement that
+# bound it and answered with a bare error, or quoted the encoder in its refusal.
+# Refused once here, for every string in every tool's arguments, in the shape the
+# tool's own argument refusals take: the tools below promise fields on a refusal,
+# and the rest refuse with error_response.
+_ARGUMENT_REFUSALS: dict[str, Callable[[str, dict], dict]] = {
+    "store": lambda error, arguments: _store_refused(error, arguments.get("lock") is True),
+    "declare_associations": lambda error, arguments: _declare_refused(error),
+    "archive_episode": lambda error, arguments: {"ok": False, "episode_id": None, "error": error},
+    "recall": lambda error, arguments: error_response(error, messages=[]),
+    "recall_with_context": lambda error, arguments: error_response(error, messages=[]),
+    "reconstruct": lambda error, arguments: error_response(error, items=[], returned_count=0),
+    "update_profile": lambda error, arguments: {"ok": False, "profiles_updated": 0, "reason": error},
+}
+
+
+def _refuse_lone_surrogates(name: str, handler):
+    refuse = _ARGUMENT_REFUSALS.get(name, lambda error, arguments: error_response(error))
+
+    async def checked(arguments: dict) -> dict:
+        issue = lone_surrogate_in(arguments)
+        if issue:
+            return refuse(issue, arguments)
+        return await handler(arguments)
+
+    checked.__wrapped__ = handler
+    return checked
+
+
+def _install_surrogate_guard(registry) -> None:
+    for name, handler in list(registry._handlers.items()):
+        registry._handlers[name] = _refuse_lone_surrogates(name, handler)
+
+
+# Below the last registration and above the capability guard, so a call is
+# authorised before its arguments are read.
+_install_surrogate_guard(registry)
 
 
 # Capability guard (docs/ACL_DESIGN.md §5.2): wrap every handler registered

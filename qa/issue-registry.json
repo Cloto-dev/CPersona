@@ -7665,7 +7665,7 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "may_replace = not stored_unreadable or _backup_unreadable_calibration_sidecar\\(\\) is not None",
+      "pattern": "not stored_unreadable or _backup_unreadable_calibration_sidecar\\(\\) is not None",
       "expected": "present",
       "status": "fixed",
       "category": "data-integrity",
@@ -10793,7 +10793,7 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/server.py",
-      "pattern": "^            \"result\": \"rejected\",$",
+      "pattern": "return \\{\\*\\*_oc_reject\\(error\\), \\*\\*_declare_refused\\(error\\)\\}",
       "expected": "present",
       "status": "fixed",
       "category": "response-shape",
@@ -11852,12 +11852,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "agent_betas\\[agent_id\\] = precision_override",
+      "pattern": "cal\\.get\\(\"precision_override_applied\"\\) is False",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration-staleness",
       "fix_sketch": "When precision_override names a new beta and fused_stats is None, either leave the stored beta unchanged and report that the precision was not applied, or persist the beta together with a marker that the gate must be re-measured.",
-      "note": "Found while fixing bug-613 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-613 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "do_calibrate_threshold keeps the stored beta when it was asked to record a new one (set_recall_precision's precision_override), the gate measured at that beta gave nothing, the beta differs from the agent's current one, and the agent holds a gate (in memory or in the sidecar), which was therefore measured at its current beta; its result then carries precision_override_applied: false, and set_recall_precision answers ok:false saying the override was not applied and adopts nothing. The same holds for a clear. An agent holding no gate has nothing to disagree with, so its beta is recorded as before, and a call that keeps the beta is applied. Against the previous code the two not-applied cases answered ok:true and stored the new beta (or dropped it, for a clear) beside the gate measured at the old one."
     },
     {
       "id": "bug-781",
@@ -11895,13 +11896,14 @@
       "severity": "LOW",
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
-      "file": "cpersona/admin_handlers.py",
-      "pattern": "_warn_if_unscoped\\(\\\"do_update_memory\\\", memory_id, agent_id\\)",
+      "file": "cpersona/server.py",
+      "pattern": "^_install_surrogate_guard\\(registry\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "input-validation",
       "fix_sketch": "Refuse a lone surrogate once at the tool boundary for every string argument (utils.lone_surrogate_issue), rather than handler by handler, and keep each tool's own refusal shape.",
-      "note": "Found while fixing bug-633 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-633 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "Every tool handler is wrapped, below the last registration and inside the capability guard, by a check that walks every string in the call's arguments (nested lists and objects included, dictionary keys before their values) through utils.lone_surrogate_in and refuses the first lone surrogate by its path, before the handler binds anything. The refusal takes the tool's own shape: store keeps result/reason (and locked under lock:true), declare_associations result and its empty lists, archive_episode episode_id, recall and recall_with_context messages, reconstruct items and returned_count, update_profile profiles_updated/reason; every other tool answers with error_response. Measured by sending U+DFFF alone in each of the 68 string parameters across the tools: before, 21 answered this refusal, 18 raised UnicodeEncodeError, 2 quoted the encoder in their refusal, 8 answered as if nothing was wrong and 19 were refused first for another reason; after, all 68 answer this refusal."
     },
     {
       "id": "bug-784",
@@ -12045,12 +12047,13 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/block_index.py",
-      "pattern": "return np\\.fromfile\\(src, dtype=dtype, count=items, offset=offset\\)\\.reshape\\(shape\\)",
+      "pattern": "_map = vector_index\\._array_reader\\(fh\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Load through vector_index._read_header / _array_reader from one open handle, and pop the stale cache entry before loading, as cached_index does.",
-      "note": "Found while fixing bug-744 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-744 (a sibling the fix did not cover); reproduced.",
+      "fix_note": "load_block_index reads the header, the size check and every array from one open handle through vector_index._read_header and _array_reader, as the vector and coarse loaders do, so a rebuild that lands on the path mid-load is not mixed in: the handle keeps the file the header came from. cached_block_index pops the replaced entry before loading its successor. Before the fix, a file moved over the path between the header read and the array reads gave parents 101-103 under the first file's header (mapped and read alike), and the replaced index was still cached while its successor loaded. Pinned by tests/test_audit_2611_siblings.py; mutations M470 (reopen by path per array) and M471 (keep the stale entry) each turn a test red."
     },
     {
       "id": "bug-794",
@@ -12089,26 +12092,28 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "stored_state, stored_unreadable = _read_calibration_sidecar\\(\\)",
+      "pattern": "with _calibration_sidecar_locked\\(\\) as sidecar_lock_held:",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "concurrency",
       "fix_sketch": "Hold a lock file beside the sidecar for the read, overlay and rename, as the alias ledger does.",
-      "note": "Found while fixing bug-630 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-630 (a sibling the fix did not cover); confirmed by reading the code.",
+      "fix_note": "A calibration's read of the sidecar, its overlay and the rename, and the rewrite that drops a deleted agent, happen under an advisory lock on <sidecar>.lock, the alias ledger's lock (now fileperms.lock_file, shared by both), which every server process takes for the same span. A lock that cannot be opened or taken is not written around: the calibration reports sidecar_persisted: false (so set_recall_precision reports the override as not applied), and the drop stays pending as it does when its rewrite fails. Reproduced with a second process that holds the lock for 1.5 s and then publishes a sidecar holding another agent: before the fix the calibration wrote meanwhile and its agent was gone from the file the other process published; with the lock it waits, reads that file and keeps both."
     },
     {
       "id": "bug-797",
-      "summary": "(LOW) An empty CPERSONA_TRANSPORT is refused at startup as an unknown transport, where every other setting reads an empty value as unset (the bug-133 and bug-561 rule) and would start on stdio.",
+      "summary": "(LOW) An empty CPERSONA_TRANSPORT was refused at startup with `Unknown transport:  (expected one of stdio, streamable-http)`, which shows nothing where the name goes and does not say the value was empty, and neither the code nor docs/configuration.md said that the transport is an exception to the rule that an empty setting is unset (the bug-133 and bug-561 rule).",
       "severity": "LOW",
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/config.py",
-      "pattern": "return os\\.environ\\.get\\(\\\"CPERSONA_TRANSPORT\\\", \\\"stdio\\\"\\)",
+      "pattern": "CPERSONA_TRANSPORT is set but empty",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "configuration",
-      "fix_sketch": "Read an empty CPERSONA_TRANSPORT as unset (stdio), as the other parsers do.",
-      "note": "Found while fixing bug-727 (a sibling the fix did not cover); confirmed by reading the code."
+      "fix_sketch": "Keep refusing an empty value, say in the refusal that it was empty, and write the exception and its reason where the setting is defined and documented.",
+      "note": "Found while fixing bug-727 (a sibling the fix did not cover); confirmed by reading the code. Filed first as 'read an empty value as unset (stdio)'. Measured before fixing: stdio with its input at end of file exits 0 within a second and logs no error, and the container image sets CPERSONA_TRANSPORT=streamable-http, so reading empty as stdio would turn an empty override of the image default into a server that quietly stops. tests/test_2611a2_x10.py also pins the empty value among the refused names.",
+      "fix_note": "validate_transport refuses an empty value with its own message, which keeps the `Unknown transport` prefix and says the variable is set but empty and that unsetting it selects stdio. The docstring, the on/off parser's comment and the CPERSONA_TRANSPORT row of docs/configuration.md (and the Japanese page) state the exception and why."
     },
     {
       "id": "bug-798",

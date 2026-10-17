@@ -39,28 +39,8 @@ import time
 
 from cpersona import fileperms
 
-if os.name == "nt":
-    import msvcrt
-
-    def _lock(fd: int) -> None:
-        # Byte 0 of the lock file stands for the whole ledger. LK_LOCK retries
-        # for ten seconds before raising; the section it guards takes
-        # milliseconds.
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
-
-    def _unlock(fd: int) -> None:
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-
-else:
-    import fcntl
-
-    def _lock(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-
-    def _unlock(fd: int) -> None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+_lock = fileperms.lock_file
+_unlock = fileperms.unlock_file
 
 
 logger = logging.getLogger(__name__)

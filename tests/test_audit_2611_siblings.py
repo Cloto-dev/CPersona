@@ -33,6 +33,9 @@ These are places where it was found:
            search that never runs.
   bug-790  excerpts.fill_ranges computed each ranked block's governing range
            before asking whether the block already lay inside a range it took.
+  bug-793  The block index loader reopened its path for each array, and the cache
+           held the replaced index while its successor loaded. The vector and
+           coarse loaders read from one handle and let go first (bug-744/745).
   bug-792  check_update(apply=true) steps could prompt on the controlling
            terminal (git credentials, an ssh passphrase), with nothing bounding
            the step.
@@ -41,13 +44,17 @@ These are places where it was found:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import random
 import sqlite3
+import struct
+import subprocess
 import sys
 
 import aiosqlite
+import numpy as np
 import pytest
 import pytest_asyncio
 
@@ -62,6 +69,7 @@ from cpersona import (
     coverage,
     database,
     excerpts,
+    fileperms,
     maintenance_handlers,
     nodes,
     server,
@@ -70,6 +78,7 @@ from cpersona import (
     update_check,
     utils,
     vector,
+    vector_index,
 )
 
 AGENT = "siblings.agent"
@@ -624,3 +633,365 @@ async def test_bug779_the_remote_sync_stops_after_a_timeout(monkeypatch, caplog,
     else:
         assert sent == [("remove", 128), ("remove", 128), ("remove", 44), ("index", 5)]
         assert not skipped
+
+
+# ==========================================================================
+# bug-793: the block index loads from one handle, and the cache lets go first
+# ==========================================================================
+
+
+async def _two_block_files(db, tmp_path):
+    """Two built block index files of one shape: parents 1-3, then 101-103."""
+    await db.executemany(_BLOCK_INSERT, [(i, AGENT, bytes([i]) * 4) for i in range(1, 4)])
+    await db.commit()
+    first, second = str(tmp_path / "first.blk"), str(tmp_path / "second.blk")
+    assert (await block_index.build_block_index(first))["built"]
+    await db.execute("UPDATE record_blocks SET parent_id = parent_id + 100")
+    await db.commit()
+    assert (await block_index.build_block_index(second))["built"]
+    return first, second
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("maps", [True, False], ids=["mapped", "read"])
+async def test_bug793_a_rebuild_landing_mid_load_is_not_mixed_in(file_db, monkeypatch, tmp_path, maps):
+    first, second = await _two_block_files(file_db, tmp_path)
+    moved = []
+
+    def move_then_answer():
+        # Between the header read and the array reads: a rebuild lands on the path.
+        if not moved:
+            os.replace(second, first)
+            moved.append(True)
+        return maps
+
+    monkeypatch.setattr(vector_index, "_maps_files", move_then_answer)
+    index = block_index.load_block_index(first)
+
+    assert moved, "the hook never ran, so nothing was tested"
+    assert sorted(int(v) for v in index.parent_id) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_bug793_the_replaced_index_is_released_before_its_successor_loads(file_db, monkeypatch, tmp_path):
+    first, second = await _two_block_files(file_db, tmp_path)
+    assert sorted(int(v) for v in block_index.cached_block_index(first).parent_id) == [1, 2, 3]
+    os.replace(second, first)
+    held_during_load = []
+    real = block_index.load_block_index
+
+    def watch(src=None):
+        held_during_load.append(src in block_index._cache)
+        return real(src)
+
+    monkeypatch.setattr(block_index, "load_block_index", watch)
+    reloaded = block_index.cached_block_index(first)
+
+    assert held_during_load == [False], "the replaced index was still cached while its successor loaded"
+    assert sorted(int(v) for v in reloaded.parent_id) == [101, 102, 103]
+
+
+# ---------------------------------------------------------------------------
+# bug-797 — an empty transport is refused, and the refusal says it was empty
+# ---------------------------------------------------------------------------
+
+
+def test_bug797_an_empty_transport_is_refused_as_empty(monkeypatch):
+    monkeypatch.setenv("CPERSONA_TRANSPORT", "")
+    with pytest.raises(ValueError, match="Unknown transport") as refused:
+        config.validate_transport()
+
+    message = str(refused.value)
+    assert "CPERSONA_TRANSPORT is set but empty" in message
+    assert "unset it to use stdio" in message
+
+
+def test_bug797_a_misspelt_transport_keeps_its_own_refusal(monkeypatch):
+    monkeypatch.setenv("CPERSONA_TRANSPORT", "http")
+    with pytest.raises(ValueError) as refused:
+        config.validate_transport()
+
+    assert str(refused.value) == "Unknown transport: http (expected one of stdio, streamable-http)"
+
+
+# ---------------------------------------------------------------------------
+# bug-783 — a lone surrogate is refused at the tool boundary, for every tool
+# ---------------------------------------------------------------------------
+
+LONE = "\udfff"
+
+
+def _string_arguments():
+    cases = []
+    for tool in server.registry._tools:
+        for name, spec in (tool.inputSchema or {}).get("properties", {}).items():
+            kinds = spec.get("type")
+            if "string" in (kinds if isinstance(kinds, list) else [kinds]):
+                cases.append(pytest.param(tool.name, name, id=f"{tool.name}.{name}"))
+    return cases
+
+
+def _refusal_text(response: dict) -> str:
+    return str(response.get("error") or response.get("reason") or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("tool", "argument"), _string_arguments())
+async def test_bug783_every_string_argument_is_refused_at_the_boundary(file_db, tool, argument):
+    response = await asyncio.wait_for(server.registry._handlers[tool]({argument: LONE}), 30)
+
+    assert response.get("ok") is False, response
+    assert f"{argument} holds a lone UTF-16 surrogate" in _refusal_text(response), response
+
+
+@pytest.mark.asyncio
+async def test_bug783_a_nested_string_is_named_by_its_path(file_db):
+    arguments = {"agent_id": "agent.a", "associations": {"entities": [{"name": "fine"}, {"name": LONE}]}}
+    response = await server.registry._handlers["declare_associations"](arguments)
+
+    assert response["error"].startswith("associations.entities[1].name holds a lone UTF-16 surrogate")
+    assert (response["result"], response["entities"], response["relations"]) == ("rejected", [], [])
+
+
+@pytest.mark.asyncio
+async def test_bug783_a_key_is_refused_without_quoting_it(file_db):
+    arguments = {"agent_id": "agent.a", "content": "fine", "metadata": {LONE: 1}}
+    response = await server.registry._handlers["store"](arguments)
+
+    assert response["result"] == "rejected", response
+    assert response["reason"].startswith("a key in metadata holds a lone UTF-16 surrogate")
+    response["reason"].encode("utf-8")  # the refusal does not carry the character it refuses
+
+
+# The tools that refuse a lone surrogate themselves (bug-633): the boundary answers
+# them with exactly what they answer, so a caller cannot tell which layer refused.
+_SELF_CHECKED = [
+    ("store", {"agent_id": "agent.a", "content": LONE}),
+    ("store", {"agent_id": "agent.a", "content": LONE, "lock": True}),
+    ("archive_episode", {"agent_id": "agent.a", "summary": LONE}),
+    ("recall", {"agent_id": "agent.a", "query": LONE}),
+    ("recall_with_context", {"agent_id": "agent.a", "query": LONE}),
+    ("reconstruct", {"agent_id": "agent.a", "query": LONE}),
+    ("get_contents", {"agent_id": LONE, "refs": ["mem:1"]}),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("tool", "arguments"), _SELF_CHECKED, ids=lambda v: v if isinstance(v, str) else "")
+async def test_bug783_the_boundary_answers_as_the_tool_itself_does(file_db, tool, arguments):
+    own_handler = server.registry._handlers[tool]._acl_inner.__wrapped__
+    own = await own_handler(dict(arguments))
+    boundary = await server.registry._handlers[tool](dict(arguments))
+
+    assert "lone UTF-16 surrogate" in _refusal_text(own), own
+    assert boundary == own
+
+
+@pytest.mark.asyncio
+async def test_bug783_update_profile_is_refused_in_its_own_shape(file_db):
+    own = await server.registry._handlers["update_profile"]({"agent_id": "agent.a", "profile": ""})
+    boundary = await server.registry._handlers["update_profile"]({"agent_id": "agent.a", "profile": LONE})
+
+    assert own == {"ok": False, "profiles_updated": 0, "reason": "empty profile"}
+    assert set(boundary) == set(own)
+    assert boundary["profiles_updated"] == 0
+
+
+# ---------------------------------------------------------------------------
+# bug-780 — a new precision is not stored beside a gate measured at another
+# ---------------------------------------------------------------------------
+
+CAL_AGENT = "agent.cal"
+CAL_DIM = 8
+
+
+def _reset_calibration_state():
+    vector._agent_thresholds.clear()
+    vector._agent_fused_gates.clear()
+    vector._agent_betas.clear()
+    vector._global_fused_gate = None
+    vector._fused_gate_signal = None
+    vector._reset_calibration_authority()
+
+
+@pytest_asyncio.fixture
+async def degraded_gate(file_db, monkeypatch):
+    """60 embedded memories for CAL_AGENT and a fused-gate measurement that gives nothing,
+    as with no embedding client or a failing backend. Yields the sidecar's path."""
+    monkeypatch.setattr(config, "VECTOR_MIN_SIMILARITY", config.VECTOR_MIN_SIMILARITY)
+    monkeypatch.setattr(config, "FUSED_GATE_ENABLED", True)
+
+    async def nothing_measured(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(admin_handlers, "_calibrate_fused_gate_median", nothing_measured)
+    _reset_calibration_state()
+    rng = np.random.default_rng(780)
+    for i in range(60):
+        v = rng.standard_normal(CAL_DIM).astype(np.float32)
+        v /= float(np.linalg.norm(v))
+        await file_db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp, embedding) VALUES (?,?,?,?)",
+            (CAL_AGENT, f"memory {i}", f"2026-10-01T00:{i:02d}:00+00:00", struct.pack(f"<{CAL_DIM}f", *v.tolist())),
+        )
+    await file_db.commit()
+    try:
+        yield admin_handlers._calibration_sidecar_path()
+    finally:
+        _reset_calibration_state()
+
+
+def _hold(axis: str, value: float) -> None:
+    getattr(vector, f"_{axis}")[CAL_AGENT] = value
+    vector._record_agent_calibration_change(CAL_AGENT, axis)
+
+
+def _stored(path: str) -> dict:
+    with open(path) as fh:
+        return json.load(fh)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("current", "precision"), [(None, "strict"), (0.5, "")], ids=["set", "clear"])
+async def test_bug780_a_precision_whose_gate_was_not_measured_is_not_applied(degraded_gate, current, precision):
+    if current is not None:
+        _hold("agent_betas", current)
+    _hold("agent_fused_gates", 0.31)
+
+    result = await admin_handlers.do_set_recall_precision(CAL_AGENT, precision)
+
+    assert result["ok"] is False and "not applied" in result["error"], result
+    assert vector._agent_betas.get(CAL_AGENT) == current
+    stored = _stored(degraded_gate)  # what a restart restores
+    assert stored["agent_betas"].get(CAL_AGENT) == current
+    assert stored["agent_fused_gates"][CAL_AGENT] == 0.31
+
+
+@pytest.mark.asyncio
+async def test_bug780_an_agent_holding_no_gate_still_records_its_precision(degraded_gate):
+    result = await admin_handlers.do_set_recall_precision(CAL_AGENT, "strict")
+
+    assert result["ok"] is True and result["fused_gate"] is None, result
+    assert vector._agent_betas[CAL_AGENT] == 2.0
+    assert _stored(degraded_gate)["agent_betas"][CAL_AGENT] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_bug780_a_precision_that_keeps_the_beta_is_applied(degraded_gate):
+    _hold("agent_betas", 2.0)
+    _hold("agent_fused_gates", 0.31)
+
+    result = await admin_handlers.do_set_recall_precision(CAL_AGENT, "strict")
+
+    assert result["ok"] is True, result
+    stored = _stored(degraded_gate)
+    assert (stored["agent_betas"][CAL_AGENT], stored["agent_fused_gates"][CAL_AGENT]) == (2.0, 0.31)
+
+
+# ---------------------------------------------------------------------------
+# bug-796 — the calibration sidecar is read, overlaid and replaced under a lock
+# ---------------------------------------------------------------------------
+
+# Another server process's calibration, reduced to its write: it takes the lock, holds
+# it while it "measures", then publishes a sidecar built before this process's write.
+_OTHER_PROCESS = r"""
+import fcntl, os, sys, time
+sidecar, lock, payload = sys.argv[1:4]
+fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+print("held", flush=True)
+time.sleep(1.5)
+with open(sidecar + ".other", "w") as fh:
+    fh.write(payload)
+os.replace(sidecar + ".other", sidecar)
+fcntl.flock(fd, fcntl.LOCK_UN)
+"""
+
+
+def _lock_is_held(path: str) -> bool:
+    import fcntl
+
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the other process locks with flock")
+@pytest.mark.asyncio
+async def test_bug796_a_calibration_waits_for_another_process_and_keeps_its_write(degraded_gate):
+    payload = json.dumps(
+        {
+            "embedding_dim": CAL_DIM,
+            "embedding_model": config.EMBEDDING_MODEL,
+            "scoring_version": admin_handlers._live_fingerprint(),
+            "global_threshold": config.VECTOR_MIN_SIMILARITY,
+            "agent_thresholds": {"agent.other": 0.42},
+            "global_fused_gate": None,
+            "agent_fused_gates": {},
+            "fused_gate_signal": None,
+            "agent_betas": {},
+            "calibrated_at": "2026-10-17T00:00:00+00:00",
+        }
+    )
+    other = subprocess.Popen(
+        [sys.executable, "-c", _OTHER_PROCESS, degraded_gate, degraded_gate + ".lock", payload],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert other.stdout.readline().strip() == "held"
+        result = await admin_handlers.do_calibrate_threshold(CAL_AGENT, method="percentile")
+    finally:
+        assert other.wait(timeout=30) == 0
+
+    assert result["sidecar_persisted"] is True, result
+    stored = _stored(degraded_gate)["agent_thresholds"]
+    assert set(stored) == {"agent.other", CAL_AGENT}, f"one process's write was lost: {stored}"
+
+
+@pytest.mark.asyncio
+async def test_bug796_a_calibration_that_cannot_take_the_lock_does_not_write(degraded_gate, monkeypatch):
+    def refused(fd):
+        raise OSError("the lock could not be taken")
+
+    monkeypatch.setattr(fileperms, "lock_file", refused)
+
+    result = await admin_handlers.do_calibrate_threshold(CAL_AGENT, method="percentile")
+
+    assert result["ok"] is True and result["sidecar_persisted"] is False, result
+    assert not os.path.exists(degraded_gate)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the probe locks with flock")
+@pytest.mark.asyncio
+async def test_bug796_dropping_an_agent_rewrites_the_sidecar_under_the_lock(degraded_gate, monkeypatch):
+    await admin_handlers.do_calibrate_threshold(CAL_AGENT, method="percentile")
+    assert CAL_AGENT in _stored(degraded_gate)["agent_thresholds"]
+    lock = degraded_gate + ".lock"
+    held = []
+    real_read = admin_handlers._read_calibration_sidecar
+    real_save = admin_handlers._save_calibration_state
+
+    def read():
+        held.append(("read", _lock_is_held(lock)))
+        return real_read()
+
+    def save(*args, **kwargs):
+        held.append(("save", _lock_is_held(lock)))
+        return real_save(*args, **kwargs)
+
+    monkeypatch.setattr(admin_handlers, "_read_calibration_sidecar", read)
+    monkeypatch.setattr(admin_handlers, "_save_calibration_state", save)
+
+    assert admin_handlers._purge_agent_calibration(CAL_AGENT) is True
+
+    assert held == [("read", True), ("save", True)]
+    assert not _lock_is_held(lock), "the lock was not released"
+    assert CAL_AGENT not in _stored(degraded_gate)["agent_thresholds"]

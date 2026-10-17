@@ -45,7 +45,8 @@ def _parse_choice(env_key: str, default: str, allowed: tuple[str, ...]) -> str:
 # every other spelling was off: `1`, `yes` and `on` turned a default-on feature
 # off -- the opposite of what was asked -- and nothing said so. The usual
 # spellings of both answers are accepted; anything else keeps the documented
-# default and says so, and empty is unset, as for every setting here.
+# default and says so, and empty is unset, as for every setting here but the
+# transport (see validate_transport).
 _TRUE_WORDS = ("true", "1", "yes", "on")
 _FALSE_WORDS = ("false", "0", "no", "off")
 
@@ -1183,8 +1184,22 @@ def validate_transport() -> None:
     database, scheduled the calibration and the update check and started the
     queue, and under ``Restart=always`` paid all of that on every restart to
     reach a refusal an environment variable decides.
+
+    An empty value is refused too, an exception to the rule that empty is
+    unset. Other defaults leave the same server running; this one decides what
+    kind of server runs. stdio with no client attached reads end of input and
+    exits 0 within a second, logging no error, and the container image sets
+    ``streamable-http``, so an empty override there (``-e CPERSONA_TRANSPORT=``,
+    or a compose ``${VAR}`` left unset) would turn an HTTP server into one that
+    quietly stops. The refusal says the value was empty, which the bare name
+    could not.
     """
     name = transport()
+    if not name:
+        raise ValueError(
+            "Unknown transport: '' (CPERSONA_TRANSPORT is set but empty; unset it to use "
+            f"stdio, or set one of {', '.join(TRANSPORTS)})"
+        )
     if name not in TRANSPORTS:
         raise ValueError(f"Unknown transport: {name} (expected one of {', '.join(TRANSPORTS)})")
 

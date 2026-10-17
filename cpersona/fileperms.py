@@ -158,6 +158,33 @@ def open_lock(path: str) -> int:
     return os.open(path, os.O_RDWR | os.O_CREAT | _BINARY | _NOFOLLOW, PRIVATE_FILE_MODE)
 
 
+# The advisory lock a descriptor from ``open_lock`` is held with: an exclusive lock,
+# waited for. Shared by the alias ledger and the calibration sidecar, the two files
+# several server processes rewrite whole.
+if os.name == "nt":
+    import msvcrt
+
+    def lock_file(fd: int) -> None:
+        # Byte 0 of the lock file stands for the whole file it guards. LK_LOCK
+        # retries for ten seconds before raising; the sections it guards take
+        # milliseconds.
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+
+    def unlock_file(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def lock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def unlock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 def temp_beside(path: str, tag: str = ".tmp") -> str:
     """Create a new, empty, owner-only temp file next to ``path``; return its name.
 
