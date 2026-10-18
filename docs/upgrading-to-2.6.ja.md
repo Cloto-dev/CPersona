@@ -82,13 +82,13 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
   埋め込むのと同じ埋め込みサーバーで、Block のまとまりごとに 1 回の呼び出しで埋め込みます。この
   プロジェクト自身のストアでは、4,478 件の記録が 70,130 個の Block に分かれました。進み具合は
   `check_health` が `missing_blocks` として示し、`fix=true` で先へ進めます。記録の Block ができる
-  までは、recall はその記録にほかの腕で到達します (Block による到達が off の時と同じです)。
+  までは、recall はその記録にほかのアームで到達します (Block による到達が off の時と同じです)。
 - **Block は 2 通りに保存されます**。次元ごとに 1 ビットと、次元ごとに 1 バイトです。1,024 次元の
   モデルで Block あたり 1,152 バイトのベクトルです (128 + 1,024)。
-- **recall は、ベクトルのある問い合わせのたびに索引を読み**、Block の腕だけが到達した記録のために
+- **recall は、ベクトルのある問い合わせのたびに索引を読み**、Block のアームだけが到達した記録のために
   `limit` を最大 2 行超えて返すことがあります。ベクトル検索がリモートの場合は効果がありません。
 - **recall は遅くなり、メモリも増えます**。そのストアを 1 台のマシンで測ると、`recall` の中央値は
-  Block の腕ありで 138 ms (2.5.12 は 17 ms。質問の埋め込みの時間は含みません)、プロセスのピークメモリは 180 MB (2.5.12 は 106 MB)
+  Block のアームありで 138 ms (2.5.12 は 17 ms。質問の埋め込みの時間は含みません)、プロセスのピークメモリは 180 MB (2.5.12 は 106 MB)
   でした。費用は Block の数とともに増えます。10 倍大きいストアは測っていません。
 - **off にするには** `CPERSONA_BLOCK_BUILD_ENABLED=false` を設定します。埋め込みの呼び出しも、行も、
   キューの仕事も無くなり、読む側も一緒に off になります。`CPERSONA_BLOCK_RETRIEVAL_ENABLED=false`
@@ -100,14 +100,14 @@ check_health(agent_id="<id>", fix=true, checks=["missing_nodes"])
 
 ### Block の索引ファイルは既定で on です { #the-block-index-file-is-on-by-default }
 
-2.6.7 から、Block の腕は調べる行を SQLite でなくデータベースの横のファイルから読みます。答えは同じです
+2.6.7 から、Block のアームは調べる行を SQLite でなくデータベースの横のファイルから読みます。答えは同じです
 ([運用](operations.md#the-block-index-file))。
 
 - **最初の起動でファイルを作ります**。キューで、収める Block ができた時点で作ります。10 万件の記憶と
   3,480,069 個の Block のストアでは 431,528,748 バイトで、Intel N150 で作るのに 11〜14 秒かかりました。
   作り終わるまで、想起は SQLite を読みます。
 - **想起が速くなります**。そのストアとマシンで、実行前に登録した規則のもとで、想起の中央値は 960 ms から
-  798 ms、931 ms から 844 ms に、Block の腕は約 575 ms から 64 ms に下がり、どの想起も同じ行を同じ順で
+  798 ms、931 ms から 844 ms に、Block のアームは約 575 ms から 64 ms に下がり、どの想起も同じ行を同じ順で
   返しました ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-recall-latency-block-index-file.md))。
 - **書き込みに少し費用がかかります**。サーバーは書いた・消した Block の行ごとに約 16 バイトの記録を付け、
   そこでは Block の構築に足した費用は 1% 未満でした。ファイルは、作った後の記録が 35,000 件を超えると
@@ -139,7 +139,7 @@ exit 2 を返し、想起は走査を使います (答えは同じで、速さ�
   (`blocks: {"status": "queued"}`)、recall は `limit` を最大 2 行超える予約の行を返すことがあり、
   `reconstruct` は一致した Block を引用します。off にする方法は[上](#block-reach-is-on-by-default)です。
 - **Block の索引ファイルは既定で on です** (2.6.7)。最初の起動でデータベースの横にファイルを作り、想起は
-  Block の腕の行をそこから読みます。答えは同じです。off にする方法は[上](#the-block-index-file-is-on-by-default)です。
+  Block のアームの行をそこから読みます。答えは同じです。off にする方法は[上](#the-block-index-file-is-on-by-default)です。
 - **`count` を省略した `reconstruct` は 10 項目を返します** (2.6.0。以前は 1)。Block による到達が on
   の状態で、これが 2.6.0 の推奨する、記憶から答えるための構成です。1 項目を前提にしていた配備は
   `CPERSONA_RECONSTRUCT_DEFAULT_COUNT=1` を設定してください。`CPERSONA_RECONSTRUCT_MAX_COUNT` だけを
