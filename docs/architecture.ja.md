@@ -55,7 +55,7 @@ WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`)、現在�
 ([Block による到達](BLOCK_REACH_DESIGN.md))。2.6.0 から既定で on で、そのトリガーは
 本文が変われば Block を削除し、記録が retag されれば分離軸の写しを更新します。その隣で
 `record_block_vectors` が各 Block について次元ごとに 1 バイトを保持し、主キーで読み出して
-Block の腕の Hamming パスが最上位に並べたものを再順位付けします。`record_blocks` の
+Block のアームの Hamming パスが最上位に並べたものを再順位付けします。`record_blocks` の
 トリガーが、Block と一緒にその Block のベクトルを削除します。小さな 2 つのテーブル
 `block_log_clock` と `record_block_changes` は、どの記録の Block が変わったかの記録で、
 Block の索引ファイル (`CPERSONA_BLOCK_INDEX`、既定は on) を使っている間だけトリガーが
@@ -93,7 +93,7 @@ episodes に対する FTS5。
 ときにだけ走ります。FTS memories と並んで融合に入ることはなく、その代わりを
 務めます。
 
-**Block の腕も 4 本目の retriever ではありません。** 理由は逆で、どこにも
+**Block のアームも 4 本目の retriever ではありません。** 理由は逆で、どこにも
 供給しないからです。`CPERSONA_BLOCK_RETRIEVAL_ENABLED` が on の配備では、
 レコードを節に分けた Block をクエリに対して順位付けし、到達したものを品質
 gate の**後**の予約へ渡します — 自分の全文ベクトルでは戻ってこられない
@@ -249,7 +249,7 @@ CPersona は生成モデルを呼びません。要約も抽出も書き換え�
 あたりから再開します。
 
 3 つ目は `block_index_build` で、`CPERSONA_BLOCK_INDEX` が off の配備では走りません。
-Block の腕が SQLite の代わりに読む Block の索引ファイルを書きます
+Block のアームが SQLite の代わりに読む Block の索引ファイルを書きます
 ([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))。ファイルが無い・使えない・変更記録から
 遅れすぎている時に、起動時と、Block の構築や sweep の後に積まれ、同時に 1 つだけ存在します。
 想起がこれを積むことはありません。ファイルが作り直されるまで、想起は SQLite を読み、同じ答えを

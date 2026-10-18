@@ -84,7 +84,7 @@
   届かなくなります。
 - **外部ベクトル索引** — `CPERSONA_VECTOR_SEARCH_MODE=remote` かつ
   `CPERSONA_STORE_BLOB=false` の構成の場合。この構成では埋め込みがリモート索引
-  にしか存在しないので、データベースと上記のファイルを全て戻しても、ベクトル腕
+  にしか存在しないので、データベースと上記のファイルを全て戻しても、ベクトルアーム
   がゼロの状態で復元されます。`check_health` は `no_local_vector_fallback` と
   して報告します。索引も同じ頻度でバックアップするか、`STORE_BLOB=true` のまま
   にして `.db` を自己完結に保ってください。
@@ -300,7 +300,7 @@ skip** であること ([契約 §5](behavior-contracts.md#5-dedup-semantics-ski
 (`CPERSONA_MAX_MEMORIES`、既定 10,000) を走査します。FTS と keyword のチャネルは
 全履歴に届き、古い行は削除されるのではなく、ウィンドウと減衰によって沈んでいきます。
 
-ベクトルの腕をウィンドウより先の行に届かせるには、`CPERSONA_VECTOR_REACH` を
+ベクトルのアームをウィンドウより先の行に届かせるには、`CPERSONA_VECTOR_REACH` を
 ウィンドウより大きく設定するか、窓の外の席 (`CPERSONA_FAR_SEATS_ENABLED`) を
 有効にしてください。ウィンドウ自体を広げると、それが与えている新しさの事前分布も
 失われます: 実測では、新しい答えで NDCG@10 を 20 ポイント失い、古い答えで 5 ポイント
@@ -434,7 +434,7 @@ exit 0 を返すのは両方を作れた時だけです。`status` は粗探索�
 
 ## Block の索引ファイル { #the-block-index-file }
 
-`CPERSONA_BLOCK_INDEX=false` にしない限り、Block の腕は想起のたびに SQLite から最大 25 万行を読む代わりに、
+`CPERSONA_BLOCK_INDEX=false` にしない限り、Block のアームは想起のたびに SQLite から最大 25 万行を読む代わりに、
 3 つ目の派生ファイル `<database>.blocks.blockindex` から行を読みます。答えはどちらでも同じで
 ([約束 §3](BLOCK_CANDIDATES_CONTRACT.md#3-decisions))、違うのは時間だけです。ほかの 2 つのファイルと
 同じく、バックアップせず、修復せず、消してかまわず、削除 (purge) の時も同じ規則で
