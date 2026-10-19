@@ -6,6 +6,23 @@ number is one run by this project. The rules for the OpenViking comparisons were
 written down before any arm was answered or judged and are restated here
 unchanged; departures from a clean run are listed under each section.
 
+## Settings
+
+- **Server**: CPersona 2.6.11 from the tag, over streamable HTTP on loopback,
+  with `CPERSONA_MAX_CONTENT_LENGTH=80000` (default 16,000) so that no
+  LongMemEval or LoCoMo session is cut when it is stored; every other setting
+  at its default. The earlier runs used the same value
+  ([results-omnimemeval-lme.md](results-omnimemeval-lme.md)).
+- **Embeddings**: `BAAI/bge-m3` through sentence-transformers, normalized, with
+  a 512-token window, served over HTTP by a local process.
+- **Harness client**: OmniMemEval's pipeline at commit `0b1ea8d`, with
+  [`omnimemeval-0b1ea8d-2_6_11.patch`](../omnimemeval/omnimemeval-0b1ea8d-2_6_11.patch)
+  applied (it registers the client, stores each LoCoMo conversation's speaker-A
+  messages in one store, and searches it with the harness's `shared_conv_search`,
+  as for EverOS and Supermemory) and this project's CPersona
+  client ([`cpersona_client.py`](../omnimemeval/cpersona_client.py)) added, which
+  calls `reconstruct` with `mode: "pro"` and that mode's default count.
+
 ## LongMemEval-S, 500 questions
 
 OmniMemEval's LongMemEval pipeline (commit `0b1ea8d`; its scripts are unchanged
