@@ -10,6 +10,7 @@ Persistent memory for AI agents, over MCP.
 One SQLite file you own. No LLM in the loop. Honest when recall degrades.
 Ask your agent to save a project's design decisions and their reasons, then recall them in a later coding session ([setup and verification](https://cloto-dev.github.io/CPersona/getting-started/#4-verify-it-works)).
 Use `reconstruct` to read recalled items with quotes from the stored records ([traceable recall](https://cloto-dev.github.io/CPersona/tools/#everyday-memory)).
+On OmniMemEval's shared pipeline: 89.6% on LongMemEval-S, tied for first with MemOS, and 84.0% on LoCoMo ([benchmarks](https://github.com/Cloto-dev/cpersona#benchmarks)).
 
 [![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE) [![Sponsor](https://img.shields.io/badge/sponsor-Cloto--dev-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Cloto-dev)
 
@@ -143,22 +144,28 @@ question, its prompt included.
 
 | Backend | Deployment | SS-User | SS-Asst | SS-Pref | Temp. Reas | Multi-S | Know. Upd | Overall | Context Tokens |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| CPersona 2.6.3a1 | local | 90.00 | 78.57 | 86.67 | 85.71 | 67.67 | 85.90 | 80.80 | 2,354.6 |
-| CPersona v1.2 (2.6.4a1) | local | 91.43 | 80.36 | 90.00 | 83.46 | 71.43 | 84.62 | 81.60 | 1,786.7 |
+| CPersona 2.6.11 (pro mode) | local | 97.14 | 94.64 | 96.67 | 86.47 | 85.71 | 88.46 | 89.60 | 4,262.5 |
+| MemOS | cloud | 100.00 | 100.00 | 100.00 | 89.47 | 78.95 | 84.62 | 89.20 | 4,151 |
 
-**81.60% at 1,786.7 tokens a question.** Of the 12 backends OmniMemEval reproduces
-through the same pipeline, MemOS answers more questions (89.20%, at 4,151 tokens) and
-Mem0's cloud service sends fewer tokens (856, at 56.00%); 2.6.4a1 scored higher with
-fewer tokens than each of the other ten, the closest of them within one run's sampling
-error. CPersona stores each conversation as it is and calls no model to store or
-recall.
+**Tied for first: 89.60% at 4,262.5 tokens a question.** Of the 12 backends
+OmniMemEval reproduces through the same pipeline, MemOS is level with it (89.20% at
+4,151 tokens; the 0.4-point gap is inside one run's sampling error) and every other
+one scores at least 9 points lower. On LoCoMo (1,540 questions, same models)
+CPersona answers 84.03% at 4,441 tokens, second to MemOS (88.83% at 5,400).
+CPersona stores each conversation as it is and calls no model to store or recall.
 
-2.6.3a1 is the code of the 2.6.3 release, and 2.6.4a1 is a pre-release of
-2.6.4. Each was run once, by this project. The comparison rows, the registered
-rules and every departure from a clean run are in the
-[results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme.md).
-Retrieval-only measurements on LMEB (22 tasks) and the harness behind them:
-[`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
+Against [OpenViking](https://github.com/volcengine/OpenViking) 0.5.0, run by this
+project: 84.03% against 59.09% on LoCoMo, and on the
+[Open Agent Memory Benchmark](https://github.com/rocke2020/open-agent-memory-benchmark)'s
+60-question LongMemEval screen, 52 against 51 correct with a quarter of the evidence
+tokens and none generated at write time (OpenViking: 37 million). Not every cost
+favours CPersona: on LoCoMo it searched slower, and its context was 0.58 of
+OpenViking's.
+
+One run each, by this project, at the 2.6.11 release. Setups, registered rules and
+every departure from a clean run: [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-2_6_11.md);
+earlier runs: [2.6.3a1 and 2.6.4a1](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme.md); retrieval-only
+measurements on LMEB: [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
 
 ## Documentation
 
