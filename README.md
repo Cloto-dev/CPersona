@@ -10,7 +10,7 @@ Persistent memory for AI agents, over MCP.
 One SQLite file you own. No LLM in the loop. Honest when recall degrades.
 Ask your agent to save a project's design decisions and their reasons, then recall them in a later coding session ([setup and verification](https://cloto-dev.github.io/CPersona/getting-started/#4-verify-it-works)).
 Use `reconstruct` to read recalled items with quotes from the stored records ([traceable recall](https://cloto-dev.github.io/CPersona/tools/#everyday-memory)).
-On OmniMemEval's shared pipeline: 89.6% on LongMemEval-S, tied for first with MemOS, and 84.0% on LoCoMo ([benchmarks](https://github.com/Cloto-dev/cpersona#benchmarks)).
+In this project's own run on OmniMemEval's pipeline: 89.6% on LongMemEval-S, tied for first with MemOS within sampling error (88.75% on the 400 questions not used in development), and 84.0% on LoCoMo ([benchmarks](https://github.com/Cloto-dev/cpersona#benchmarks)).
 
 [![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE) [![Sponsor](https://img.shields.io/badge/sponsor-Cloto--dev-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Cloto-dev)
 
@@ -148,20 +148,24 @@ question, its prompt included.
 | CPersona 2.6.11 (lite mode) | local | 95.71 | 83.93 | 90.00 | 80.45 | 74.44 | 82.05 | 82.20 | 993.3 |
 | MemOS | cloud | 100.00 | 100.00 | 100.00 | 89.47 | 78.95 | 84.62 | 89.20 | 4,151 |
 
-**Tied for first: 89.60% at 4,262.5 tokens a question.** Of the 12 backends
-OmniMemEval reproduces through the same pipeline, MemOS is level with it (89.20% at
-4,151 tokens; the 0.4-point gap is inside one run's sampling error) and every other
-one scores at least 9 points lower. Lite mode, the smaller response (up to 10 items within
-3,000 tokens), answers 82.20% at 993.3 tokens: second only to MemOS among those 12, with fewer tokens
-than all of them but Mem0's cloud service (856). On LoCoMo (1,540 questions, same models)
-CPersona answers 84.03% at 4,441 tokens, second to MemOS (88.83% at 5,400).
-CPersona stores each conversation as it is and calls no model to store or recall.
+**Tied for first: 89.60% at 4,262.5 tokens a question**, in this project's own run.
+Of the 12 backends OmniMemEval reproduces through the same pipeline, MemOS is level with
+it (89.20% at 4,151 tokens) and every other one scores at least 9 points lower. CPersona's
+modes were tuned on 100 of these 500 questions, and the other 400 served its release
+checks; on those 400, pro answers 88.75%, still level with MemOS. ("Level" means within
+the 95% sampling error of two independent runs.) Lite mode, the smaller response, answers
+82.20% at 993.3 tokens: below MemOS, level with EverOS, Zep / Graphiti, mem9 and Letta,
+with a quarter or less of the tokens any of them sends. On LoCoMo (1,540 questions, same
+models) pro answers 84.03% at 4,441 tokens: below MemOS (88.83%), level with Cognee,
+EverOS and Hindsight, with fewer tokens than any of them. CPersona stores each
+conversation as it is and calls no generative model to store or recall.
 
 Against [OpenViking](https://github.com/volcengine/OpenViking) 0.5.0, run by this
-project: 84.03% against 59.09% on LoCoMo, and on the
+project without its recommended rerank: 84.03% against 59.09% on LoCoMo, and on the
 [Open Agent Memory Benchmark](https://github.com/rocke2020/open-agent-memory-benchmark)'s
 60-question LongMemEval screen, 52 against 51 correct with a quarter of the evidence
-tokens and none generated at write time (OpenViking: 37 million). Not every cost
+tokens and no generative-model tokens at write time (OpenViking's model used 37 million,
+input and output). Not every cost
 favours CPersona: on LoCoMo its pro mode searched slower (72.7 against 50.0 ms
 median), and its context was 0.58 of OpenViking's.
 
