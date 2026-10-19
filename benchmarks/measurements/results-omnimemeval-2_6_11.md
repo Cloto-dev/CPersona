@@ -23,8 +23,10 @@ unchanged; departures from a clean run are listed under each section.
   as for EverOS and Supermemory) and this project's CPersona
   client ([`cpersona_client.py`](../omnimemeval/cpersona_client.py)) added, which
   calls `reconstruct` in the mode a row names (`pro` or `lite`) with that mode's
-  default count. The modes cap what one recall returns: `pro` at 5,000 tokens and
-  15 items, `lite` at 3,000 tokens.
+  default count. The modes are `reconstruct`'s two response sizes: `pro` returns
+  up to 15 items within 5,000 tokens of response JSON and holds two more places
+  for block retrieval; `lite` returns the default 10 items within 3,000 tokens.
+  Both hold one place for a keyword match.
 
 ## LongMemEval-S, 500 questions
 

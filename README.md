@@ -151,8 +151,8 @@ question, its prompt included.
 **Tied for first: 89.60% at 4,262.5 tokens a question.** Of the 12 backends
 OmniMemEval reproduces through the same pipeline, MemOS is level with it (89.20% at
 4,151 tokens; the 0.4-point gap is inside one run's sampling error) and every other
-one scores at least 9 points lower. Lite mode, which caps a recall at 3,000 tokens,
-answers 82.20% at 993.3 tokens: second only to MemOS among those 12, with fewer tokens
+one scores at least 9 points lower. Lite mode, the smaller response (up to 10 items within
+3,000 tokens), answers 82.20% at 993.3 tokens: second only to MemOS among those 12, with fewer tokens
 than all of them but Mem0's cloud service (856). On LoCoMo (1,540 questions, same models)
 CPersona answers 84.03% at 4,441 tokens, second to MemOS (88.83% at 5,400).
 CPersona stores each conversation as it is and calls no model to store or recall.
