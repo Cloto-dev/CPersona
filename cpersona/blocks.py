@@ -1552,11 +1552,24 @@ def text_revision(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
+#: The qualifiers split by how they are compared: the ASCII ones against the lowered
+#: text, the others as written. ``str.startswith`` takes a tuple, so each list is one
+#: call rather than a loop over the words: the check runs for every block of every
+#: record a reconstruction quotes from, about two thousand times a call on a store of
+#: long records.
+_QUALIFIERS_LOWERED: tuple[str, ...] = tuple(q for q in _QUALIFIERS if q.isascii())
+_QUALIFIERS_AS_WRITTEN: tuple[str, ...] = tuple(q for q in _QUALIFIERS if not q.isascii())
+#: How much of a fragment the lowered comparison needs. Lowering maps each character to
+#: one or more characters, and only a capital sigma's mapping depends on what follows it
+#: (both of its results are non-ASCII), so the first characters of the lowered prefix
+#: are the first characters of the lowered whole as far as an ASCII word can tell.
+_QUALIFIER_SPAN = max(len(q) for q in _QUALIFIERS_LOWERED)
+
+
 def _starts_with_qualifier(fragment: str) -> bool:
     stripped = fragment.lstrip()
-    lowered = stripped.lower()
-    return any(
-        lowered.startswith(q) if q.isascii() else stripped.startswith(q) for q in _QUALIFIERS
+    return stripped.startswith(_QUALIFIERS_AS_WRITTEN) or stripped[:_QUALIFIER_SPAN].lower().startswith(
+        _QUALIFIERS_LOWERED
     )
 
 

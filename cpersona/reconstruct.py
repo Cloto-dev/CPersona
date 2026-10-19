@@ -1513,10 +1513,19 @@ def _settle_tokens(out: dict) -> int:
     The count of a number's own digits is part of the count, so the value is found by
     iterating: a JSON integer below 1,000 is one token here and one up to 999,999 is two,
     so the count moves by at most one step and settles within three passes.
+
+    The response is tokenized once. The split pattern cuts a run of digits into pieces of
+    at most three digits that never join the text on either side (``tokens._PATTERN``),
+    so the count with any value in the field is the count with 0 there, less the tokens
+    of "0", plus the tokens of the value's digits. Each pass adds those up instead of
+    tokenizing the whole response again: the passes and the value they settle on are
+    the same, and a capped response, searched for the longest prefix that fits, is
+    tokenized a third as often.
     """
     out["used_tokens"] = 0
+    rest = tokens.count_json(out) - tokens.count("0")
     for _ in range(4):
-        n = tokens.count_json(out)
+        n = rest + tokens.count(str(out["used_tokens"]))
         if n == out["used_tokens"]:
             return n
         out["used_tokens"] = n
