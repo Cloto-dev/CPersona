@@ -145,12 +145,15 @@ question, its prompt included.
 | Backend | Deployment | SS-User | SS-Asst | SS-Pref | Temp. Reas | Multi-S | Know. Upd | Overall | Context Tokens |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | CPersona 2.6.11 (pro mode) | local | 97.14 | 94.64 | 96.67 | 86.47 | 85.71 | 88.46 | 89.60 | 4,262.5 |
+| CPersona 2.6.11 (lite mode) | local | 95.71 | 83.93 | 90.00 | 80.45 | 74.44 | 82.05 | 82.20 | 993.3 |
 | MemOS | cloud | 100.00 | 100.00 | 100.00 | 89.47 | 78.95 | 84.62 | 89.20 | 4,151 |
 
 **Tied for first: 89.60% at 4,262.5 tokens a question.** Of the 12 backends
 OmniMemEval reproduces through the same pipeline, MemOS is level with it (89.20% at
 4,151 tokens; the 0.4-point gap is inside one run's sampling error) and every other
-one scores at least 9 points lower. On LoCoMo (1,540 questions, same models)
+one scores at least 9 points lower. Lite mode, which caps a recall at 3,000 tokens,
+answers 82.20% at 993.3 tokens: second only to MemOS among those 12, with fewer tokens
+than all of them but Mem0's cloud service (856). On LoCoMo (1,540 questions, same models)
 CPersona answers 84.03% at 4,441 tokens, second to MemOS (88.83% at 5,400).
 CPersona stores each conversation as it is and calls no model to store or recall.
 
@@ -159,8 +162,8 @@ project: 84.03% against 59.09% on LoCoMo, and on the
 [Open Agent Memory Benchmark](https://github.com/rocke2020/open-agent-memory-benchmark)'s
 60-question LongMemEval screen, 52 against 51 correct with a quarter of the evidence
 tokens and none generated at write time (OpenViking: 37 million). Not every cost
-favours CPersona: on LoCoMo it searched slower, and its context was 0.58 of
-OpenViking's.
+favours CPersona: on LoCoMo its pro mode searched slower (72.7 against 50.0 ms
+median), and its context was 0.58 of OpenViking's.
 
 One run each, by this project, at the 2.6.11 release. Setups, registered rules and
 every departure from a clean run: [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-2_6_11.md);

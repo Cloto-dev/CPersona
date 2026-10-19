@@ -22,22 +22,26 @@ unchanged; departures from a clean run are listed under each section.
   conversation, and searches that store with the harness's `shared_conv_search`,
   as for EverOS and Supermemory) and this project's CPersona
   client ([`cpersona_client.py`](../omnimemeval/cpersona_client.py)) added, which
-  calls `reconstruct` with `mode: "pro"` and that mode's default count.
+  calls `reconstruct` in the mode a row names (`pro` or `lite`) with that mode's
+  default count. The modes cap what one recall returns: `pro` at 5,000 tokens and
+  15 items, `lite` at 3,000 tokens.
 
 ## LongMemEval-S, 500 questions
 
-OmniMemEval's LongMemEval pipeline (commit `0b1ea8d`; its scripts are unchanged
-up to the current `main`), the cleaned LongMemEval-S
+OmniMemEval's LongMemEval pipeline (commit `0b1ea8d`; later commits up to the
+current `main` change no pipeline code), the cleaned LongMemEval-S
 (`longmemeval_s_cleaned.json`, sha256 `d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442`),
-answers by `gpt-4.1-mini-2025-04-14` and one judge run by `gpt-4o-mini-2024-07-18`,
+answers by `gpt-4.1-mini-2025-04-14` and one judge run by `gpt-4o-mini` (which
+resolved to `gpt-4o-mini-2024-07-18` that day),
 as in [OmniMemEval's results](https://github.com/MemTensor/OmniMemEval/blob/main/docs/user_memory/results.md#longmemeval).
 Context Tokens is the average answer-stage prompt as the API reports it: the
-answer prompt plus the rendered retrieval, 2,131,237 tokens over 500 calls, none
-estimated.
+answer prompt plus the rendered retrieval: 2,131,237 tokens over 500 calls in
+pro mode and 496,670 in lite mode, none estimated.
 
 | Backend | Deployment | SS-User | SS-Asst | SS-Pref | Temp. Reas | Multi-S | Know. Upd | Overall | Context Tokens |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | CPersona 2.6.11 (pro mode) | local | 97.14 | 94.64 | 96.67 | 86.47 | 85.71 | 88.46 | 89.60 | 4,262.5 |
+| CPersona 2.6.11 (lite mode) | local | 95.71 | 83.93 | 90.00 | 80.45 | 74.44 | 82.05 | 82.20 | 993.3 |
 | MemOS | cloud | 100.00 | 100.00 | 100.00 | 89.47 | 78.95 | 84.62 | 89.20 | 4,151 |
 
 The MemOS row is OmniMemEval's reproduction, quoted. Against the 12 backends in
@@ -47,6 +51,10 @@ is 0.4. Every other backend in the table is at least 9.2 points lower (EverOS,
 80.40%). CPersona answers more multi-session and knowledge-update questions than
 MemOS, and fewer temporal and single-session ones. It sends 2.7% more tokens per
 question.
+
+In lite mode CPersona answers 82.20% at 993.3 tokens a question: more than every
+backend in that table except MemOS, with fewer tokens than all of them but Mem0's
+cloud service (856 tokens, 56.00%).
 
 The median search took 570 ms (p95 769 ms) with two questions in flight. The
 machine was under memory pressure from other measurements at the time, so this
@@ -66,19 +74,34 @@ What differs from a clean run:
    discarded. The second, with two workers, stored all 500 users and 23,867
    sessions, the dataset's total, with no embedding failure and no record left
    without its nodes.
+3. **Lite on the same store.** The lite run searched the store the pro run had
+   searched, with the same calibration file, restored at startup. Under the
+   default settings a recall does not record anything the ranking reads, so a
+   second search of the store sees it as the first did.
 
 ## LoCoMo, 1,540 questions
 
-OmniMemEval's LoCoMo pipeline, same answer and judge models. Each
-conversation's user was calibrated once before searching.
+OmniMemEval's LoCoMo pipeline, same answer and judge models. The store was
+ingested once and copied for the two modes before any search.
 
 | Backend | Deployment | Single-Hop | Multi-Hop | Temporal | Open-Domain | Overall | Context Tokens |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | CPersona 2.6.11, pro mode | local | 88.70 | 78.01 | 83.18 | 63.54 | 84.03 | 4,441.0 |
+| CPersona 2.6.11, lite mode | local | 73.84 | 51.06 | 72.59 | 54.17 | 68.18 | 1,485.0 |
 | MemOS | cloud | 92.51 | 88.65 | 85.05 | 69.79 | 88.83 | 5,400 |
 
 84.03% is second to MemOS among the 14 backends OmniMemEval reproduces on
-LoCoMo, ahead of Cognee (83.48%), EverOS (82.75%) and Hindsight (81.99%).
+LoCoMo, ahead of Cognee (83.48%), EverOS (82.75%) and Hindsight (81.99%). Lite
+mode answers 68.18% at 1,485.0 tokens.
+
+What differs from a clean run: each conversation's user was calibrated once
+before the store was copied, but on these small stores (19 to 32 records a user)
+the recall gate cannot be calibrated, so the server recalibrates the whole store
+at every start while it serves, and both searches ran beside that. A rerun that
+waited for the startup calibration to finish returned the same context for every
+one of the 1,540 questions in both modes (every user's threshold came out the
+same each time, and the gate stayed at its default), so the accuracy here stands.
+The original runs' search latency does not; the next section uses the rerun's.
 
 ## Against OpenViking 0.5.0
 
@@ -95,7 +118,9 @@ OpenViking was given the same local `bge-m3` server for embeddings,
 backend's own model calls), `find` with limit 50, no rerank, and up to 30,000
 characters of retrieved text per question. Each session was committed and its
 extraction awaited before the next. Both systems searched one question at a
-time, one system after the other.
+time, one system after the other. The latency below was measured again for both
+systems on the same day, after the rerun described above: the registered
+measurement had CPersona's searches running beside its startup recalibration.
 
 Registered rules: accuracy is **about equal or better** when the paired
 difference's one-sided 95% lower bound is above −3 points; the **cost lead is decisive**
@@ -105,14 +130,16 @@ half of OpenViking's, (3) the median search latency is not higher.
 
 | Arm | Accuracy | Context seen (cl100k, mean) | Search median / p95 | Generated tokens at write |
 | --- | ---: | ---: | ---: | ---: |
-| CPersona, pro mode | 84.03% | 4,031.2 | 80.8 / 95.1 ms | 0 |
-| CPersona, lite mode | 68.18% | 1,003.2 | 39.7 / 46.5 ms | 0 |
-| OpenViking 0.5.0 | 59.09% | 6,937.2 | 49.3 / 53.5 ms | 2,314,992 |
+| CPersona, pro mode | 84.03% | 4,031.2 | 72.7 / 83.8 ms | 0 |
+| CPersona, lite mode | 68.18% | 1,003.2 | 29.8 / 36.7 ms | 0 |
+| OpenViking 0.5.0 | 59.09% | 6,937.2 | 50.0 / 56.3 ms | 2,314,992 |
 
 - **Accuracy: held, by a wide margin.** Pro answered 480 questions OpenViking
   missed and missed 96 it answered: +24.9 points, one-sided 95% lower bound +22.6.
 - **Cost lead: not decisive.** (1) holds. (2) fails: Pro's context is 0.58 of
-  OpenViking's, not half. (3) fails: 80.8 ms against 49.3 ms.
+  OpenViking's, not half. (3) fails: 72.7 ms against 50.0 ms (the registered
+  measurement gave 80.8 against 49.3, the same verdict). Lite mode searches
+  faster than OpenViking, 29.8 ms.
 - A reported arm (no rule) replaced the embedding model with OpenAI's
   `text-embedding-3-large`: OpenViking answered 57.27% (5,902.1 tokens seen,
   2,286,522 generated at write), so the embedding model does not explain the gap.
@@ -188,8 +215,8 @@ run of DeepSeek-V4.1-Flash, with its own ingestion text), re-counted in
 - A ranking beyond OmniMemEval's same-pipeline tables. Several systems publish
   higher LongMemEval scores from their own setups (models, prompts, judges),
   which OmniMemEval lists as references rather than reproductions.
-- That CPersona is cheaper than OpenViking on every axis: on LoCoMo it searched
-  slower and its context was not half of OpenViking's.
+- That CPersona is cheaper than OpenViking on every axis: on LoCoMo its pro mode
+  searched slower and its context was not half of OpenViking's.
 
 Earlier CPersona runs on the same pipeline (2.6.3a1, 80.80%; 2.6.4a1, 81.60%) and
 the rules they were judged by: [results-omnimemeval-lme.md](results-omnimemeval-lme.md).
