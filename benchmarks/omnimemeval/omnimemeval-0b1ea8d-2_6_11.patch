@@ -1,0 +1,67 @@
+diff --git a/scripts/client_factory/registry.py b/scripts/client_factory/registry.py
+index c8b9f16..dbb81f3 100644
+--- a/scripts/client_factory/registry.py
++++ b/scripts/client_factory/registry.py
+@@ -32,6 +32,7 @@ _LIB_CLIENT_REGISTRY = {
+     "memorylake":  ("memorylake_client",  "MemoryLakeClient"),
+     "backboard":   ("backboard_client",   "BackboardClient"),
+     "mem9":        ("mem9_client",        "Mem9Client"),
++    "cpersona":    ("cpersona_client",    "CpersonaClient"),
+ }
+ 
+ SUPPORTED_LIBS = list(_LIB_CLIENT_REGISTRY.keys())
+diff --git a/scripts/locomo/locomo_ingestion.py b/scripts/locomo/locomo_ingestion.py
+index 9d17d10..36826a6 100644
+--- a/scripts/locomo/locomo_ingestion.py
++++ b/scripts/locomo/locomo_ingestion.py
+@@ -185,6 +185,14 @@ def ingest_session(client, session, frame, metadata):
+         client.add(speaker_a_messages, speaker_a_user_id,
+                     session_key=session_key)
+ 
++    # ── CPersona: one store per conversation ─────────────────────────────
++    # The record id must be unique across conversations and versions: a store
++    # with an id already present is skipped as a duplicate.
++    elif frame == "cpersona":
++        inject_time(speaker_a_messages, dt, frame)
++        client.add(speaker_a_messages, speaker_a_user_id,
++                   session_key=f"{speaker_a_user_id}:{session_key}")
++
+     # ── Default: dual-speaker with inject_time ───────────────────────────
+     else:
+         inject_time(speaker_a_messages, dt, frame)
+diff --git a/scripts/locomo/locomo_search.py b/scripts/locomo/locomo_search.py
+index 0fcbe55..892fcd6 100644
+--- a/scripts/locomo/locomo_search.py
++++ b/scripts/locomo/locomo_search.py
+@@ -267,6 +267,7 @@ def search_query(client, query, metadata, frame, top_k=20):
+         "memorylake": generic_text_search,
+         "backboard": backboard_search,
+         "mem9": generic_text_search,
++        "cpersona": shared_conv_search,
+     }
+     search_fn = _search_dispatch.get(frame)
+     if search_fn is None:
+diff --git a/scripts/utils/ingest_helpers.py b/scripts/utils/ingest_helpers.py
+index 7d5365b..13d89e4 100644
+--- a/scripts/utils/ingest_helpers.py
++++ b/scripts/utils/ingest_helpers.py
+@@ -63,6 +63,7 @@ _CHAT_TIME_LIBS = frozenset({
+ _CONV_ID_LIBS = frozenset({"memos", "everos"})
+ _SESSION_KEY_LIBS = frozenset({
+     "cognee", "backboard", "memorylake", "letta", "hindsight", "graphiti",
++    "cpersona",
+ })
+ 
+ 
+diff --git a/scripts/utils/search_helpers.py b/scripts/utils/search_helpers.py
+index c869340..65d1976 100644
+--- a/scripts/utils/search_helpers.py
++++ b/scripts/utils/search_helpers.py
+@@ -182,6 +182,7 @@ def hindsight_search(client: Any, query: str, user_id: str, top_k: int, *,
+ 
+ DEFAULT_SEARCH_DISPATCH = {
+     "zep": generic_text_search,
++    "cpersona": generic_text_search,
+     "mem0": generic_text_search,
+     "memos": generic_text_search,
+     "everos": generic_text_search,
