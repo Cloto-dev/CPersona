@@ -12290,6 +12290,20 @@
       "note": "Found while fixing bug-781 (a sibling the fix did not cover); reproduced.",
       "fix_note": "utils._strip_mentions removes mentions to a fixed point in one left-to-right scan: a mention holds no '<' or '>', so two cannot overlap and every order of removal ends at the same text, which a stack reaches by dropping a mention as soon as its closing '>' completes one. Ordinary content takes the one-pass result. It matched repeated substitution on 200,000 random strings and strips 100,000 characters of nested mentions in about 10 ms. check_discord_mention uses it. Pinned by tests/test_audit_2611_siblings.py with nested, ordinary and near-miss inputs; mutation M450 returns the one-pass result and turns the nested cases red.",
       "fixed_in": "2.6.11a5"
+    },
+    {
+      "id": "bug-807",
+      "summary": "(LOW) When the recall gate cannot be calibrated because its samples are too few (fewer than 10 null or 5 positive scores, a positive being a recalled row stored within the adjacency window of the sampled pseudo-query: e.g. a LoCoMo store, where each session is one record and sessions are days apart), the startup guard restores the calibration file, finds no gate signal in it, and recalibrates the whole store again: the store-wide threshold and every agent's threshold, beside serving. The gate still cannot calibrate, so the file is written again without a signal and the next start repeats it. Every restart costs a full calibration's recalls while recalls are being answered, redraws the store-wide threshold (0.3000 before and 0.7621 after one restart on a LoCoMo store), and reports the boot as action 'gate_calibrated' although no gate was calibrated.",
+      "severity": "LOW",
+      "discovered": "2026-10-19T13:00:00Z",
+      "version": "2.6.11",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "if not \\(config\\.FUSED_GATE_ENABLED and vector\\._fused_gate_signal is None\\):",
+      "expected": "present",
+      "status": "open",
+      "category": "calibration",
+      "fix_sketch": "Record in the calibration file that the gate was attempted and lacked samples, with the record counts it saw, and restore such a file without recalibrating until the store has changed enough to give the gate new samples. Name that boot 'restored', not 'gate_calibrated'.",
+      "note": "Found on the LoCoMo stores of the OmniMemEval runs (benchmarks/measurements/results-omnimemeval-2_6_11.md): the original searches ran beside this recalibration, and a rerun that waited for it returned the same context for every question. The sample minimum and the adjacency labelling are in _calibrate_fused_gate."
     }
   ]
 }
