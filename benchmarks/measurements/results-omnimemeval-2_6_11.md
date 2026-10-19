@@ -17,8 +17,9 @@ unchanged; departures from a clean run are listed under each section.
   a 512-token window, served over HTTP by a local process.
 - **Harness client**: OmniMemEval's pipeline at commit `0b1ea8d`, with
   [`omnimemeval-0b1ea8d-2_6_11.patch`](../omnimemeval/omnimemeval-0b1ea8d-2_6_11.patch)
-  applied (it registers the client, stores each LoCoMo conversation's speaker-A
-  messages in one store, and searches it with the harness's `shared_conv_search`,
+  applied (it registers the client, stores each LoCoMo session once, as the
+  harness's speaker-A view, which carries both speakers' turns, in one store per
+  conversation, and searches that store with the harness's `shared_conv_search`,
   as for EverOS and Supermemory) and this project's CPersona
   client ([`cpersona_client.py`](../omnimemeval/cpersona_client.py)) added, which
   calls `reconstruct` with `mode: "pro"` and that mode's default count.
