@@ -974,7 +974,7 @@ def check_applies_to_banners() -> None:
 # green over an unexamined claim.
 BENCH_TABLE_SOURCES = (
     ROOT / "README.md",
-    ROOT / "benchmarks" / "measurements" / "results-omnimemeval-lme.md",
+    ROOT / "benchmarks" / "measurements" / "results-omnimemeval-2_6_11.md",
 )
 BENCH_ROW = re.compile(r"^\|\s*(CPersona [^|*\n]+?)\s*\|\s*local\s*\|(?:[^|\n]*\|){8}[ \t]*$", re.M)
 
