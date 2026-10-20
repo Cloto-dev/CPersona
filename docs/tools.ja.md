@@ -2,46 +2,46 @@
 
 # ツール一覧
 
-> **対象: CPersona {{ version_line }}。** 各引数の権威ある説明は、そのツール自身の MCP
+> **対象: CPersona {{ version_line }}**。各引数の正式な説明は、そのツール自身の MCP
 > description です。あなたのクライアントがそれを読み、いま動かしているバージョンと一緒に
 > 配布されます。このページは**すべてのツール**を「何に使うか」でグループ分けし、
-> 名前から想像できない挙動を持つものは契約へリンクします。
+> 名前から想像できない挙動をするツールは挙動契約へリンクします。
 >
-> **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
+> **翻訳について**: 原文は英語版です。日本語版が古いときは英語版を参照してください。
 
 ## 日常の読み書き { #everyday-memory }
 
 | ツール | 何をするか |
 |---|---|
-| `store` | 記憶を 1 件書きます。2.6.6 からは本文を `content` に入れ、ACL が書き込みを 1 つの agent にだけ許す接続では `agent_id` を省けて (使われた agent は `resolved_agent_id` で返ります)、`source` の既定は書き込んだ agent、`lock: true` で同じ呼び出しのうちに鍵もかかります。それ以前のバージョンの `message={content, id, source, timestamp, metadata}` の形も、その形の既定のまま受け付けます。`[Memory from …]` の印 (初期のバージョンが recall の本文に付けていたもの) は、どこにあっても取り除きます。分岐は `ok` ではなく `result` — `stored` / `skipped` / `rejected` — で行ってください ([重複排除の契約](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
+| `store` | 記憶を 1 件書きます。2.6.6 からは本文を `content` に入れ、ACL が書き込みを 1 つの agent にだけ許す接続では `agent_id` を省けて (使われた agent は `resolved_agent_id` で返ります)、`source` の既定は書き込んだ agent、`lock: true` で同じ呼び出しのうちに鍵もかかります。それ以前のバージョンの `message={content, id, source, timestamp, metadata}` の形も、その形の既定のまま受け付けます。`[Memory from …]` の印 (初期のバージョンが recall の本文に付けていたもの) は、どこにあっても取り除きます。分岐は `ok` ではなく `result` (`stored` / `skipped` / `rejected`) で行ってください ([重複排除の契約](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
 | `recall` | 3 層ハイブリッド検索で記憶を取り出します。**末尾の要素が最良のマッチ**です ([順序の契約](behavior-contracts.md#1-recall-return-order-last-is-best))。`trace: true` を渡すと、各段が何を残し・落とし・並べ替えたかの記録も返します。参照とスコアだけで、保存された本文は含みません ([想起の記録](RECALL_PROCESS_DESIGN.md#1-the-recall-trace))。`time_cue` を渡すと、答えがいつ保存されたかを確かさつきで伝えられます。その期間で見つかった行は決まった段数まで順位が上がり、その検索が見つけて答えに入っていない記録に最大 3 行の別枠 (確かさ別に 3 / 2 / 1) が取られます。品質ゲートを通る行は変わりません ([時期の手がかり](RECALL_PROCESS_DESIGN.md#2-the-loops-basic-form)) |
 | `recall_with_context` | 想起 *と同時に*、渡した会話履歴と重複排除しつつ統合します。返るのはスコア順ではなく**時系列**の統合です |
 | `get_contents` | recall が返したプレビュー参照 (`mem:<id>` / `ep:<id>`) を全文に展開します ([プレビュー階層の設計](RECALL_PREVIEW_TIER_DESIGN.md))。ref でレコードの一部 (overflow tree のノードまたは文字範囲) を指定することもでき、`reconstruct` の引用をレコード全体でなく前後のノードだけに展開できます |
-| `reconstruct` | recall の候補行から**想起単位**を構成します。選択・整列・役割付与であり、文章の合成はしません。`count` は上限であって充足目標や検索深度ではありません。探索幅 (`top_k`、`max_hops`、`max_evidence`) は独立した境界です ([出口の設計](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit))。宣言された連想は、キーワード検索への別名の手がかり、関係した記録の束ね、item 内側への辿った根拠を足します ([契約](behavior-contracts.md#11-declared-associations-are-read-by-reconstruct-and-traverse-only)) |
+| `reconstruct` | recall の候補行から**想起単位**を構成します。選択・整列・役割付与であり、文章の合成はしません。`count` は上限であって充足目標や検索深度ではありません。探索の幅 (`top_k`、`max_hops`、`max_evidence`) は別に決める上限です ([出口の設計](RELIABLE_RECALL_2_6.md#7-reconstructive-recall-the-exit))。宣言された連想は、キーワード検索に使う別名の手がかり、関係した記録の束ね、item の内側にたどった根拠を足します ([契約](behavior-contracts.md#11-declared-associations-are-read-by-reconstruct-and-traverse-only)) |
 | `archive_episode` | セッション要約を保存します。同時に [エピソード境界](behavior-contracts.md#3-episode-boundary-penalty) を動かします。それ以前に書かれたものが減点されるのは `CPERSONA_EPISODE_PENALTY_ENABLED` を有効にした場合だけです (既定では無効) |
-| `update_memory` | 既存の記憶の内容を変更します。保存済みの事実を訂正する方法はこれであって、同じ `msg_id` での再 `store` ではありません |
-| `declare_associations` | 連想記憶を後から宣言します — 別名付きの entity と主語–述語–目的語の関係を、名指した記録に anchor して。`retract` で宣言を取り消します。同じオブジェクトは `store` の `associations` にも相乗りできます。verbatim に保存され `reconstruct` が読みます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md)) |
-| `traverse` | 宣言された entity の近傍をグラフとして返します: 別名、その entity とそこから到達した entity に宣言された関係を `max_hops` まで、各 entity を言及する記録の ref。記録のテキストは返しません。`limit` は entity 数と entity ごとの ref 数を抑えます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md#4-traverse)) |
+| `update_memory` | 既存の記憶の内容を変更します。保存済みの事実を訂正するのはこのツールで、同じ `msg_id` での再 `store` ではありません |
+| `declare_associations` | 連想記憶を後から宣言します。別名付きの entity と、主語・述語・目的語の関係を、名指した記録に結び付けます。`retract` で宣言を取り消します。同じオブジェクトは `store` の `associations` に載せて渡すこともできます。そのまま保存され、`reconstruct` が読みます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md)) |
+| `traverse` | 宣言された entity の近傍をグラフとして返します。中身は、別名と、その entity とそこからたどった entity に宣言された関係 (`max_hops` まで) と、各 entity に言及する記録の ref です。記録のテキストは返しません。`limit` は entity 数と entity ごとの ref 数を抑えます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md#4-traverse)) |
 
 ## プロフィールと運用者コンテキスト { #profile-and-operator-context }
 
 | ツール | 何をするか |
 |---|---|
 | `get_profile` | エージェントに蓄積されたユーザー/プロジェクトのプロフィールを読みます |
-| `update_profile` | あなたが計算した要約でプロフィールを置き換えます。CPersona が代わりに書くことはありません — [LLM 非依存](architecture.md#zero-llm-dependency) を参照 |
+| `update_profile` | あなたが計算した要約でプロフィールを置き換えます。CPersona が代わりに書くことはありません ([LLM 非依存](architecture.md#zero-llm-dependency) を参照) |
 | `get_operating_context` | 接続中の全クライアントへ配られる運用者所有の指示を読みます。MCP 越しでは読み取り専用で、編集はファイルシステム上で行います ([設計](OPERATING_CONTEXT_DESIGN.md)) |
 
 プロフィール行は recall 応答に注入されますが
 [スコアを持ちません](behavior-contracts.md#7-profile-rows-carry-no-score)。
-`limit` を絞るときに効いてくる違いです。
+`limit` を絞るときに、この違いが効いてきます。
 
 ## 一覧の閲覧 { #browsing }
 
 | ツール | 何をするか |
 |---|---|
-| `list_memories` | 直近の記憶を新しい順に — 検索もスコアリングもしません |
-| `list_episodes` | アーカイブ済みエピソードを新しい順に |
-| `get_queue_status` | バックグラウンドタスクキューの深さと再試行状態 |
+| `list_memories` | 直近の記憶を新しい順に返します。検索もスコアリングもしません |
+| `list_episodes` | アーカイブ済みのエピソードを新しい順に返します |
+| `get_queue_status` | バックグラウンドのタスクキューの深さと再試行の状態を返します |
 
 ## 保護と削除 { #protection-and-deletion }
 
@@ -49,7 +49,7 @@
 |---|---|
 | `lock_memory` | 記憶の編集と削除を拒否させます。これは**保護であってランキングの押し上げではありません** ([契約](behavior-contracts.md#9-lock_memory-protects-it-does-not-boost)) |
 | `unlock_memory` | その保護を解除します |
-| `delete_memory` | 記憶を 1 件削除します。所有権が強制されるのは **`agent_id` を渡した場合だけ**です — 省略すると走査範囲が絞られず、他エージェントの行も削除できます (ロックはどちらでも拒否) |
+| `delete_memory` | 記憶を 1 件削除します。所有権が強制されるのは **`agent_id` を渡した場合だけ**です。省略すると走査範囲が絞られず、ほかのエージェントの行も削除できます (ロックはどちらでも拒否) |
 | `delete_episode` | エピソードを 1 件削除します。所有権の扱いは上の `delete_memory` と同じ条件付きです |
 | `delete_agent_data` | 1 エージェントに属するもの**すべて**を削除します。他のツールと同様にネットワークへ露出するため、[HTTP トランスポート](configuration.md#remote-http-transport) で `CPERSONA_AUTH_TOKEN` を設定すべき十分な理由になります |
 
@@ -57,26 +57,26 @@
 
 | ツール | 何をするか |
 |---|---|
-| `set_recall_precision` | 主要なゲートのつまみ。エージェントの精度設定を変更し、**融合後の品質ゲート**を再較正します — 生の閾値をいじる前にこちらへ手を伸ばしてください ([調整の順序](operations.md#tuning-recall)) |
+| `set_recall_precision` | 品質ゲートを調整する主なつまみです。エージェントの精度設定を変え、**融合後の品質ゲート**を較正し直します。生の閾値を変える前に、まずこちらを使ってください ([調整の順序](operations.md#tuning-recall)) |
 | `get_recall_precision` | そのエージェントに効いている精度設定を読みます |
-| `calibrate_threshold` | **ベクトル**の閾値をコーパス自身から導出し直します。既定 (`separation`) はランダムペアの null 分布と同一セッション正例が分離する点から求め、`percentile` / `zscore` も選べます。ラベル不要。再埋め込みや大量インポートの後に実行してください |
+| `calibrate_threshold` | **ベクトル**の閾値をコーパス自身から導出し直します。既定 (`separation`) はランダムペアの null 分布と同一セッション正例が分離する点から求め、`percentile` / `zscore` も選べます。ラベルは要りません。再埋め込みや大量インポートの後に実行してください |
 
 ## 移植と移行 { #portability-and-migration }
 
 | ツール | 何をするか |
 |---|---|
 | `export_memories` | 記憶・エピソード・プロフィールと宣言された連想 (entity・別名・言及・関係) を JSONL に書き出します。スキーマのバージョンに依存しないため論理バックアップも兼ねます ([バックアップ runbook](operations.md#backup-and-restore))。JSON でない `source` や `metadata` の値はそのテキストのまま運ばれ、元どおりに復元されます |
-| `import_memories` | その JSONL を読み戻し、宣言された連想を復元した記録に向け直します。冪等ですが鍵は 1 つではありません: 記憶は `msg_id` **と** project/channel スコープ内の同一内容で、エピソードは同一の要約で重複排除されます (エピソードは `msg_id` を持ちません)。保存できない値を含む行は拒否されて `errors` で報告され、ファイルの残りは復元されます。2.4.37 以前が書き出したエクスポートは project と channel の軸を持たないため、その行はグローバルプールに復元され、件数が `errors` で報告されます |
-| `merge_memories` | あるエージェントのデータを宣言された連想ごと別のエージェントへ、原子的かつ重複排除つきで移動/複製します |
+| `import_memories` | その JSONL を読み戻し、宣言された連想を復元した記録に向け直します。冪等ですが、重複を判定する鍵は 1 つではありません。記憶は `msg_id` **と** project/channel スコープ内の同一内容で、エピソードは同一の要約で重複排除されます (エピソードは `msg_id` を持ちません)。保存できない値を含む行は拒否されて `errors` で報告され、ファイルの残りは復元されます。2.4.37 以前が書き出したエクスポートは project と channel の軸を持たないため、その行はグローバルプールに復元され、件数が `errors` で報告されます |
+| `merge_memories` | あるエージェントのデータを宣言された連想ごと別のエージェントへ、原子的に、重複排除つきで移動または複製します |
 | `migrate_channel_axis` | ブリッジ種別の記憶を、それについて宣言された連想とともに具体的なチャネルへ振り直します。日常運用ではなく一度きりの修復です |
 
 ## ヘルスと保守 { #health-and-maintenance }
 
 | ツール | 何をするか |
 |---|---|
-| `check_health` | レジストリ駆動の検査。重大度つきの検出項目を返し、`fix=true` で自動修復します: 汚染、重複、FTS 整合性、埋め込み次元のずれ、スキーマオブジェクト、滞留タスク、不正データ。設計上あえて報告のみの検査もあり、分離軸の衛生はその 1 つです — どの綴りを正とするかは修復ではなく運用者の判断だからです |
-| `deep_check` | 意味的なデータ品質の検査: 匿名ソース、短すぎる内容、古いプロフィール、孤児エピソード |
-| `get_session_findings` | 同じ検出結果を、必要な時に引く形で受け取ります — SuperAuditor の pull 契約 ([規格](SUPERAUDITOR_STANDARD.md))。設計上データベース全体が対象 (agent / project で絞りません)、読み取り専用で、`per_kind_limit` を超えた kind は `capped_kinds` に名指しされます。例外を起こした検査は呼び出し全体を失敗させず、kind `check_crashed` の finding として現れます |
+| `check_health` | 登録された検査の一覧 (レジストリ) に沿って検査します。重大度つきの検出項目を返し、`fix=true` で自動修復します。対象は、汚染、重複、FTS 整合性、埋め込み次元のずれ、スキーマオブジェクト、滞留タスク、不正データです。設計上あえて報告だけにした検査もあり、分離軸の値の点検はその 1 つです。どの綴りを正しいとするかは、修復で決めることではなく運用者の判断だからです |
+| `deep_check` | 意味の面でデータ品質を検査します。対象は、匿名ソース、短すぎる内容、古いプロフィール、孤児エピソードです |
+| `get_session_findings` | 同じ検出結果を、必要なときに引き出す形で受け取ります (SuperAuditor の pull 契約、[規格](SUPERAUDITOR_STANDARD.md))。設計上データベース全体が対象 (agent / project で絞りません)、読み取り専用で、`per_kind_limit` を超えた kind は `capped_kinds` に名指しされます。例外を起こした検査は呼び出し全体を失敗させず、kind `check_crashed` の finding として現れます |
 
 `check_health` と `deep_check` は MCP の外から `python -m cpersona.checkup` として
 も実行できます。CI ではこの形を使ってください。実行頻度の指針は
@@ -86,7 +86,7 @@
 
 | ツール | 何をするか |
 |---|---|
-| `check_update` | サーバー自身の新しいリリースがあるか — あるいは今動いているリリースが PyPI で**撤回 (yank) された**か。後者はインストール済みのサーバーが他の手段では知りようのない事実です。検査はプロセス起動ごとに 1 回走り 24 時間キャッシュされます。このツールはその判定を読み、`refresh=true` で取得し直し、`apply=true` で更新を実行します (pip とソースチェックアウトのみ) |
+| `check_update` | サーバー自身の新しいリリースがあるか、または今動いているリリースが PyPI で**撤回 (yank) された**か。後者は、インストール済みのサーバーがほかの手段では知りようのない事実です。検査はプロセスの起動ごとに 1 回走り、24 時間キャッシュされます。このツールはその判定を読み、`refresh=true` で取得し直し、`apply=true` で更新を実行します (pip とソースチェックアウトのみ) |
 
 同じ判定は `recall` 応答に `update` キーとして乗ります (セッションごとに 1 回、
 伝えることがなければキー自体が付きません)。`check_health` でも `update_available`
@@ -120,30 +120,30 @@ detached `HEAD` からは `git pull` が fast-forward する先を持たない�
 いないことにはなりません。
 
 `CPERSONA_UPDATE_CHECK=false` は、唯一の外向きリクエストを含めて機能全体を
-無効化します ([何を送るか](architecture.md#transports))。
+無効にします ([何を送るか](architecture.md#transports))。
 
 ## セッション制御 { #session-controls }
 
 | ツール | 何をするか |
 |---|---|
-| `pause_persistence` | TTL の間、書き込みを no-op にします。応答は `persisted: false` を伴います — id ではなくこれで分岐してください |
+| `pause_persistence` | TTL の間、書き込みを no-op にします。応答には `persisted: false` が付きます。id ではなくこれで分岐してください |
 | `resume_persistence` | 書き込みを即座に再開します |
 | `persistence_status` | 書き込みが停止中か、残り TTL はどれだけかを返します |
 
 ベンチマークや、コーパスに残したくない使い捨ての探索に使ってください。
 
-**影響範囲は `session_key` に従います。** 3 つのツールはいずれもそれを `scope` として
+**影響範囲は `session_key` で決まります**。3 つのツールはいずれもそれを `scope` として
 返します。停止と、それが覆うべき書き込み呼び出しに同じキーを宣言すれば、停止はその
-キーだけを覆います (`scope: "session"`)。別のキーを送るセッションは、それによって
-黙らされることも、それを解除することもありません。キーは比較されるだけで検証され
+キーだけを覆います (`scope: "session"`)。別のキーを送るセッションは、その停止で
+書き込みを止められることも、停止を解除することもありません。キーは比較されるだけで検証され
 ないので、分割されるのは呼び出し元ではなくキーです。同じ文字列を送る者は誰でも同じ
 停止を共有します。
 
 キーを省略すると、キーを持たない全呼び出し元が共有するバケットを止めます
 (`scope: "process"`)。クライアントが自分のプロセスを所有する stdio では、その
 バケットがセッションそのものです。streamable-HTTP の配備では 1 プロセスが全
-クライアントに応じるため、キーなしの停止は他のキーなしセッション全員の書き込みを
-黙らせます。しかも、それらのセッションには何も伝わりません。
+クライアントに応じるため、キーなしの停止は、ほかのキーなしのセッションすべての書き込みを
+止めます。しかも、それらのセッションには何も伝わりません。
 
 `persisted: false` の形に収まらない経路が 2 つあります。`check_health` と
 `deep_check` はブロックされず `fix=false` に降格します。`migrate_channel_axis` は
