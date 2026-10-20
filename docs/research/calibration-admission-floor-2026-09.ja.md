@@ -54,8 +54,8 @@ Status: measurement (実測)、探索的 (事前登録なし)。
 - `--fast --accel_backend numpy`。セルフチェックは 1,084 件の比較で不一致 0 件でした。
   torch バックエンドはコサインが等しい tie を順位 1,000 より後で別の順に並べるため、
   使っていません。
-- 腕 (実験条件): 3 方法 × 2 反復 × 7 タスクです。損失の大きい 5 つ (SciFact、
-  ESGReports、QASPER、TMD、EPBench) に、ReMe と Gorilla を加えました。1 腕あたり約
+- 条件: 3 方法 × 2 反復 × 7 タスクです。損失の大きい 5 つ (SciFact、
+  ESGReports、QASPER、TMD、EPBench) に、ReMe と Gorilla を加えました。1 条件あたり約
   5 分かかります。
 
 ## 2. 主表 — 方法は負けているタスクを動かさない { #2-main-table-the-method-does-not-move-the-losing-tasks }
@@ -170,7 +170,7 @@ MODEL_PATH=jinaai/jina-embeddings-v5-text-nano EMB_CACHE_DIR=<cache> OUTPUT_DIR=
 受理率、Youden の J、融合の admission floor) と、コーパスグループごとの
 `vector_admission` ブロック (受理割合の平均とパーセンタイル、1 件も受理しなかった
 クエリと全件受理したクエリ、limit で打ち切られたクエリ) を持ちます。null プローブと
-腕をまたぐ集計は、リポジトリの外にあるスクリプトから実行しました。それらを取り込むのは
+条件をまたぐ集計は、リポジトリの外にあるスクリプトから実行しました。それらを取り込むのは
 今後の課題です。
 
 ## 7. 設計に何を渡すか { #7-what-this-hands-to-the-design }
@@ -206,7 +206,7 @@ MODEL_PATH=jinaai/jina-embeddings-v5-text-nano EMB_CACHE_DIR=<cache> OUTPUT_DIR=
 - ベンチマーク README のノイズに関する教義は、第 3 節と矛盾します。
 - 計装の最初の実行で、既存の欠陥が 2 つ捕まりました (`--fast` が far リストを丸ごと
   落としていたこと、そしてライブラリ側の limit の上限が全順位付けの実行を切っていたこと)。
-  どちらも、これらの腕を走らせる前に修正しました。
+  どちらも、これらの条件を走らせる前に修正しました。
 
 ## 9. 3 つのモデル、1 つの表 { #9-three-models-one-table }
 

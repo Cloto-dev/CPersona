@@ -3,7 +3,7 @@
 # ツール一覧
 
 > **対象: CPersona {{ version_line }}。** 各引数の権威ある説明は、そのツール自身の MCP
-> description です。あなたのクライアントがそれを読み、いま動かしている版と一緒に
+> description です。あなたのクライアントがそれを読み、いま動かしているバージョンと一緒に
 > 配布されます。このページは**すべてのツール**を「何に使うか」でグループ分けし、
 > 名前から想像できない挙動を持つものは契約へリンクします。
 >
@@ -13,7 +13,7 @@
 
 | ツール | 何をするか |
 |---|---|
-| `store` | 記憶を 1 件書きます。2.6.6 からは本文を `content` に入れ、ACL が書き込みを 1 つの agent にだけ許す接続では `agent_id` を省けて (使われた agent は `resolved_agent_id` で返ります)、`source` の既定は書き込んだ agent、`lock: true` で同じ呼び出しのうちに鍵もかかります。それ以前の版の `message={content, id, source, timestamp, metadata}` の形も、その形の既定のまま受け付けます。`[Memory from …]` の印 (初期の版が recall の本文に付けていたもの) は、どこにあっても取り除きます。分岐は `ok` ではなく `result` — `stored` / `skipped` / `rejected` — で行ってください ([重複排除の契約](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
+| `store` | 記憶を 1 件書きます。2.6.6 からは本文を `content` に入れ、ACL が書き込みを 1 つの agent にだけ許す接続では `agent_id` を省けて (使われた agent は `resolved_agent_id` で返ります)、`source` の既定は書き込んだ agent、`lock: true` で同じ呼び出しのうちに鍵もかかります。それ以前のバージョンの `message={content, id, source, timestamp, metadata}` の形も、その形の既定のまま受け付けます。`[Memory from …]` の印 (初期のバージョンが recall の本文に付けていたもの) は、どこにあっても取り除きます。分岐は `ok` ではなく `result` — `stored` / `skipped` / `rejected` — で行ってください ([重複排除の契約](behavior-contracts.md#5-dedup-semantics-skip-not-upsert)) |
 | `recall` | 3 層ハイブリッド検索で記憶を取り出します。**末尾の要素が最良のマッチ**です ([順序の契約](behavior-contracts.md#1-recall-return-order-last-is-best))。`trace: true` を渡すと、各段が何を残し・落とし・並べ替えたかの記録も返します。参照とスコアだけで、保存された本文は含みません ([想起の記録](RECALL_PROCESS_DESIGN.md#1-the-recall-trace))。`time_cue` を渡すと、答えがいつ保存されたかを確かさつきで伝えられます。その期間で見つかった行は決まった段数まで順位が上がり、その検索が見つけて答えに入っていない記録に最大 3 行の別枠 (確かさ別に 3 / 2 / 1) が取られます。品質ゲートを通る行は変わりません ([時期の手がかり](RECALL_PROCESS_DESIGN.md#2-the-loops-basic-form)) |
 | `recall_with_context` | 想起 *と同時に*、渡した会話履歴と重複排除しつつ統合します。返るのはスコア順ではなく**時系列**の統合です |
 | `get_contents` | recall が返したプレビュー参照 (`mem:<id>` / `ep:<id>`) を全文に展開します ([プレビュー階層の設計](RECALL_PREVIEW_TIER_DESIGN.md))。ref でレコードの一部 (overflow tree のノードまたは文字範囲) を指定することもでき、`reconstruct` の引用をレコード全体でなく前後のノードだけに展開できます |
@@ -65,7 +65,7 @@
 
 | ツール | 何をするか |
 |---|---|
-| `export_memories` | 記憶・エピソード・プロフィールと宣言された連想 (entity・別名・言及・関係) を JSONL に書き出します。スキーマ版に依存しないため論理バックアップも兼ねます ([バックアップ runbook](operations.md#backup-and-restore))。JSON でない `source` や `metadata` の値はそのテキストのまま運ばれ、元どおりに復元されます |
+| `export_memories` | 記憶・エピソード・プロフィールと宣言された連想 (entity・別名・言及・関係) を JSONL に書き出します。スキーマのバージョンに依存しないため論理バックアップも兼ねます ([バックアップ runbook](operations.md#backup-and-restore))。JSON でない `source` や `metadata` の値はそのテキストのまま運ばれ、元どおりに復元されます |
 | `import_memories` | その JSONL を読み戻し、宣言された連想を復元した記録に向け直します。冪等ですが鍵は 1 つではありません: 記憶は `msg_id` **と** project/channel スコープ内の同一内容で、エピソードは同一の要約で重複排除されます (エピソードは `msg_id` を持ちません)。保存できない値を含む行は拒否されて `errors` で報告され、ファイルの残りは復元されます。2.4.37 以前が書き出したエクスポートは project と channel の軸を持たないため、その行はグローバルプールに復元され、件数が `errors` で報告されます |
 | `merge_memories` | あるエージェントのデータを宣言された連想ごと別のエージェントへ、原子的かつ重複排除つきで移動/複製します |
 | `migrate_channel_axis` | ブリッジ種別の記憶を、それについて宣言された連想とともに具体的なチャネルへ振り直します。日常運用ではなく一度きりの修復です |

@@ -249,7 +249,7 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 バックエンドは不要です。
 
 1. sidecar が無い / `off` / 不正のとき、機能は休眠し、挙動の差分はゼロであること
-   (既存スイート全体に対する回帰ガード)。
+   (既存スイート全体に対するデグレの検査)。
 2. instructions の引き回し: `ToolRegistry(instructions=...)` が
    `create_initialization_options()` に届くこと。
 3. レジストリのモード: off / warn / reject × 読み取り / 書き込み × 既知 / 未知 /
