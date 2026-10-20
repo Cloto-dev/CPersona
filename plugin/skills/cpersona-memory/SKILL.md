@@ -415,9 +415,12 @@ afterwards.
 - `check_update()` — is a newer release of the server itself available, or has
   the running one been withdrawn. The same verdict arrives unasked as an
   `update` key on a `recall` response (once per session): relay its `message`
-  and `install.command` to the user. Never call `check_update(apply=true)`
-  without the user's explicit go-ahead — it installs software, and the server
-  must be restarted afterwards.
+  and `install.command` to the user. When it carries `release_notes`, open that
+  page first and tell the user what its "When you upgrade" section asks of them
+  by hand (for example installing or replacing the agent plugin): the running
+  server was released before those notes and cannot say it. Never call
+  `check_update(apply=true)` without the user's explicit go-ahead — it installs
+  software, and the server must be restarted afterwards.
 - A `suggestion` key on a `recall` response (once per session) says the memory
   has grown past what a time cue's search reads, with no coarse index to search
   the rest. Relay its `message` to the user and propose the build. Run its `fix`
