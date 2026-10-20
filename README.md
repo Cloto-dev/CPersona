@@ -187,7 +187,11 @@ input and output). Not every cost
 favours CPersona: on LoCoMo its pro mode searched slower (72.7 against 50.0 ms
 median), and its context was 0.58 of OpenViking's.
 
-One run each, by this project, at the 2.6.11 release. Setups, registered rules and
+One run each, by this project, at the 2.6.11 release. OmniMemEval lists the rows of
+both benchmarks among its
+[published reference results](https://github.com/MemTensor/OmniMemEval/blob/main/docs/user_memory/results.md),
+after its maintainers recomputed them from the saved records against the datasets;
+that check is not an independent rerun. Setups, registered rules and
 every departure from a clean run: [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-2_6_11.md);
 earlier runs: [2.6.3a1 and 2.6.4a1](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme.md); retrieval-only
 measurements on LMEB: [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
