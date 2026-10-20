@@ -121,9 +121,6 @@ which contradicted the "surgical patch / no new tool / 2.4.x QOL line" framing.
 That premise did not survive contact with the change (§6): an additive method left the
 existing entry point untouched, so no consumer had to absorb anything.
 
-That premise did not survive contact with the change (§6): an additive method left the
-existing entry point untouched, so no consumer had to absorb anything.
-
 Route B keeps the change **cpersona-only**. `embed()` is left untouched, and CPersona
 derives health from two sources: `config.EMBEDDING_MODE` for the static `hint` case, and
 **its own lightweight health probe** for the `fault` case, capturing the real error

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:43443e625dd2c7ee573f2b0ef1b76ea2afb01160 -->
+<!-- i18n-source: docs/DEGRADED_ADVISORY_DESIGN.md@blob:7f09a542d6c81d98b63db5547d2903ec0aac0349 -->
 
 # 埋め込み劣化: ランタイム検知 + advisory 注入
 
@@ -123,9 +123,6 @@ advisory はここに兄弟フィールドとして付きます。`test_do_recal
 新規ツールなし / 2.4.x QOL ライン」という枠組みに反するとされました。
 
 この前提は、実際の変更 (§6) では成り立ちませんでした。additive なメソッドは既存の入口を一切
-変えないため、どの consumer も何も吸収する必要がありませんでした。
-
-この前提は実際の変更 (§6) では成り立ちませんでした。additive なメソッドは既存の入口を一切
 変えないため、どの consumer も何も吸収する必要がありませんでした。
 
 Route B は変更を **cpersona だけ**に留めます。`embed()` には手を触れず、CPersona は
