@@ -104,7 +104,7 @@ async def test_listing_with_an_agent_id_never_crosses_agents(clean_db):
 
 
 # --------------------------------------------------------------------------------------
-# skills/cpersona-memory/SKILL.md, "Session end" and the mandatory-trigger list:
+# plugin/skills/cpersona-memory/SKILL.md, "Session end" and the mandatory-trigger list:
 #
 #   "Pass the REAL history — it sets the episode's start/end times from the turns'
 #    timestamps, but never reaches the embedding, which comes from `summary` alone."
@@ -157,7 +157,7 @@ async def test_episode_embedding_ignores_the_conversation_history(clean_db, fake
 
 
 # --------------------------------------------------------------------------------------
-# skills/cpersona-memory/SKILL.md, tool reference:
+# plugin/skills/cpersona-memory/SKILL.md, tool reference:
 #
 #   "`channel` on `store` / `recall`, and `source_id` on `recall`"
 #
@@ -182,7 +182,7 @@ def test_source_id_is_a_recall_argument_and_not_a_store_argument():
     assert "source_id" not in store_args, (
         "`store` now advertises source_id. The shipped skill tells agents that a write "
         "carries its producer in source.id instead — update the tool-reference "
-        "table in skills/cpersona-memory/SKILL.md before this becomes the wrong advice."
+        "table in plugin/skills/cpersona-memory/SKILL.md before this becomes the wrong advice."
     )
     assert "source_id" in recall_args, (
         "`recall` no longer advertises source_id, which the shipped skill names as the "
@@ -285,7 +285,7 @@ async def test_empty_agent_id_is_a_writable_bucket_not_an_impossible_value(clean
 
 
 # --------------------------------------------------------------------------------------
-# skills/cpersona-memory/SKILL.md, "Mandatory triggers" and the shipped policy block:
+# plugin/skills/cpersona-memory/SKILL.md, "Mandatory triggers" and the shipped policy block:
 #
 #   "Use `deep=true` when the first pass comes back thin: it halves the quality gate,
 #    so weaker matches are admitted. It does not widen the scan window."

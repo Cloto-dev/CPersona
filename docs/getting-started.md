@@ -30,12 +30,53 @@ For doing the setup yourself:
 - An MCP client: Claude Desktop, Claude Code, Codex CLI, Cursor, VS Code, or
   any other MCP host — step 3 has the entry for each
 
-## Install the agent skill (Claude Code) { #let-the-agent-do-it-claude-code }
+## Install the agent plugin (Claude Code and Codex) { #let-the-agent-do-it-claude-code }
 
-The repository and the published wheel both ship an
-[Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory).
-It walks Claude Code through the installation, and then teaches it *when* to
-store, recall, and archive. To install it:
+This repository is also a plugin marketplace, for Claude Code and for Codex. Its
+one plugin, `cpersona`, carries the
+[Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/plugin/skills/cpersona-memory),
+which walks the agent through the installation and then teaches it *when* to
+store, recall, and archive, and three hooks that remind it at the moments it
+tends not to (below). The plugin does not include the server: you connect that
+in step 3 as usual, so the tool names are the same however you install.
+
+Claude Code (2.1.275 or later):
+
+```text
+/plugin install cpersona --marketplace Cloto-dev/cpersona
+```
+
+Codex:
+
+```bash
+codex plugin marketplace add Cloto-dev/cpersona
+codex plugin add cpersona@cpersona
+```
+
+Codex runs a plugin's hooks only once you trust them: open `/hooks` in the
+Codex TUI after installing, and again after an update that changes them.
+`codex exec` runs them without asking.
+
+Then tell the agent: *"Set up CPersona — I want persistent memory."*
+
+Each hook adds one note to the agent's context and does nothing else. None of
+them blocks the agent or talks to the server, and a hook that cannot read its
+input adds nothing.
+
+| When | The note asks the agent to | Size of the note |
+| --- | --- | --- |
+| A session starts (new, or after `/clear`) | call `reconstruct` before its first substantive action, and `store` what is worth keeping as it happens rather than at the end | about 410 characters, once |
+| You send a prompt | call `reconstruct` for this request, with the prompt as the suggested query, and confirm "there is no such record" with an exact search | about 310 characters plus up to 200 of the prompt, every prompt |
+| The conversation was compacted | call `reconstruct` for the task in progress, and check the summary's claims before storing them as facts | about 410 characters, after each compaction |
+
+There is no hook before compaction: neither host lets one put text in front of
+the agent, so storing as it goes is what keeps the memory current. To turn
+hooks off, set `CPERSONA_HOOKS_DISABLE` to a comma-separated list of
+`session-start`, `prompt` and `compact`, or to `all`, in the environment the
+agent runs in.
+
+The skill also ships on its own, without the hooks, for other clients or for
+copying by hand:
 
 ```bash
 # Installed from PyPI? The skill ships inside the wheel — no clone needed:
@@ -43,10 +84,8 @@ python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).par
 
 # Running via uvx (isolated environment), or not installed yet:
 git clone --depth 1 https://github.com/Cloto-dev/cpersona.git /tmp/cpersona
-mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claude/skills/
+mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/plugin/skills/cpersona-memory ~/.claude/skills/
 ```
-
-Then tell Claude Code: *"Set up CPersona — I want persistent memory."*
 
 The manual steps below are for every other client, and for anyone who prefers
 to configure things by hand. Step 5 is the part the skill would otherwise do: it

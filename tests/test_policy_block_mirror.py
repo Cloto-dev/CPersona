@@ -29,18 +29,18 @@ def _block(path: Path) -> str:
 
 @pytest.mark.parametrize("page", ["docs/getting-started.md", "docs/getting-started.ja.md"])
 def test_getting_started_shows_the_block_the_skill_ships(page):
-    skill = _block(ROOT / "skills" / "cpersona-memory" / "SKILL.md")
+    skill = _block(ROOT / "plugin" / "skills" / "cpersona-memory" / "SKILL.md")
     shown = _block(ROOT / page)
     assert shown == skill, (
         f"{page} shows a policy block that differs from the one in "
-        "skills/cpersona-memory/SKILL.md. The skill is the source; copy its block "
+        "plugin/skills/cpersona-memory/SKILL.md. The skill is the source; copy its block "
         "verbatim (markers included) into the page."
     )
 
 
 def test_the_detector_sees_a_one_character_drift(tmp_path):
     """A mirror check that could not tell the copies apart would pass forever."""
-    skill = _block(ROOT / "skills" / "cpersona-memory" / "SKILL.md")
+    skill = _block(ROOT / "plugin" / "skills" / "cpersona-memory" / "SKILL.md")
     page = tmp_path / "page.md"
     page.write_text(skill.replace("agent_id", "agent-id", 1), encoding="utf-8")
     assert _block(page) != skill

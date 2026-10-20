@@ -53,13 +53,13 @@ on:
       # The files below publish absolute links into this site and are checked
       # here by check-site-urls.py, so an edit to one of them has to run this
       # workflow: they are the surfaces where a link goes stale without any
-      # page under docs/ changing. skills/ is on the list twice over -- it
+      # page under docs/ changing. plugin/ is on the list twice over -- it
       # ships on the reader's disk and no gate that walks the built site can
       # open it, because it is outside docs_dir.
       - "README.md"
       - "SUPPORT.md"
       - "pyproject.toml"
-      - "skills/**"
+      - "plugin/**"
       - "scripts/check-docs-live.py"
   pull_request:
     paths:
@@ -94,13 +94,13 @@ on:
       # The files below publish absolute links into this site and are checked
       # here by check-site-urls.py, so an edit to one of them has to run this
       # workflow: they are the surfaces where a link goes stale without any
-      # page under docs/ changing. skills/ is on the list twice over -- it
+      # page under docs/ changing. plugin/ is on the list twice over -- it
       # ships on the reader's disk and no gate that walks the built site can
       # open it, because it is outside docs_dir.
       - "README.md"
       - "SUPPORT.md"
       - "pyproject.toml"
-      - "skills/**"
+      - "plugin/**"
       - "scripts/check-docs-live.py"
   # A line's documentation is whatever its branch holds, so a branch other than
   # this one can change what this site should publish without producing any
@@ -267,7 +267,7 @@ jobs:
         # the tree that is about to be published. No other gate can see them:
         # check-doc-anchors.py reads in-site links only, so a link written as
         # the full published URL is invisible to it, and the two files under
-        # skills/ that carry these links are outside docs_dir entirely.
+        # plugin/skills/ that carry these links are outside docs_dir entirely.
         #
         # Fragments are the half that rots quietly -- mkdocs --strict fails a
         # broken page link and passes a broken #fragment, which is how a slug

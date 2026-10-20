@@ -177,14 +177,15 @@ exclude = [
 
 [tool.hatch.build.targets.wheel.force-include]
 # Ship the agent skills with the PyPI artifact (2.5.0b1): pip users previously
-# had no way to obtain skills/ without cloning the repo. Placed under the
-# package so it imports nothing and pollutes no top-level namespace.
-"skills" = "cpersona/skills"
+# had no way to obtain the skill without cloning the repo. Placed under the
+# package so it imports nothing and pollutes no top-level namespace. The source
+# lives in the agent plugin (2.6.12); the installed path is unchanged.
+"plugin/skills" = "cpersona/skills"
 
 [tool.hatch.build.targets.sdist]
 # Anchored patterns: a bare "skills" is a gitignore-style glob and would also
 # match .agents/skills/ (local delegation tooling that must not ship).
-include = ["/cpersona", "/skills", "/README.md", "/LICENSE", "/pyproject.toml"]
+include = ["/cpersona", "/plugin/skills", "/README.md", "/LICENSE", "/pyproject.toml"]
 
 [tool.ruff.lint]
 # 2.5.0b2 (bug-114 class prevention): flake8-datetimez bans naive datetime

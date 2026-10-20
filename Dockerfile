@@ -24,7 +24,7 @@ WORKDIR /src
 # backend.
 COPY pyproject.toml README.md LICENSE ./
 COPY cpersona/ ./cpersona/
-COPY skills/ ./skills/
+COPY plugin/skills/ ./plugin/skills/
 
 # The wheel, not the source tree. The runtime stage installs this artifact, so
 # the container runs what a `pip install cpersona` user runs rather than a

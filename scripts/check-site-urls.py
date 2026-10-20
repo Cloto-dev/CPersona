@@ -10,7 +10,7 @@ no existing gate can see:
 
   * `check-doc-anchors.py` reads in-site links only. A link written as the full
     published URL is not one, even when it points at the very next page.
-  * `skills/` is outside `docs_dir`, so no gate that walks the built site ever
+  * `plugin/skills/` is outside `docs_dir`, so no gate that walks the built site ever
     opens it -- and two of the files publishing these URLs live there.
   * mkdocs `--strict` fails a broken page link and passes a broken `#fragment`,
     which is how a slug guessed from a heading ("#26-in-line-releases" for

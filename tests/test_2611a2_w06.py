@@ -316,10 +316,10 @@ async def test_a_report_only_run_contacts_the_backend_and_the_docs_say_so(db, mo
         ("cpersona/server.py check_health description", description, "Nothing contacts the embedding backend unless fix=true"),
         ("docs/operations.md", (ROOT / "docs/operations.md").read_text(encoding="utf-8"), "makes no\n   network call"),
         ("docs/operations.ja.md", (ROOT / "docs/operations.ja.md").read_text(encoding="utf-8"), "はネットワーク呼び出しを行わないので"),
-        ("skills/cpersona-memory/SKILL.md", (ROOT / "skills/cpersona-memory/SKILL.md").read_text(encoding="utf-8"), "makes no network call"),
+        ("plugin/skills/cpersona-memory/SKILL.md", (ROOT / "plugin/skills/cpersona-memory/SKILL.md").read_text(encoding="utf-8"), "makes no network call"),
         (
-            "skills/cpersona-memory/references/embedding-backend-repair.md",
-            (ROOT / "skills/cpersona-memory/references/embedding-backend-repair.md").read_text(encoding="utf-8"),
+            "plugin/skills/cpersona-memory/references/embedding-backend-repair.md",
+            (ROOT / "plugin/skills/cpersona-memory/references/embedding-backend-repair.md").read_text(encoding="utf-8"),
             "makes no network call",
         ),
     ]

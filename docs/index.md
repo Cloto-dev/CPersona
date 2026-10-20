@@ -130,7 +130,7 @@ does not mean it is free, or that it behaves the same everywhere:
 
 A machine-readable index of these pages is published at
 [`llms.txt`](llms.txt). The bundled
-[`cpersona-memory` skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
+[`cpersona-memory` skill](https://github.com/Cloto-dev/cpersona/tree/master/plugin/skills/cpersona-memory)
 teaches an agent the day-to-day store / recall / archive workflow and links
 back here for the canonical detail.
 

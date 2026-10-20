@@ -13,7 +13,7 @@
 *
 
 !cpersona/
-!skills/
+!plugin/skills/
 !pyproject.toml
 !README.md
 !LICENSE

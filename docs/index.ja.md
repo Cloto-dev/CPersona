@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/index.md@blob:1bfa89a190aba83cca763ba9e36abbcd76adfe17 -->
+<!-- i18n-source: docs/index.md@blob:79bde279274914b723a7efa3754bc657942f05fa -->
 
 # CPersona ドキュメント
 
@@ -131,7 +131,7 @@ CPersona は [MCP](https://modelcontextprotocol.io/) サーバーです。Claude
 ## AI エージェント向け { #for-ai-agents-reading-this-site }
 
 このサイトの機械可読の索引を [`llms.txt`](llms.txt) で公開しています。同梱の
-[`cpersona-memory` skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
+[`cpersona-memory` skill](https://github.com/Cloto-dev/cpersona/tree/master/plugin/skills/cpersona-memory)
 は、store / recall / archive の日々の使い方をエージェントに教え、正確な詳細は
 このサイトへのリンクで案内します。
 
