@@ -15,9 +15,9 @@ CPersona の挙動がどう決まったか、これからどこへ向かうか�
 納期の約束ではありません。実際に出荷されたものは[リリースノート](https://github.com/Cloto-dev/cpersona/releases)と
 [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) にあります。
 
-2.6 系には専用ページ [Reliable Recall](../RELIABLE_RECALL_2_6.md) があります。扱うのは、1 回の
+2.6 系には専用ページ [Reliable Recall](../RELIABLE_RECALL_2_6.md) があります。1 回の
 呼び出しの中で反復する想起ループ、手がかりの契約、prior 関数、再構成の出口とその
-件数の窓、失敗の分類、完了とみなす条件です。その完了条件の一つ一つを証拠と
+件数の窓、失敗の分類、そして何をもって完了とするか。その完了条件の一つ一つを証拠と
 突き合わせたページが [2.6 系の進捗](../PROGRESS_2_6.md) です。その次のラインにも専用ページ
 [Memory Intelligence](../MEMORY_INTELLIGENCE_2_7.md) (2.7 系) があります。訂正と矛盾、
 時間状態、証拠で重み付けした確信度、保持の方針、想起のフィードバックを扱います。設計だけで、
