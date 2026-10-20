@@ -3,32 +3,32 @@
 # サーバー供給の運用コンテキスト (グローバル設定 + MCP instructions 配布)
 
 **ステータス**: `feature/2.5.1-operating-context` で実装済み (対象: 2.5.1、直接
-リリース。pre-release ladder は踏まない。merge / tag は 2.5.0 final をゲートとする)
+リリース。pre-release の段階は踏まない。merge / tag は 2.5.0 final の後に行う)
 **決定**: プロジェクトオーナー、2026-07-16 (2.5.0b1 リリース直後の設計討議)
 **範囲**: 加算的。DB スキーマ変更なし、新規の読み取りツール 1 つ、sidecar 設定
 ファイル 1 つ。`SUPPORT.md` にある 2.5.x ラインの宣言 ("DB schema and MCP tool
 contract are preserved, rollback-free") は維持されます。
 
-> **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
+> **翻訳について**: 原文は英語版です。日本語版が古いときは英語版を参照してください。
 
 ---
 
 ## 1. 動機 { #1-motivation }
 
-CPersona の運用ドクトリン (どの `project_id` が存在するのか、`agent_id` にどんな
+CPersona の運用方針 (どの `project_id` が存在するのか、`agent_id` にどんな
 規約が適用されるのか、`recall` をどう使うべきか。limit、`exclude_contents`、
 セッション開始時の規律) は、現在**クライアント側のドキュメント**に置かれています。
 運用者の `CLAUDE.md`、リポジトリごとの指示、そして skill のテキストです。
 
 ここには構造的な問題が 2 つあります。
 
-1. **出所での分岐。** エージェントと環境の組み合わせ (Claude Code、ClotoCore の
+1. **出所での分岐**。エージェントと環境の組み合わせ (Claude Code、ClotoCore の
    カーネルエージェント、claude.ai リモートコネクタ、将来のクライアント) は
-   それぞれ自前のドクトリンの写しを持ち、その写しは食い違っていきます。新しい
-   環境は、ドクトリンを*まったく*持たない状態のまま始まり、誰もそれに
+   それぞれ自前の方針の写しを持ち、その写しは食い違っていきます。新しい
+   環境は、方針を*まったく*持たない状態のまま始まり、誰もそれに
    気づきません。
-2. **運用者側の肥大。** ドクトリンは `CLAUDE.md` の場所を奪い合いますが、そこは
-   既にスリム化の規律下にあります (セッションあたりのトークン固定費)。
+2. **運用者側の肥大**。方針は `CLAUDE.md` の場所を奪い合いますが、そこは
+   すでに軽量化の規律の下にあります (セッションあたりのトークン固定費)。
 
 サーバーは、定義上あらゆるクライアントが接続する唯一の構成要素です。そして MCP
 には、そのために作られた配布チャネルがあります。`initialize` 応答の `instructions`
@@ -43,25 +43,25 @@ CPersona の運用ドクトリン (どの `project_id` が存在するのか、`
 
 | 層 | 内容 | 機構 | 保証 |
 | --- | --- | --- | --- |
-| **Soft** | 挙動のドクトリン (recall の規律、agent_id の規約、セッションの習慣) | `initialize` → `instructions` の注入 + `get_operating_context` 詳細ツール | 決定的な**配布**。遵守は確率的なまま |
+| **Soft** | 挙動の方針 (recall の規律、agent_id の規約、セッションの習慣) | `initialize` → `instructions` の注入 + `get_operating_context` 詳細ツール | 決定的な**配布**。遵守は確率的なまま |
 | **Hard** | 機械的に検査できるルール (有効な `project_id` の集合、`@auto` の既定解決) | ツール呼び出し時のサーバー側検証 | 決定的な**強制** (モードで制御) |
 
 ## 3. sidecar 設定ファイル (DB スキーマ変更なし) { #3-sidecar-configuration-file-no-db-schema }
 
 先例は CScheduler の `~/.cscheduler/bindings.json` です。運用コンテキストは DB の
 行ではなく、**運用者が所有するファイル**です。これを第一選択の設計としたのは、
-2.5.x の rollback-free 宣言をそのまま保てること、そしてガバナンスが自明になること
+2.5.x の rollback-free 宣言をそのまま保てること、そして管理の仕方が明快になること
 (§7) が理由です。
 
 - **パス**: `~/.cpersona/operating-context.toml`。
   `CPERSONA_OPERATING_CONTEXT_PATH` で上書きできます。キルスイッチは
   `CPERSONA_OPERATING_CONTEXT=off` です。
 - **形式**: TOML。標準ライブラリの `tomllib` で解析します (Python ≥3.11、新規
-  依存はゼロ)。複数行のドクトリンテキストブロックのために、JSON ではなく TOML を
+  依存はゼロ)。複数行の方針テキストブロックのために、JSON ではなく TOML を
   選んでいます。
-- **ファイルが無ければ機能は完全に休眠します。** instructions も検証もなく、挙動は
-  一切変わりません。既存のデプロイには手が入りません。
-- **ファイルが不正でも致命的にはなりません。** サーバーは機能を off にして起動し、
+- **ファイルが無ければ機能は完全に休眠します**。instructions も検証もなく、挙動は
+  一切変わりません。既存のデプロイには影響しません。
+- **ファイルが不正でも致命的にはなりません**。サーバーは機能を off にして起動し、
   警告をログに出し、`check_health` が finding を報告します (§8)。設定のタイプミス
   で記憶が止まるようなことがあってはなりません。
 - **リロード**: 遅延・mtime ベースで、Hard 側のみです。`get_context()` はファイルの
@@ -74,10 +74,10 @@ CPersona の運用ドクトリン (どの `project_id` が存在するのか、`
     SDK の `Server` がその文字列を属性として保持し、`create_initialization_options()`
     は毎回それを返します。つまりプロセスの生存期間中は凍結されています。
 
-    **再接続では足りません。** 稼働中のサーバーに対してクライアントが再度
+    **再接続では足りません**。稼働中のサーバーに対してクライアントが再度
     initialize しても、同じテキストが再び配られます。編集を配るには、サーバー
     プロセスの再起動が必要です。stdio クライアントはサーバーを起動し直すたびに
-    プロセスも再起動するので、セッションをまたげば編集を拾います。1 つの長命
+    プロセスも再起動するので、セッションをまたげば編集を拾います。1 つの長く動き続ける
     プロセスがすべてのクライアントに応じる streamable-HTTP トランスポートでは
     拾いません。(本ドキュメントは以前、クライアントは再接続で更新を受け取ると
     記載していました。bug-252 です。)
@@ -120,7 +120,7 @@ body = """..."""
 
 ## 4. Soft 層: `initialize` の instructions { #4-soft-layer-initialize-instructions }
 
-公式の MCP Python SDK は、既にこのフィールドを端から端まで運んでいます。
+公式の MCP Python SDK は、すでにこのフィールドを最初から最後まで受け渡しています。
 `Server(name, instructions=...)` → `create_initialization_options()` →
 `InitializeResult.instructions` という経路です (vendored SDK の
 `mcp/server/lowlevel/server.py:142,188` で確認済み)。cpersona 側の変更は、vendored
@@ -133,7 +133,7 @@ body = """..."""
 読み込むクライアントは、セッションの開始時にツールの名前とこの instructions しか
 エージェントに見せないからです。Claude Code は instructions を 2,048 文字で切り詰めるので、
 案内を先頭に置けば、下の 1,500 文字以内の summary も収まります。summary が無い時の
-instructions は案内だけです (2.6.5a2 より前は空でした)。**summary が簡潔な正本であり、
+instructions は案内だけです (2.6.5a2 より前は空でした)。**summary が簡潔な正式の文で、
 詳細は `get_operating_context`
 による opt-in です** (プレビュー階層の構造で、CSC の `get_active_context` や recall
 のプレビュー階層と同じトークン固定費の規律に従います)。
@@ -148,12 +148,12 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 | クライアント | `instructions` の扱い | 状況 |
 | --- | --- | --- |
 | Claude Code (stdio + remote MCP) | "MCP Server Instructions" としてシステムコンテキストに注入する | **動作確認済み** (実セッションで、別サーバーの instructions が入るのをその場で観測) |
-| ClotoCore kernel | **破棄される。** `initialize()` は `capabilities.mgp` と `capabilities.logging` だけを取り出し、結果はログに出したうえで捨てられる (`crates/core/src/managers/mcp_client.rs` の `initialize()`) | **欠落を確認** — カーネル側の作業項目であり、ClotoCore 側で追跡する (ここでは対象外)。それが入るまで、カーネルエージェントに届くのは Hard 層だけ |
+| ClotoCore kernel | **破棄される**。`initialize()` は `capabilities.mgp` と `capabilities.logging` だけを取り出し、結果はログに出したうえで捨てられる (`crates/core/src/managers/mcp_client.rs` の `initialize()`) | **欠落を確認**。カーネル側の作業項目であり、ClotoCore 側で追跡する (ここでは対象外)。それが入るまで、カーネルエージェントに届くのは Hard 層だけ |
 | claude.ai リモートコネクタ | 未検証 | 実装中に**計測する**。コネクタが instructions を落とす場合でも、Claude Code のローカル stdio が主要環境をカバーする |
 
 このカーネル側の欠落は、2.5.1 を止めません。Hard 層 (§5) はいずれにせよカーネル
-エージェントに対して機械検査可能な部分集合を強制しますし、Soft 層はちょうど今日の
-現状へと縮退するだけです。
+エージェントに対して機械検査可能な部分集合を強制しますし、Soft 層は現在の
+状態に戻るだけです。
 
 ## 5. Hard 層: レジストリ検証 + `@auto` センチネル { #5-hard-layer-registry-validation-auto-sentinel }
 
@@ -162,9 +162,9 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 
 | 呼び出し側が渡す値 | 挙動 (注記がなければ変更なし) |
 | --- | --- |
-| 省略 / `None` | 読み取り: フィルタなし。書き込み: `""` のグローバルプール。**変更なし。** |
-| `""` | グローバルプール / グローバルのみのフィルタ。**変更なし、常に有効。** |
-| 明示的な `"X"` | **新規**: `enforce` モードに従って `registry.project_ids` と照合されます。値そのものが書き換えられることは決してありません — 明示的な引数が上書きされることはありません |
+| 省略 / `None` | 読み取り: フィルタなし。書き込み: `""` のグローバルプール。**変更なし**。|
+| `""` | グローバルプール / グローバルのみのフィルタ。**変更なし、常に有効**。|
+| 明示的な `"X"` | **新規**: `enforce` モードに従って `registry.project_ids` と照合されます。値そのものが書き換えられることは決してありません。明示的な引数が上書きされることはありません |
 | `"@auto"` | **新規**: opt-in のセンチネル。呼び出しの `agent_id` を使って `[defaults]` 経由で解決されます |
 
 ### 5.1 レジストリ検証 { #51-registry-validation }
@@ -175,18 +175,18 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 `list_episodes` です (`update_memory` は現行のツール契約では `project_id` を取り
 ません)。モードは次の 3 つです。
 
-- `off` — 検査しません。レジストリは文書としての意味しか持ちません。
-- `warn` (既定) — 未知の id を受理し、応答に
+- `off`: 検査しません。レジストリは文書としての意味しか持ちません。
+- `warn` (既定): 未知の id を受理し、応答に
   `operating_context_warning: "project_id 'X' not in registry (rev ...)"` が
-  付きます。advisory を先に置く方針であり、degraded-advisory と同じ哲学です。
-  報告はする、壊さない。
-- `reject` — **書き込み**で未知の id が来た場合、レジストリとリビジョンを挙げた
+  付きます。advisory を先に置く方針であり、degraded-advisory と同じ考え方です。
+  報告はするが、書き込みは止めない。
+- `reject`: **書き込み**で未知の id が来た場合、レジストリとリビジョンを挙げた
   エラーを返します。読み取りは依然として reject ではなく警告に留めます。誤った
   読み取りフィルタは何も失いませんが、誤った書き込みはバケットを汚すからです。
   この非対称性は、実害の非対称性を写したものです。
 
 既定を `warn` にしたのには理由があります。レジストリファイルは新しい仕組みであり、
-古くなったレジストリが書き込みを壊してはなりません。柵が欲しい運用者は、意図的に
+古くなったレジストリが書き込みを壊してはなりません。厳しく止めたい運用者は、意図して
 `reject` へ引き上げます。
 
 ### 5.2 `@auto` センチネル { #52-auto-sentinel }
@@ -194,9 +194,9 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 - 解決: `defaults[agent_id]` がその project_id を与えます。対応が無ければ `""` に
   解決され、応答に `operating_context_warning` が付きます。`off` では警告は付きません。
   `reject` では**書き込み**が代わりにエラーで拒否されますが、読み取りは `""` に解決して
-  警告に留めます — §5.1 と同じ非対称性です。
+  警告に留めます。§5.1 と同じ非対称性です。
 - 解決された値は応答に `resolved_project_id` として返るので、呼び出し側は実際に
-  何が起きたのかを常に見られます。沈黙よりも透明性を取ります。
+  何が起きたのかを常に見られます。黙って処理するより、見えるようにすることを選びます。
 - `@auto` はリテラルであり opt-in です。これを送らない呼び出し側が影響を受ける
   ことはありません。明示的な値が書き換えられることもありません。そして解決された
   値は、明示的な値と同じようにレジストリ検証にかけられます。
@@ -206,7 +206,7 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 読み取り専用です。引数は次のとおりです。
 
 - (引数なし) → `{ context_revision, instructions_summary, registry: {project_ids, enforce},
-  defaults, doctrine_sections: [names only], _meta }` — プレビュー階層です。
+  defaults, doctrine_sections: [names only], _meta }` (プレビュー階層)。
 - `section: "recall-discipline"` → そのセクションの本文全文。
 
 書き込みツールはありません (§7)。MCP のツール契約に対しては加算的で、新規ツール
@@ -216,12 +216,12 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 
 ## 7. ガバナンス: 書き込み経路はファイルシステム { #7-governance-the-write-path-is-the-filesystem }
 
-**2.5.1 には、運用コンテキストのための MCP 書き込みツールはありません。** sidecar
+**2.5.1 には、運用コンテキストのための MCP 書き込みツールはありません**。sidecar
 を編集するのは、OS を通した運用者だけです。以上。
 
-これは汚染経路に対して取りうる、最も強いゲートです。汚染経路とは、乗っ取られた、
+これは汚染経路に対して取りうる、最も強い防ぎ方です。汚染経路とは、乗っ取られた、
 あるいは混乱したエージェントがサーバーを説き伏せ、以後すべてのエージェントが
-受け取るドクトリンを書き換えさせる経路のことです。
+受け取る方針を書き換えさせる経路のことです。
 
 - MCP 面: 読み取り専用 (`get_operating_context`)。
 - 書き込み面: ファイルのパーミッション。運用者の所有であり、`CLAUDE.md` や
@@ -238,9 +238,9 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 `check_health` のレジストリ (v2.4.37 のレジストリアーキテクチャ) に、加算的な
 チェックを 2 つ追加します。
 
-- `operating_context_parse` — sidecar は存在するが解析できない / スキーマ不正
+- `operating_context_parse`: sidecar は存在するが解析できない / スキーマ不正
   (severity: warn、`fix=false` — 修復とは人がファイルを編集することです)。
-- `operating_context_size` — instructions の summary が 3,000 文字超
+- `operating_context_size`: instructions の summary が 3,000 文字超
   (severity: info、固定費の規律)。
 
 ## 9. テスト計画 { #9-testing-plan }
@@ -265,10 +265,10 @@ instructions は案内だけです (2.6.5a2 より前は空でした)。**summar
 ## 10. バージョン上の位置づけとリリース経路 { #10-version-position-release-path }
 
 - **2.5.1 として直接リリース** (オーナー裁定 2026-07-16)。加算的な機能であり、
-  スキーマ / 契約の破壊がないため、pre-release ladder は踏みません。2.5.0 の a/b
-  ladder は*破壊を伴う*内部安定化に対する用心であって、一般則ではありませんでした。
-  RELEASE_LIFECYCLE_STANDARD v1.2 (ライン内のフィーチャーサイクルと ladder の発動
-  基準) を必要とします。同じバッチで出す付随改訂です。
+  スキーマ / 契約の破壊がないため、pre-release の段階は踏みません。2.5.0 の a/b
+  の段階は*互換性を崩す*内部安定化への用心であって、一般則ではありませんでした。
+  RELEASE_LIFECYCLE_STANDARD v1.2 (ライン内のフィーチャーサイクルと、段階を踏む
+  条件) を必要とします。同じバッチで出す付随改訂です。
 - タグ付けとリリースは、**2.5.0 final の後**に限ります。設計とブランチ実装は b1 の
   soak と並行して進めます。注意点として、soak 中に 2.5.1 を出すと、2.5.x の Stable
   認定の時計は事実上リセットされます。認定はその後、2.5.1 を含めた形で取ることに
