@@ -118,6 +118,24 @@ the English diff did not touch must not appear in your edits at all.
 * Match the surrounding register: this documentation uses だ/である-adjacent \
 technical prose with English technical terms left in English where the existing \
 page leaves them in English.
+* Write plain Japanese in the sentences you produce, following the yomiyasu \
+rules (https://github.com/nanaism/yomiyasu). Meaning still outranks them: never \
+change a claim, its certainty, a permission, a negation or a number to make a \
+sentence read better.
+* Use the established Japanese term, not a word-for-word one: a software \
+version is バージョン (版 only for a language edition such as 日本語版); a retrieval arm is アーム and an experiment arm is \
+条件 (never 腕); a regression is デグレ, and a regression test is 回帰テスト; \
+breaking compatibility is 互換性を崩す (not 破る); the pre-release ladder is \
+pre-release の段階.
+* Do not use an em dash for an aside or a colon in the middle of a sentence. \
+Write a parenthesis or a new sentence instead. Leave a dash that stands alone \
+in a table cell as it is.
+* Do not put a pause comma right after a short topic (write 応答は空です, not \
+応答は、空です). Keep the comma after a long subject or before a condition.
+* When bold ends with 。 and a character follows the closing asterisks, put the \
+。 outside the bold; otherwise the asterisks render literally.
+* Do not inflate plain nouns: the English page is 原文 (not 正本), and a plain \
+list is 一覧 or 記録 (not 台帳), unless the word is the name of a feature.
 * Keep the page's line width. These files hard-wrap prose at roughly the width \
 already in use, so re-wrap the whole paragraph you touch rather than leaving one \
 long line: a paragraph that reflows into one line makes the reviewer's diff show \
