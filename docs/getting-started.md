@@ -75,6 +75,18 @@ hooks off, set `CPERSONA_HOOKS_DISABLE` to a comma-separated list of
 `session-start`, `prompt` and `compact`, or to `all`, in the environment the
 agent runs in.
 
+If you already prompt CPersona from hooks you registered yourself (for example a
+copy of the earlier `examples/claude-code-hooks/prompt_hook.py`), from a plugin of
+your own, or from a copy of the skill, the plugin does not replace them. Both run:
+the agent reads each note twice and sees the skill twice (in Claude Code the
+plugin's copy is named `cpersona:cpersona-memory`). Keep one. To move to the
+plugin, remove your hook's entry from `.claude/settings.json` or your Codex hooks
+file, and delete the copied skill folder (`~/.claude/skills/cpersona-memory` or
+`~/.codex/skills/cpersona-memory`). To keep yours, turn the matching plugin hooks
+off with `CPERSONA_HOOKS_DISABLE`. Hooks and settings that name the tools
+(`mcp__cpersona__*`) keep working either way: the plugin does not bundle the
+server, so the tool names do not change.
+
 The skill also ships on its own, without the hooks, for other clients or for
 copying by hand:
 
