@@ -1320,3 +1320,68 @@ async def test_a_step_that_never_writes_a_newline_is_still_bounded(monkeypatch):
     assert result["applied"] is True, result
     held = sum(len(line) for line in result["output_tail"])
     assert held < size // 2, f"held {held} bytes of a {size}-byte unterminated line"
+
+
+# ---------------------------------------------------------------------------
+# The release notes of the offered release
+#
+# What an upgrade asks of the person (a plugin to install, a setting to check
+# first) is written in that release's notes, and the running code was released
+# before them. So every surface that offers a release names its notes.
+# ---------------------------------------------------------------------------
+
+NOTES_2_5_11 = "https://github.com/Cloto-dev/cpersona/releases/tag/v2.5.11"
+
+
+def test_the_notes_url_is_built_only_from_a_version():
+    assert update_check.release_notes_url("2.6.12a1") == (
+        "https://github.com/Cloto-dev/cpersona/releases/tag/v2.6.12a1"
+    )
+    # The version arrived over the network: anything outside the grammar of a
+    # version is not put in a URL an agent is told to open.
+    for unsafe in ("2.6.12/../../evil", "2.6.12?x=1", "2.6.12 foo", "", None, 2612):
+        assert update_check.release_notes_url(unsafe) is None, unsafe
+
+
+@pytest.mark.asyncio
+async def test_the_notice_names_the_notes_of_the_offered_release(monkeypatch):
+    _install(monkeypatch, "pip")
+    await _seed_newer(monkeypatch)
+    payload = update_check.notice("session-a", True)
+    assert payload["release_notes"] == NOTES_2_5_11
+    assert f"Read the release notes of 2.5.11 first, for what changed and any step to take by hand: {NOTES_2_5_11}." in payload["message"]
+    # Before the command, so the steps are read before anything is installed.
+    assert payload["message"].index(NOTES_2_5_11) < payload["message"].index("Updating is never automatic")
+
+
+@pytest.mark.asyncio
+async def test_check_update_and_check_health_name_the_notes_too(monkeypatch):
+    _install(monkeypatch, "pip")
+    await _seed_newer(monkeypatch)
+    out = await maintenance_handlers.do_check_update()
+    assert out["release_notes"] == NOTES_2_5_11 and NOTES_2_5_11 in out["message"]
+    (issue,) = update_check.health_issues()
+    assert issue["type"] == "update_available"
+    assert issue["release_notes"] == NOTES_2_5_11 and NOTES_2_5_11 in issue["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_yank_with_nothing_newer_names_no_notes(monkeypatch):
+    monkeypatch.setattr(
+        update_check, "_transport", _serve(_index([RUNNING], _files(RUNNING, yanked=True)))
+    )
+    await update_check.run_startup_check()
+    payload = update_check.notice("session-a", True)
+    assert payload["kind"] == update_check.KIND_YANKED and payload["available"] is None
+    assert "release_notes" not in payload and "release notes" not in payload["message"]
+    out = await maintenance_handlers.do_check_update()
+    assert "release_notes" not in out
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_offer_names_no_notes(monkeypatch):
+    monkeypatch.setattr(update_check, "_transport", _serve(_index([RUNNING], _files(RUNNING))))
+    await update_check.run_startup_check()
+    out = await maintenance_handlers.do_check_update()
+    assert out["state"] == update_check.STATE_OK
+    assert "release_notes" not in out and "message" not in out

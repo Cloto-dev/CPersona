@@ -892,6 +892,9 @@ async def do_check_update(refresh: bool = False, apply: bool = False) -> dict:
     }
     if current.get("kind"):
         result["message"] = update_check.describe(current, install)
+        notes = update_check.release_notes_url(current.get("available"))
+        if notes:
+            result["release_notes"] = notes
     if apply:
         if not current["enabled"]:
             result["apply_result"] = {

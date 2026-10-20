@@ -89,6 +89,13 @@ The same verdict rides on `recall` as an `update` key, once per session and
 absent when there is nothing to say. It also appears in `check_health` as an
 `update_available` (info) or `version_yanked` (warn) issue.
 
+Wherever a newer release is offered, the answer carries `release_notes`, the
+link to that release's notes, and its `message` asks the agent to read them
+before updating. What an upgrade asks of the person by hand, such as installing
+or replacing the agent plugin, is written in their *When you upgrade* section,
+and the running server was released before them, so it cannot say it itself. A
+withdrawn release with nothing newer to offer carries no link.
+
 `recall` carries one more notice of the same kind: `suggestion`, once per
 session, when a recall that searches vectors locally has a scope (source filter
 included) holding 1,000 or more records with a stored vector past the scan

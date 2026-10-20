@@ -72,6 +72,11 @@ logger = logging.getLogger(__name__)
 INDEX_URL = "https://pypi.org/simple/cpersona/"
 INDEX_ACCEPT = "application/vnd.pypi.simple.v1+json"
 PROJECT_NAME = "cpersona"
+# Where each release's notes live. A notice names the notes of the release it
+# offers, because what an upgrade asks of the person (a plugin to install, a
+# setting to check first) is written there, and the running code was released
+# before it and cannot know.
+RELEASE_NOTES_URL = "https://github.com/Cloto-dev/cpersona/releases/tag/v{version}"
 
 # End-to-end budget for the whole check: DNS, connect, transfer and parse. It is
 # spent by a background task, so nothing waits on it — the bound exists so a
@@ -662,6 +667,9 @@ def notice(session_key: str = "", declared: bool = False) -> dict | None:
         },
         "message": describe(verdict, install),
     }
+    notes = release_notes_url(verdict.get("available"))
+    if notes:
+        payload["release_notes"] = notes
     if verdict["kind"] == KIND_YANKED:
         payload["reason"] = verdict.get("reason")
     return payload
@@ -705,6 +713,9 @@ def health_issues() -> list[dict]:
         "install_method": install["method"],
         "hint": f"{install['command'] or install['note']} — then restart the server",
     }
+    notes = release_notes_url(verdict.get("available"))
+    if notes:
+        common["release_notes"] = notes
     if verdict["kind"] == KIND_YANKED:
         return [
             {
@@ -747,8 +758,25 @@ def describe(verdict: dict, install: dict) -> str:
     else:
         head = f"A newer {PROJECT_NAME} release is available: {available} (running {running})."
         tail = ""
+    notes = release_notes_url(available)
+    read = (
+        f" Read the release notes of {available} first, for what changed and any step to take by hand: {notes}."
+        if notes
+        else ""
+    )
     action = install["command"] or install["note"]
-    return f"{head}{tail} Updating is never automatic: {action}. The server must be restarted afterwards."
+    return f"{head}{tail}{read} Updating is never automatic: {action}. The server must be restarted afterwards."
+
+
+def release_notes_url(version: object) -> str | None:
+    """The notes of one release, or None when the version cannot be put in a URL.
+
+    The version arrived over the network, so it is admitted only in the grammar of
+    a version, the same check a command built from it has to pass.
+    """
+    if not isinstance(version, str) or not _SAFE_VERSION.match(version):
+        return None
+    return RELEASE_NOTES_URL.format(version=version)
 
 
 # ---------------------------------------------------------------------------
