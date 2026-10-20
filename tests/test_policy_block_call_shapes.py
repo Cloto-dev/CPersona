@@ -25,7 +25,7 @@ CALL = re.compile(r"`(" + "|".join(sorted(TOOLS, key=len, reverse=True)) + r")\(
 
 
 def _shapes():
-    text = (ROOT / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
+    text = (ROOT / "plugin" / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
     found = BLOCK.findall(text)
     assert len(found) == 1
     block = found[0]

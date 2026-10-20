@@ -1000,7 +1000,7 @@ def test_every_auto_resolving_tool_documents_the_sentinel():
 # --------------------------------------------------------------------------------------
 # Gate 10 (C26 doc-drift class, 2.5.2b1): the shipped agent skill lists every tool.
 #
-# skills/cpersona-memory/SKILL.md is installed on the user's disk with the package, so
+# plugin/skills/cpersona-memory/SKILL.md is installed on the user's disk with the package, so
 # its tool table is a published contract like the JSON Schemas are — and it had drifted
 # (it claimed 28 tools against 29 registered and omitted get_operating_context). Counts
 # were removed from the prose; the table itself is gated here.
@@ -1012,7 +1012,7 @@ def test_shipped_skill_lists_every_registered_tool():
 
     from cpersona import server
 
-    skill = (PKG.parent / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (PKG.parent / "plugin" / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
     table = skill.split("## Tool reference")[1].split("Argument details")[0]
     listed = set(re.findall(r"`([a-z_]+)`", table))
     registered = {tool.name for tool in server.registry._tools}
@@ -1029,19 +1029,19 @@ def test_shipped_skill_lists_every_registered_tool():
 #
 # The skill moved its repair walkthrough into a reference file the agent loads on demand,
 # and nothing else watches that link. The documentation site's anchor check reads the
-# built site, and skills/ is not part of it, so a renamed or unshipped reference file
+# built site, and plugin/skills/ is not part of it, so a renamed or unshipped reference file
 # would leave SKILL.md pointing at nothing with every gate still green — the same defect
 # class as the bootstrap script the skill used to tell readers to run.
 #
 # Checked on the source tree; that the tree is what ships is a packaging claim, held by
-# the force-include of skills/ into the wheel.
+# the force-include of plugin/skills/ into the wheel.
 # --------------------------------------------------------------------------------------
 
 
 def test_shipped_skill_relative_links_resolve():
     import re
 
-    skill_dir = PKG.parent / "skills" / "cpersona-memory"
+    skill_dir = PKG.parent / "plugin" / "skills" / "cpersona-memory"
     skill = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     targets = [
         m.group(1)
@@ -2662,7 +2662,7 @@ def test_fileperms_gate_reaches_the_whole_package():
 # Gate 10c: the CLAUDE.md policy block stays inside the budget its own standard sets.
 #
 # docs/CLAUDE_MD_POLICY_STANDARD.md rule 4 caps the block at 40 lines between the markers,
-# and rule 5 requires a version on the BEGIN marker. Neither was measured anywhere: skills/
+# and rule 5 requires a version on the BEGIN marker. Neither was measured anywhere: plugin/skills/
 # is outside the documentation site, so no docs gate reads this file, and the block had
 # reached 51 lines under a standard that says 40 — the drift a budget with no instrument
 # always gets. The number is the point of the rule, not decoration: this block is pasted
@@ -2680,7 +2680,7 @@ POLICY_BLOCK_MAX_LINES = 40
 def _policy_block():
     import re
 
-    skill = (PKG.parent / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (PKG.parent / "plugin" / "skills" / "cpersona-memory" / "SKILL.md").read_text(encoding="utf-8")
     begin = re.search(r"<!-- BEGIN cpersona-policy (v\d+)[^>]*-->", skill)
     assert begin, "the shipped skill no longer contains a cpersona-policy BEGIN marker"
     end = skill.index("<!-- END cpersona-policy -->", begin.end())

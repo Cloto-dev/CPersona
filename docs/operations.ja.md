@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:dbe90ed19f72beb2bf5e7ff4ab1c7dd0c4784c26 -->
+<!-- i18n-source: docs/operations.md@blob:ff0d6effcdbc6cce184f18ffd45880a91c8c90c5 -->
 
 # 運用 Runbook
 
@@ -198,36 +198,27 @@
 ### Claude Code のフックから recall を促す { #prompting-recall-from-claude-code-hooks }
 
 エージェントは答える前に必ず記憶を引くとは限りません。常時読み込まれるファイルに書いた指示は
-一度読まれたきりで、ほかのすべての内容と注意を奪い合います。`UserPromptSubmit` フックは発言のたびに
-発火します。
-[`examples/claude-code-hooks/prompt_hook.py`](https://github.com/Cloto-dev/CPersona/blob/master/examples/claude-code-hooks/prompt_hook.py)
-は、標準ライブラリだけで書いた最小の例です。その依頼について `reconstruct` を呼ぶこと (発言を提案クエリ
-として添えます) と、「その記録はありません」はスコアでなく完全一致の検索で確かめることを、
+一度読まれたきりで、ほかのすべての内容と注意を奪い合います。フックはその時点で発火します。
+エージェント用のプラグイン ([はじめに](getting-started.md#let-the-agent-do-it-claude-code)) は、
+Claude Code と Codex のどちらにも 3 つのフックを入れます。セッションの開始時、発言のたび、
+会話が圧縮された後です。発言のたびのフックはその依頼について `reconstruct` を呼ぶこと (発言を
+問いの候補として添えます) と、「その記録はありません」はスコアでなく完全一致の検索で確かめることを、
 文脈に書き足します
 ([契約 §12](behavior-contracts.md#12-scores-order-one-response-they-do-not-say-whether-an-answer-exists))。
-プロジェクトの `.claude/hooks/` に置き、`.claude/settings.json` に登録します。
+手で登録したい場合のソースは
+[`plugin/scripts/cpersona_hooks.py`](https://github.com/Cloto-dev/CPersona/blob/master/plugin/scripts/cpersona_hooks.py)
+です (標準ライブラリだけで書いています)。
 
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {"hooks": [{"type": "command",
-                  "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/prompt_hook.py\"",
-                  "timeout": 5}]}
-    ]
-  }
-}
-```
-
-Windows では、次の 2 つの誤りが気づかないうちに失敗を招きます。ある実運用の利用者は両方に当たり、フックから 5 日間
-recall が一度も働きませんでした。
+Windows では、次の 2 つの誤りが気づかないうちに失敗を招きます。ある実運用の利用者は、手で登録した
+フックで両方に当たり、5 日間 recall が一度も働きませんでした。プラグインのフックは両方に対処しています。
 
 - **UTF-8 の読み書きは自分で行う**。Windows では Python の標準入出力がコンソールのコードページ
   (日本語版 Windows では cp932) を使い、Claude Code は UTF-8 で送受信します。`sys.stdin` を文字列
-  として読むフックは日本語の発言で失敗し、何も足しません。この例はバイトで読み書きし、UTF-8 の
-  変換を自分で行います。
+  として読むフックは日本語の発言で失敗し、何も足しません。プラグインのフックはバイトで読み書きし、
+  UTF-8 の変換を自分で行います。
 - **スクリプトは絶対パスで指定する**。相対パスは、セッションの作業ディレクトリがサブフォルダの時に
-  見つからなくなります。`$CLAUDE_PROJECT_DIR` はプロジェクトのルートに展開されます。
+  見つからなくなります。プラグインは `${CLAUDE_PLUGIN_ROOT}` でスクリプトを指定します。手で登録する
+  フックでは、プロジェクトのルートに展開される `$CLAUDE_PROJECT_DIR` を使えます。
 
 ## 日本語 / CJK コーパス { #japanese-and-cjk-corpora }
 

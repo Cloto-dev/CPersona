@@ -51,19 +51,27 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 ## Quick Start
 
 > **Setting this up as an AI agent?** Read the
-> [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/skills/cpersona-memory/SKILL.md)
-> — `skills/cpersona-memory/SKILL.md` in a clone of this repository — and follow
+> [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/plugin/skills/cpersona-memory/SKILL.md)
+> — `plugin/skills/cpersona-memory/SKILL.md` in a clone of this repository — and follow
 > it end to end. It is the complete procedure: install, embedding server,
 > registration, **and the two steps a quick start tends to skip** — verifying
 > from a *new* session, and persisting the memory policy so the next session
 > knows which `agent_id` holds the memories.
 >
-> **Using Claude Code yourself?** The same skill ships inside the wheel. Once
-> `cpersona` is installed, copy it in and say *"Set up CPersona."*
+> **Using Claude Code or Codex yourself?** Install the agent plugin, which carries
+> the same skill and hooks that remind the agent to look in memory before it acts,
+> to store as it goes, and to restore the task after the conversation is
+> compacted. Then say *"Set up CPersona."* The server itself is connected in step 3.
 >
-> ```bash
-> python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).parent/'skills'/'cpersona-memory'; shutil.copytree(s, pathlib.Path.home()/'.claude/skills/cpersona-memory', dirs_exist_ok=True)"
+> ```text
+> /plugin install cpersona --marketplace Cloto-dev/cpersona
 > ```
+>
+> That is Claude Code 2.1.275 or later. For Codex, run
+> `codex plugin marketplace add Cloto-dev/cpersona` and
+> `codex plugin add cpersona@cpersona`, then trust the hooks in `/hooks`. The
+> [getting started guide](https://cloto-dev.github.io/CPersona/getting-started/#let-the-agent-do-it-claude-code)
+> lists what each hook adds, and how to copy the skill alone from the wheel.
 
 **1. Install** — Python 3.11+, and [uv](https://docs.astral.sh/uv/) for the one-command path.
 

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:bf9e320810727e4f479717d56167fcddde9e12f0 -->
+<!-- i18n-source: docs/getting-started.md@blob:45bc12446bb78331f3a1caf8b6a639d4b51b76f6 -->
 
 # はじめに
 
@@ -27,12 +27,48 @@ Claude Code か Codex に、[公式サイト](https://cpersona.cloto.dev/ja/#set
 - MCP クライアント: Claude Desktop、Claude Code、Codex CLI、Cursor、VS Code、
   またはその他の MCP ホスト (手順 3 に各クライアントのエントリがあります)
 
-## Agent Skill を入れる (Claude Code) { #let-the-agent-do-it-claude-code }
+## エージェント用のプラグインを入れる (Claude Code と Codex) { #let-the-agent-do-it-claude-code }
 
-このリポジトリと、公開されている wheel の両方に
-[Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/skills/cpersona-memory)
-が同梱されています。この skill は Claude Code にインストール手順を案内し、その後
-*いつ* store / recall / archive すべきかを教えます。インストールするには、次を実行します。
+このリポジトリは Claude Code と Codex のプラグインの配布元 (marketplace) も兼ねています。
+配布しているプラグインは `cpersona` の 1 つです。中身は 2 つあります。1 つは
+[Agent Skill](https://github.com/Cloto-dev/cpersona/tree/master/plugin/skills/cpersona-memory)
+で、エージェントにインストール手順を案内し、その後 *いつ* store / recall / archive すべきかを教えます。
+もう 1 つは、エージェントが忘れがちな時点で知らせる 3 つのフックです (下の表)。サーバー本体は
+プラグインに入っていません。いつもどおり手順 3 でつなぐので、どの方法で入れてもツールの名前は同じです。
+
+Claude Code (2.1.275 以降) では、次の 1 行で入ります。
+
+```text
+/plugin install cpersona --marketplace Cloto-dev/cpersona
+```
+
+Codex では、次の 2 行です。
+
+```bash
+codex plugin marketplace add Cloto-dev/cpersona
+codex plugin add cpersona@cpersona
+```
+
+Codex はプラグインのフックを信頼するまで動かしません。入れた後に Codex の画面で `/hooks` を
+開いて信頼してください。フックが変わる更新の後にも、もう一度必要です。`codex exec` は確認なしで動かします。
+
+あとはエージェントに *「CPersona をセットアップして。永続記憶がほしい」* と言うだけです。
+
+どのフックもエージェントの文脈に知らせを 1 つ足すだけです。エージェントを止めることも、
+サーバーと通信することもありません。入力を読めない時は何も足しません。
+
+| いつ | 知らせの中身 | 知らせの長さ |
+| --- | --- | --- |
+| セッションの開始 (新規、または `/clear` の後) | 最初の作業の前に `reconstruct` を呼ぶこと。残す価値のあるものは、終わりにまとめずその場で `store` すること | 約 410 字、1 回 |
+| 発言のたび | この依頼について `reconstruct` を呼ぶこと (発言を問いの候補として添えます)。「その記録はありません」は完全一致の検索で確かめること | 約 310 字と発言の先頭 200 字まで、発言ごと |
+| 会話が圧縮された後 | 進行中の作業について `reconstruct` を呼ぶこと。要約に書かれたことは、事実として保存する前に確かめること | 約 410 字、圧縮ごと |
+
+圧縮の直前に動くフックはありません。どちらの製品でも、そのフックはエージェントに文を渡せないためです。
+記憶を新しく保つのは、作業しながら少しずつ保存することです。フックを止めるには、エージェントが動く
+環境で `CPERSONA_HOOKS_DISABLE` に `session-start`、`prompt`、`compact` をカンマ区切りで並べるか、
+`all` を指定します。
+
+skill だけなら、フックなしでも配っています。ほかのクライアントで使う時や、手で写す時に使ってください。
 
 ```bash
 # PyPI からインストール済みなら、skill は wheel の中にあります (clone 不要):
@@ -40,10 +76,10 @@ python -c "import cpersona,pathlib,shutil; s=pathlib.Path(cpersona.__file__).par
 
 # uvx (隔離環境) で動かしている、またはまだ入れていない場合:
 git clone --depth 1 https://github.com/Cloto-dev/cpersona.git /tmp/cpersona
-mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/skills/cpersona-memory ~/.claude/skills/
+mkdir -p ~/.claude/skills && cp -r /tmp/cpersona/plugin/skills/cpersona-memory ~/.claude/skills/
 ```
 
-あとは Claude Code に *「CPersona をセットアップして。永続記憶がほしい」* と言うだけです。以下の手動手順は、それ以外のクライアント向け、および手で設定したい人向けです。
+以下の手動手順は、それ以外のクライアント向け、および手で設定したい人向けです。
 手順 5 は、本来は skill が代行する部分です。記憶のトリガーを、頼まれなくても発火させる
 ための設定にあたります。
 

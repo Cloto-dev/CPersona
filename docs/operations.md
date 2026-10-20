@@ -202,38 +202,31 @@ follow.
 
 An agent does not always look in memory before it answers, and an instruction
 in an always-loaded file is read once and then competes with everything else. A
-`UserPromptSubmit` hook fires on every prompt.
-[`examples/claude-code-hooks/prompt_hook.py`](https://github.com/Cloto-dev/CPersona/blob/master/examples/claude-code-hooks/prompt_hook.py)
-is a minimal one, standard library only: it adds a note telling the agent to
-call `reconstruct` for the request, with the prompt as a suggested query, and to
-confirm "there is no such record" with an exact search rather than a score
+hook fires at the moment itself. The agent plugin
+([getting started](getting-started.md#let-the-agent-do-it-claude-code)) installs
+three, for Claude Code and Codex alike: at the start of a session, on every
+prompt, and after the conversation is compacted. The per-prompt one adds a note
+telling the agent to call `reconstruct` for the request, with the prompt as a
+suggested query, and to confirm "there is no such record" with an exact search
+rather than a score
 ([contract §12](behavior-contracts.md#12-scores-order-one-response-they-do-not-say-whether-an-answer-exists)).
-Copy it to `.claude/hooks/` in the project and register it in
-`.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {"hooks": [{"type": "command",
-                  "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/prompt_hook.py\"",
-                  "timeout": 5}]}
-    ]
-  }
-}
-```
+Their source is
+[`plugin/scripts/cpersona_hooks.py`](https://github.com/Cloto-dev/CPersona/blob/master/plugin/scripts/cpersona_hooks.py),
+standard library only, if you would rather register one by hand.
 
 Two mistakes fail silently on Windows. A production user made both and got no
-recall from the hook for five days:
+recall from a hand-registered hook for five days, and the plugin's hooks are
+written against both:
 
 - **Read and write UTF-8 yourself.** Python's standard streams use the console
   code page on Windows (cp932 on Japanese Windows), while Claude Code sends and
   reads UTF-8, so a hook that reads `sys.stdin` as text fails on a Japanese
-  prompt and adds nothing. The example reads and writes bytes and decodes
-  UTF-8 itself.
+  prompt and adds nothing. The hooks read and write bytes and decode UTF-8
+  themselves.
 - **Give the script an absolute path.** A relative path stops resolving when the
-  session's working directory is a subfolder. `$CLAUDE_PROJECT_DIR` expands to
-  the project root.
+  session's working directory is a subfolder. The plugin names its script
+  through `${CLAUDE_PLUGIN_ROOT}`; a hook registered by hand can use
+  `$CLAUDE_PROJECT_DIR`, which expands to the project root.
 
 ## Japanese and CJK corpora
 

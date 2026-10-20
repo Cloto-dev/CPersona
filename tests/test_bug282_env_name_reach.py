@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-REPAIR_PAGE = ROOT / "skills" / "cpersona-memory" / "references" / "embedding-backend-repair.md"
+REPAIR_PAGE = ROOT / "plugin" / "skills" / "cpersona-memory" / "references" / "embedding-backend-repair.md"
 
 
 def _docs_facts():

@@ -67,16 +67,16 @@ ROOT = Path(__file__).resolve().parent.parent
 DOC_FILES = [
     ROOT / "README.md",
     ROOT / "SUPPORT.md",
-    ROOT / "skills" / "cpersona-memory" / "SKILL.md",
+    ROOT / "plugin" / "skills" / "cpersona-memory" / "SKILL.md",
     # The skill's on-demand reference. It ships on the user's disk with the
     # package exactly as SKILL.md does, and it is the page that names commands,
     # environment variables and endpoints for someone whose install is already
     # broken — the reader least able to absorb a stale instruction.
-    ROOT / "skills" / "cpersona-memory" / "references" / "embedding-backend-repair.md",
+    ROOT / "plugin" / "skills" / "cpersona-memory" / "references" / "embedding-backend-repair.md",
     # The other on-demand reference: it names the store call and the tool a
     # reader pairs with a client memory file, and it is read while someone is
     # about to move a corpus, so a stale argument name there costs data.
-    ROOT / "skills" / "cpersona-memory" / "references" / "always-loaded-index.md",
+    ROOT / "plugin" / "skills" / "cpersona-memory" / "references" / "always-loaded-index.md",
     ROOT / "docs" / "index.md",
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "architecture.md",
@@ -521,8 +521,13 @@ _ENV_NAME = re.compile(r"CPERSONA_[A-Za-z0-9_]+\*?")
 
 
 def known_env_names() -> set[str]:
-    """Every `CPERSONA_*` name the package reads, as written in its source."""
-    package_source = "\n".join(p.read_text() for p in (ROOT / "cpersona").glob("*.py"))
+    """Every `CPERSONA_*` name the package or the agent plugin's hooks read, as written in their source.
+
+    The hooks run in the agent's process, not the server's, so the names they read
+    (`CPERSONA_HOOKS_DISABLE`) live in plugin/scripts/ and nowhere in the package.
+    """
+    sources = [*(ROOT / "cpersona").glob("*.py"), *(ROOT / "plugin" / "scripts").glob("*.py")]
+    package_source = "\n".join(p.read_text(encoding="utf-8") for p in sources)
     return set(re.findall(r"""["'](CPERSONA_[A-Z0-9_]+)["']""", package_source))
 
 

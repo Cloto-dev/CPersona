@@ -1,0 +1,15 @@
+{
+  "name": "cpersona",
+  "description": "CPersona's agent plugin for Claude Code and Codex.",
+  "owner": {
+    "name": "Cloto-dev",
+    "url": "https://github.com/Cloto-dev"
+  },
+  "plugins": [
+    {
+      "name": "cpersona",
+      "source": "./plugin",
+      "description": "Hooks and an agent skill for CPersona's memory. The MCP server is connected separately."
+    }
+  ]
+}
