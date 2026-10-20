@@ -2,7 +2,7 @@
 
 # 較正は字面アームの損失の原因か? (2026 年 9 月) { #is-calibration-the-cause-of-the-lexical-arm-losses-september-2026 }
 
-> **翻訳について**: 正本は英語版です。日本語版が古い場合は英語版を参照してください。
+> **翻訳について**: 原文は英語版です。日本語版が古いときは英語版を参照してください。
 
 Status: measurement (実測)、探索的 (事前登録なし)。
 
@@ -58,7 +58,7 @@ Status: measurement (実測)、探索的 (事前登録なし)。
   ESGReports、QASPER、TMD、EPBench) に、ReMe と Gorilla を加えました。1 条件あたり約
   5 分かかります。
 
-## 2. 主表 — 方法は負けているタスクを動かさない { #2-main-table-the-method-does-not-move-the-losing-tasks }
+## 2. 主表: 方法は負けているタスクを動かさない { #2-main-table-the-method-does-not-move-the-losing-tasks }
 
 Track A は 2026 年 7 月に測った生の埋め込みのスコア、B (Jul) は同じ月のハイブリッドの
 スコアです。各方法の列は、2 回の反復にわたる NDCG@10 の平均、較正された閾値、そして
@@ -83,7 +83,7 @@ null 受理率 (閾値を超えるランダムペアの割合) を示します�
   示します。QASPER の gold ペアの 20% が、床より下に座っています。
 - EPBench と Gorilla: 差は dense アームの飢餓で説明されます (第 5 節)。
 
-## 3. 反復 — 較正の引きは NDCG@10 を動かさない { #3-replicates-the-calibration-draw-does-not-move-ndcg10 }
+## 3. 反復: 較正の引きは NDCG@10 を動かさない { #3-replicates-the-calibration-draw-does-not-move-ndcg10 }
 
 `separation` の閾値は反復のあいだで動きます (例えば ESGReports の J は 0.64 と 0.62)
 が、NDCG@10 は 7 タスク × 3 方法を通して最大でも 0.21 しか動きません (QASPER の
@@ -93,7 +93,7 @@ null 受理率 (閾値を超えるランダムペアの割合) を示します�
 このレジームでは成り立ちません。成り立ち得るのは、第 5 節の飢餓が起きる場所だけです。
 その教義は、別途訂正します。
 
-## 4. プローブ — null はクエリ–文書ペアから取らなければならない { #4-probe-the-null-must-be-taken-from-querydocument-pairs }
+## 4. プローブ: null はクエリ–文書ペアから取らなければならない { #4-probe-the-null-must-be-taken-from-querydocument-pairs }
 
 コーパスグループごとに 3 つの分布を取りました。doc–doc null (200 文書のあいだの
 全ペア)、クエリ–doc null (200 クエリ × 200 文書)、そして gold ペア (関連性判定から最大
@@ -131,7 +131,7 @@ null 受理率 (閾値を超えるランダムペアの割合) を示します�
   一方、プローブが数えた一意な文書 id は 20,508 でした。2 つの計器が同じ母集団を採点して
   いたかどうかは、まだ突き合わせていません。
 
-## 5. 小さなコーパス — プロキシの退化と dense アームの飢餓 { #5-small-corpora-proxy-degeneration-and-dense-arm-starvation }
+## 5. 小さなコーパス: プロキシの退化と dense アームの飢餓 { #5-small-corpora-proxy-degeneration-and-dense-arm-starvation }
 
 | タスク | 方法 | dense 候補が 0 のクエリ | J (`separation`、最小 / 中央値) |
 | --- | --- | --- | --- |
