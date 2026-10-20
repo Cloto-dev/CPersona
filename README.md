@@ -50,6 +50,16 @@ cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that
 
 ## Quick Start
 
+> **Already running CPersona, or updating it as an agent?** Since 2.6.12a1 the
+> hooks and the agent skill ship as a plugin (below), and any 2.6 server works
+> with it. If CPersona's hooks were registered by hand (for example a copy of the
+> old `examples/claude-code-hooks/prompt_hook.py`) or the skill was copied into
+> `~/.claude/skills/` or `~/.codex/skills/`, install the plugin and remove those
+> copies, or keep them and turn the plugin's matching hooks off with
+> `CPERSONA_HOOKS_DISABLE`. Running both gives the agent every note twice. Before
+> any upgrade, read the *When you upgrade* section of that release's
+> [notes](https://github.com/Cloto-dev/cpersona/releases).
+>
 > **Setting this up as an AI agent?** Read the
 > [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/plugin/skills/cpersona-memory/SKILL.md)
 > — `plugin/skills/cpersona-memory/SKILL.md` in a clone of this repository — and follow
