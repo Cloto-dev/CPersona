@@ -356,7 +356,7 @@ Route B の実装中に判明した精緻化です。前の各節と衝突する
 observe)、`memory_handlers.py` (入口の `observe_config`、両方の返却地点での advisory)、
 `config.py` (`CPERSONA_DEGRADED_ADVISORY`)、`test_do_recall_response.py` (状態機械の
 単体テスト + do_recall の統合テスト + プローブの単体テスト。autouse の `health._reset`)。
-テスト: 13/13 green。recall-SQL の回帰 `test_channel_axis_migration` 7/7 +
+テスト: 13/13 green。recall-SQL の回帰テスト `test_channel_axis_migration` 7/7 +
 `test_episode_channel` 10/10 green。
 
 ---

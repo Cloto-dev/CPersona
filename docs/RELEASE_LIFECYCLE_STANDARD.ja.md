@@ -63,7 +63,7 @@ flowchart TB
     cur -- "判断より先に後継の<br>最初の final リリースが到着" --> cand
     cand -- "認定判断" --> sta
     cand -- "後継が Stable に認定される<br>(このラインが認定されたか否かに関わらず)" --> gra
-    sta -- "後継ラインが Stable に認証され、<br>この版は Grace に入る" --> gra
+    sta -- "後継ラインが Stable に認証され、<br>このバージョンは Grace に入る" --> gra
     gra --> eol
 ```
 
