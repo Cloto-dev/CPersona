@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:45bc12446bb78331f3a1caf8b6a639d4b51b76f6 -->
+<!-- i18n-source: docs/getting-started.md@blob:efd0a7016573e1bf3f1c11e41a5d2bde88159807 -->
 
 # はじめに
 
@@ -67,6 +67,15 @@ Codex はプラグインのフックを信頼するまで動かしません。�
 記憶を新しく保つのは、作業しながら少しずつ保存することです。フックを止めるには、エージェントが動く
 環境で `CPERSONA_HOOKS_DISABLE` に `session-start`、`prompt`、`compact` をカンマ区切りで並べるか、
 `all` を指定します。
+
+自分で登録したフック (たとえば以前の `examples/claude-code-hooks/prompt_hook.py` の写し)、自作のプラグイン、
+写した skill で CPersona を促している場合、このプラグインはそれを置き換えません。両方が動くので、
+エージェントは同じ知らせを 2 回読み、skill も 2 つ見えます (Claude Code ではプラグインの方が
+`cpersona:cpersona-memory` という名前になります)。どちらか 1 つにしてください。プラグインに移るなら、
+`.claude/settings.json` または Codex のフックの設定から自分のフックの登録を外し、写した skill のフォルダー
+(`~/.claude/skills/cpersona-memory` または `~/.codex/skills/cpersona-memory`) を消します。自分のものを
+残すなら、重なるプラグインのフックを `CPERSONA_HOOKS_DISABLE` で止めます。ツールの名前 (`mcp__cpersona__*`)
+を使うフックや設定は、どちらでもそのまま動きます。プラグインはサーバーを含まないので、ツールの名前は変わりません。
 
 skill だけなら、フックなしでも配っています。ほかのクライアントで使う時や、手で写す時に使ってください。
 
