@@ -12335,7 +12335,7 @@
       "fix_sketch": "Name the agent_id in the session-start and compact notes: a plugin option, else an environment variable, else one default that defers to an id the user's instructions already name.",
       "note": "Found while measuring the agent plugin (the same runs as bug-808): of the runs where Sonnet 5.5 had stored the invoice number and could not answer later, two had stored and searched under different ids. Opus 5.5 answered anyway because it also wrote the fact to the host's own auto memory.",
       "fix_note": "The session-start and compact notes now name the agent_id: the plugin's agent_id option (plugin.json userConfig, which Claude Code exports to hooks as CLAUDE_PLUGIN_OPTION_AGENT_ID), else CPERSONA_AGENT_ID from the environment (Codex has no plugin options), else \"default\" with an instruction to keep an id the always-loaded instructions name. One default for both hosts, so one user's memory is shared between Claude Code and Codex unless they set ids apart. The per-prompt note names the id only when one is set, so it never contradicts an id a CLAUDE.md names. The option has no default value, so the hook can tell an id the user set from none. Reverting turns tests/test_agent_plugin.py::test_with_nothing_set_the_notes_name_the_default_and_defer_to_the_instructions, ::test_the_plugin_option_names_the_agent_id_in_every_note and ::test_codex_sets_it_through_the_environment red; getting-started tells earlier users how to find records stored under guessed ids (list_memories with an empty agent_id) and move them (merge_memories).",
-      "fixed_in": "2.6.13"
+      "fixed_in": "2.6.13a1"
     }
   ]
 }
