@@ -65,9 +65,22 @@ input adds nothing.
 
 | When | The note asks the agent to | Size of the note |
 | --- | --- | --- |
-| A session starts (new, or after `/clear`) | call `reconstruct` before its first substantive action, and `store` what is worth keeping as it happens rather than at the end | about 410 characters, once |
-| You send a prompt | call `reconstruct` for this request, with the prompt as the suggested query, and confirm "there is no such record" with an exact search | about 310 characters plus up to 200 of the prompt, every prompt |
-| The conversation was compacted | call `reconstruct` for the task in progress, and check the summary's claims before storing them as facts | about 410 characters, after each compaction |
+| A session starts (new, or after `/clear`) | use the agent_id it names, call `reconstruct` before its first substantive action, and `store` what is worth keeping as it happens rather than at the end | about 530 characters, once |
+| You send a prompt | call `reconstruct` for this request, with the prompt as the suggested query, and confirm "there is no such record" with an exact search | about 310 characters plus up to 200 of the prompt and the agent_id when one is set, every prompt |
+| The conversation was compacted | use the agent_id it names, call `reconstruct` for the task in progress, and check the summary's claims before storing them as facts | about 530 characters, after each compaction |
+
+CPersona returns a record only to the `agent_id` it was stored under, so the
+notes name one. It is the plugin's `agent_id` option (Claude Code asks for it
+when you enable the plugin; change it later in `/config`), or else
+`CPERSONA_AGENT_ID` in the environment the agent runs in (Codex has no plugin
+options), or else `default`. With `default`, the notes tell the agent to keep
+an agent_id that your `CLAUDE.md` or `AGENTS.md` already names. Leave it unset
+on both clients to share one memory between them, or set a different id on
+each to keep them apart. Before the notes named one, an agent guessed a name
+per session (`claude`, `default`, the project's name), so records it stored
+then can sit under several ids: `list_memories` with an empty `agent_id` shows
+each row's id, and `merge_memories` moves an id's records into the one you use
+now.
 
 There is no hook before compaction: neither host lets one put text in front of
 the agent, so storing as it goes is what keeps the memory current. To turn

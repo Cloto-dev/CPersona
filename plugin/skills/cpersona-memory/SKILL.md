@@ -151,7 +151,11 @@ key names differ.
 **Choose the `agent_id` now** — one stable id for this user and client (e.g.
 `"claude-code"`, `"claude-desktop"`), reused on every call from here on. Recall
 is scoped to an exact `agent_id`: a later session that guesses a different one
-gets an empty result, not an error.
+gets an empty result, not an error. With the cpersona plugin installed, its
+session-start note already names one: the plugin's `agent_id` option, else
+`CPERSONA_AGENT_ID`, else `default`. Keep that one, or, if the user wants
+another, set it there as well (`/config` in Claude Code, `CPERSONA_AGENT_ID`
+for Codex) so the notes and the policy block below name the same id.
 
 After restarting the client, confirm the `cpersona` server is connected, then
 `store` a fact under that `agent_id` and `recall` it **from a new session** —

@@ -26,8 +26,15 @@ HOOK = PLUGIN / "scripts" / "cpersona_hooks.py"
 PROMPT = "指輪の商品にギミックを足せないか、前に検討した記録はある？"
 
 
+OPTION = "CLAUDE_PLUGIN_OPTION_AGENT_ID"
+DEFAULT_SENTENCE = (
+    'Use agent_id "default" on every cpersona call, unless your always-loaded instructions name another one for CPersona.'
+)
+INHERITED = ("PYTHONIOENCODING", "PYTHONUTF8", "CPERSONA_HOOKS_DISABLE", OPTION, "CPERSONA_AGENT_ID")
+
+
 def _env(encoding: str | None = "cp932", **extra: str) -> dict:
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8", "CPERSONA_HOOKS_DISABLE")}
+    env = {k: v for k, v in os.environ.items() if k not in INHERITED}
     if encoding:
         env["PYTHONIOENCODING"] = encoding
     env.update(extra)
@@ -133,11 +140,81 @@ def test_a_disabled_hook_is_silent_and_the_others_are_not():
     assert run.returncode == 0 and run.stdout == b""
 
 
+# --- which agent_id the notes name -------------------------------------------------------
+#
+# CPersona returns a record only to the exact agent_id it was stored under. With no id named,
+# agents guessed one per session ("claude", then "default", or the project's name) and lost
+# their own records between sessions, so the notes name it.
+
+
+def _notes(**extra: str) -> dict:
+    return {
+        "session-start": _note(_run([str(HOOK), "session-start"], _payload(source="startup"), **extra), "SessionStart"),
+        "compact": _note(_run([str(HOOK), "compact"], _payload(source="compact"), **extra), "SessionStart"),
+        "prompt": _note(_run([str(HOOK), "prompt"], _payload(prompt=PROMPT), **extra), "UserPromptSubmit"),
+    }
+
+
+def test_with_nothing_set_the_notes_name_the_default_and_defer_to_the_instructions():
+    notes = _notes()
+    for event in ("session-start", "compact"):
+        assert DEFAULT_SENTENCE in notes[event], event
+    # The per-prompt note repeats on every turn, and a default there would contradict an id a
+    # CLAUDE.md already names, so it names none.
+    assert "agent_id" not in notes["prompt"]
+
+
+def test_the_plugin_option_names_the_agent_id_in_every_note():
+    notes = _notes(**{OPTION: "claude-code"})
+    for event in ("session-start", "compact"):
+        assert 'Use agent_id "claude-code" on every cpersona call.' in notes[event], event
+        assert "unless" not in notes[event] and '"default"' not in notes[event], event
+    assert '`reconstruct` tool (agent_id "claude-code") before you answer' in notes["prompt"]
+
+
+def test_codex_sets_it_through_the_environment():
+    notes = _notes(CPERSONA_AGENT_ID="codex")
+    assert 'Use agent_id "codex" on every cpersona call.' in notes["session-start"]
+    assert '`reconstruct` tool (agent_id "codex")' in notes["prompt"]
+
+
+def test_the_plugin_option_wins_over_the_environment():
+    notes = _notes(**{OPTION: "from-option", "CPERSONA_AGENT_ID": "from-env"})
+    assert '"from-option"' in notes["session-start"] and "from-env" not in notes["session-start"]
+
+
+def test_a_blank_setting_counts_as_unset():
+    notes = _notes(**{OPTION: "  ", "CPERSONA_AGENT_ID": "codex"})
+    assert 'Use agent_id "codex" on every cpersona call.' in notes["session-start"]
+    notes = _notes(**{OPTION: "", "CPERSONA_AGENT_ID": " \t"})
+    assert DEFAULT_SENTENCE in notes["session-start"]
+
+
+def test_an_id_is_quoted_as_one_value_and_survives_a_cp932_console():
+    notes = _notes(CPERSONA_AGENT_ID='say "hi"')
+    assert 'Use agent_id "say \\"hi\\"" on every cpersona call.' in notes["session-start"]
+    notes = _notes(CPERSONA_AGENT_ID="記憶")
+    assert 'Use agent_id "記憶" on every cpersona call.' in notes["session-start"]
+
+
+def test_the_option_is_the_one_claude_code_exports_and_has_no_default():
+    """Claude Code exports userConfig key K to hooks as CLAUDE_PLUGIN_OPTION_<K uppercased>. With a
+    default, it would export one even when the user set nothing, and the note could no longer
+    defer to an id the user's CLAUDE.md names."""
+    manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    options = manifest["userConfig"]
+    assert set(options) == {"agent_id"}
+    assert "CLAUDE_PLUGIN_OPTION_" + "agent_id".upper() == OPTION
+    assert f'"{OPTION}"' in HOOK.read_text(encoding="utf-8")
+    assert options["agent_id"]["type"] == "string"
+    assert "default" not in options["agent_id"] and not options["agent_id"].get("required")
+
+
 @pytest.mark.parametrize(
     ("event", "payload", "limit"),
     [
-        ("session-start", {"source": "startup"}, 450),
-        ("compact", {"source": "compact"}, 450),
+        ("session-start", {"source": "startup"}, 550),
+        ("compact", {"source": "compact"}, 550),
         ("prompt", {"prompt": "あ" * 500}, 550),
     ],
 )
