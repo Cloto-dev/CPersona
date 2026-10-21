@@ -14,5 +14,12 @@
     "mcp",
     "hooks",
     "compaction"
-  ]
+  ],
+  "userConfig": {
+    "agent_id": {
+      "type": "string",
+      "title": "Agent ID",
+      "description": "The agent_id this agent stores and recalls its memory under. Use the same one wherever the agent should share that memory. Left empty, the agent uses \"default\", or the agent_id your CLAUDE.md already names."
+    }
+  }
 }

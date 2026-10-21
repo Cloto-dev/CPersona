@@ -12320,6 +12320,22 @@
       "note": "Found while measuring the agent plugin over six separate conversations: of the runs where Sonnet 5.5 had stored the invoice number, half could not get it back later; three of those were this gate, two an agent id that differed between store and search.",
       "fix_note": "reconstruct passes keyword_seats=MODE_KEYWORD_SEATS on every call and counts the seat in the count contract's bound; the gate is unchanged, so the seat returns the refused keyword-only row beside the window and displaces nothing. A first attempt that widened bug-509's one-vote cap to every keyword-only row was rejected: on LoCoMo it showed evidence sessions less often in every mode, because rows it let through ranked below the count, were cut, and lost the block reservation that had been returning them. The seat's check on LoCoMo (benchmarks/measurements/results-keyword-seat-default-reconstruct-locomo.md): the default call showed evidence sessions more often and on no question less, pro and lite came back identical. Reverting turns tests/test_keyword_seats.py::test_reconstruct_without_a_mode_holds_the_seat_too, ::test_the_reservation_bound_counts_the_seat_without_a_mode and ::test_an_identifier_the_uncalibrated_gate_refuses_comes_back_on_its_seat red.",
       "fixed_in": "2.6.12"
+    },
+    {
+      "id": "bug-809",
+      "summary": "(HIGH) The agent plugin's notes asked the agent to call reconstruct and store but never named an agent_id, and CPersona returns a record only to the exact agent_id it was stored under. An agent with the plugin and no policy block in its always-loaded file had to guess one, and guessed differently between sessions, so a later session searched under a name its earlier records were not stored under and got nothing back. The skill has the agent choose an id during setup and write it into CLAUDE.md, a step a plugin-only install never runs. Measured over six separate conversations per run (16 runs per model): with the plugin alone, Sonnet 5.5 used `claude` in every run and also `default` in 4, and Opus 5.5 kept to one id in only 4 runs (`claude`, `shelf`, `claude-code` in the rest); with the policy block naming an id, both kept to it in all 32 runs.",
+      "severity": "HIGH",
+      "discovered": "2026-10-21T00:00:00Z",
+      "version": "2.6.12a1",
+      "file": "plugin/scripts/cpersona_hooks.py",
+      "pattern": "            return \"SessionStart\", session_start_note\\(agent_id\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "silent-failure",
+      "fix_sketch": "Name the agent_id in the session-start and compact notes: a plugin option, else an environment variable, else one default that defers to an id the user's instructions already name.",
+      "note": "Found while measuring the agent plugin (the same runs as bug-808): of the runs where Sonnet 5.5 had stored the invoice number and could not answer later, two had stored and searched under different ids. Opus 5.5 answered anyway because it also wrote the fact to the host's own auto memory.",
+      "fix_note": "The session-start and compact notes now name the agent_id: the plugin's agent_id option (plugin.json userConfig, which Claude Code exports to hooks as CLAUDE_PLUGIN_OPTION_AGENT_ID), else CPERSONA_AGENT_ID from the environment (Codex has no plugin options), else \"default\" with an instruction to keep an id the always-loaded instructions name. One default for both hosts, so one user's memory is shared between Claude Code and Codex unless they set ids apart. The per-prompt note names the id only when one is set, so it never contradicts an id a CLAUDE.md names. The option has no default value, so the hook can tell an id the user set from none. Reverting turns tests/test_agent_plugin.py::test_with_nothing_set_the_notes_name_the_default_and_defer_to_the_instructions, ::test_the_plugin_option_names_the_agent_id_in_every_note and ::test_codex_sets_it_through_the_environment red; getting-started tells earlier users how to find records stored under guessed ids (list_memories with an empty agent_id) and move them (merge_memories).",
+      "fixed_in": "2.6.13"
     }
   ]
 }
