@@ -101,7 +101,7 @@ async def test_a_reserved_record_never_takes_a_place_in_the_window(reading, lexi
 
 
 @pytest.mark.asyncio
-async def test_turning_the_arm_on_keeps_every_item_of_the_window(monkeypatch, building, lexical_off):
+async def test_turning_the_arm_on_keeps_every_item_of_the_window(monkeypatch, building, lexical_off, no_keyword_seat):
     async with reach._TempDB() as tmp:
         _, echo_ref = await _long_and_echo(tmp)
         before = await reconstruct.do_reconstruct(AGENT, QUERY, count=1)
@@ -116,7 +116,7 @@ async def test_turning_the_arm_on_keeps_every_item_of_the_window(monkeypatch, bu
 
 
 @pytest.mark.asyncio
-async def test_the_reservation_is_the_same_fixed_bound(monkeypatch, reading, lexical_off):
+async def test_the_reservation_is_the_same_fixed_bound(monkeypatch, reading, lexical_off, no_keyword_seat):
     async with reach._TempDB() as tmp:
         await reach._store(
             tmp,
@@ -176,7 +176,7 @@ async def test_the_default_budget_holds_the_reserved_places_too(reading, lexical
 
 
 @pytest.mark.asyncio
-async def test_without_a_reservation_the_default_budget_is_unchanged(building, lexical_off):
+async def test_without_a_reservation_the_default_budget_is_unchanged(building, lexical_off, no_keyword_seat):
     async with reach._TempDB() as tmp:
         await _long_and_echo(tmp)
         out = await reconstruct.do_reconstruct(AGENT, QUERY, count=5, trace=True)

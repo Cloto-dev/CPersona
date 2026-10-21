@@ -170,7 +170,7 @@ def _spy_pool(monkeypatch) -> list[set]:
 
 
 @pytest.mark.asyncio
-async def test_count_alone_does_not_move_the_pool(monkeypatch):
+async def test_count_alone_does_not_move_the_pool(monkeypatch, no_keyword_seat):
     """Same query, same bounds, three counts, one candidate id set."""
     await _seed_unclustered()
     pools = _spy_pool(monkeypatch)
@@ -241,7 +241,7 @@ def test_a_count_configuration_that_cannot_hold_is_a_startup_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_short_return_is_normal_and_carries_a_reason(monkeypatch):
+async def test_a_short_return_is_normal_and_carries_a_reason(monkeypatch, no_keyword_seat):
     await _seed_unclustered()
     # A window wider than the corpus has clusters to fill it with. The maximum is
     # lifted for this test because the shipped one (10) is below the cluster count,
@@ -446,7 +446,7 @@ async def test_episode_containment_bundles_and_derives_supports():
 
 
 @pytest.mark.asyncio
-async def test_source_alone_does_not_bundle():
+async def test_source_alone_does_not_bundle(no_keyword_seat):
     """The adjacency key needs both halves; source alone would fold the whole pool."""
     await _seed_unclustered()  # one source, an hour apart
     out = await R.do_reconstruct(AGENT, QUERY, count=5, top_k=TOP_K, trace=True)

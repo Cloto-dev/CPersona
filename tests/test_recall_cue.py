@@ -628,7 +628,7 @@ async def test_the_cue_arm_searches_to_its_own_depth_whatever_the_count(fake_emb
 
 
 @pytest.mark.asyncio
-async def test_reconstruct_returns_every_cue_seat_beside_its_window(fake_embedding_client, monkeypatch):
+async def test_reconstruct_returns_every_cue_seat_beside_its_window(fake_embedding_client, monkeypatch, no_keyword_seat):
     """The count contract of reconstruct allows as many held items as recall can hold
     places: with no block places, the three sure seats are three items after the window."""
     from cpersona import blocks, reconstruct

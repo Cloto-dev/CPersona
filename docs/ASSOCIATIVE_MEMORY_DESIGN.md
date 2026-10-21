@@ -354,5 +354,5 @@ has a test and a mutation that turns it red.
   gate like any other keyword match, and this step does not change the gate, so
   a record matched only on a declared name comes back when that match clears it
   (under `rsf`, whose fused score is relative to the query's candidates, a lone
-  keyword match can), and under a `mode` it can take the keyword seat. Such a
+  keyword match can), and in `reconstruct` it can take the keyword seat. Such a
   record names the declared entity.

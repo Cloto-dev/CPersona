@@ -20083,6 +20083,7 @@
             "deep": false,
             "depth": 20,
             "episode_penalty": false,
+            "keyword_seats": 1,
             "limit": 20,
             "mode": "rrf",
             "prior": {
@@ -21032,6 +21033,7 @@
             "deep": false,
             "depth": 20,
             "episode_penalty": false,
+            "keyword_seats": 1,
             "limit": 20,
             "mode": "rrf",
             "prior": {
@@ -22050,6 +22052,7 @@
             "deep": false,
             "depth": 20,
             "episode_penalty": false,
+            "keyword_seats": 1,
             "limit": 20,
             "mode": "rrf",
             "prior": {

@@ -381,8 +381,9 @@ effective = min(base, max_count)
 - The block arm's places are not the only ones. `held_places` is every place
   the candidate recall can hold beside its answer, and each held row follows the
   window the same way: the block reservation (two), up to three time-cue seats
-  when a cue is given, the two far seats when they are on, and under a `mode`
-  its keyword seat and, for `pro`, two more block places (below). Held items can
+  when a cue is given, the two far seats when they are on, its keyword seat (every
+  call since 2.6.12, before that only under a `mode`) and, for `pro`, two more
+  block places (below). Held items can
   therefore follow the window with the block arm off.
 - The unconfigured default is **ten items** from 2.6.0: the count at which the
   recommended configuration was measured with a reader on a pack of a real
@@ -486,7 +487,7 @@ effective_budget = min(budget_base, max_budget)
   the session, which would otherwise be lost for it. The entity walk is not
   followed under a mode: its evidence would count against the cap and could cut
   items, so a mode carries none (`traverse` reads the same relations). A call
-  that names no mode is unchanged.
+  that names no mode still follows it.
   - `mode: "lite"` is the preset 2.6.5a3 introduced as `lite=true`, which
     remains its other name (the two together are refused). The budget is 2,800
     characters unless the caller names one (an operator-forced budget still
@@ -504,7 +505,8 @@ effective_budget = min(budget_base, max_budget)
     floor of every item spent the cap on the short records of the last items.
     Whether `pro` ships in a release is decided by a test registered before it
     was built.
-  - Both ask their candidate recall for one **keyword seat** (2.6.9): a place
+  - Both ask their candidate recall for one **keyword seat** (2.6.9), and so
+    does a call that names no mode from 2.6.12: a place
     held, like the block arm's reservation, for a row only the keyword arms
     found that the answer does not hold and that the quality gate either
     refused on its rrf score or admitted before the count cut. Under rrf such a
@@ -515,8 +517,12 @@ effective_budget = min(budget_base, max_budget)
     eligible rows, the one whose text holds the most of the question's parts
     (the coverage ledger's) takes the seat, ties in the gate's order. In recall
     the seat displaces nothing; in the answer it is an item beside the window,
-    marked as a reservation, inside the mode's cap. A call that names no mode,
-    and the recall tool, hold no seat.
+    marked as a reservation, inside the mode's cap (a call that names no mode
+    has no cap). The recall tool holds no seat. Before 2.6.12 a call that names
+    no mode held none either, and on a small store before calibration that lost
+    records: the pool-size gate refused the one note holding an identifier the
+    question named exactly, ranked first by the keyword arms alone, and nothing
+    returned it.
   - `pro` also asks for two **block places** (2.6.10a2) beyond the block arm's
     reservation of two. They hold, in the reservation's order, records only the
     block arm reached that the reservation did not seat, and they come after

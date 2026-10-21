@@ -6,8 +6,8 @@ calibrated rrf gate. The seats hold a fixed number of places for such rows, as t
 block arm's reservation does, and keep the other seats' rule for everything else:
 a row the gate refused on a scale that could pass it (rsf here) stays out, while
 one the gate admitted and the count cut may sit. The rows that hold more of the
-question's parts sit first. reconstruct asks for one seat under a mode; the recall
-tool never asks.
+question's parts sit first. reconstruct asks for one seat, under a mode since 2.6.9
+and without one since 2.6.12 (bug-808); the recall tool never asks.
 
 Fixture: as in test_gate_remediation, memories are inserted directly so a
 keyword-only row can carry a blob disjoint from its own content (do_store would
@@ -224,16 +224,72 @@ async def test_reconstruct_holds_the_seat_beside_its_window(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reconstruct_without_a_mode_holds_no_seat(monkeypatch):
+async def test_reconstruct_without_a_mode_holds_the_seat_too(monkeypatch):
+    """bug-808: a call that names no mode asks for the seat as a mode does (before 2.6.12
+    it asked for none). The recall tool still never asks."""
     from cpersona import reconstruct as R
 
     await _seed()
     _gate("rrf", 0.05)
     monkeypatch.setattr(M, "RECALL_MODE", "rrf")
     out = await R.do_reconstruct(AGENT, "apples orchard", count=5)
-    assert KEYWORD_ONLY not in [it["content"] for it in out["items"]], out["items"]
+    assert [it["content"] for it in out["items"] if it.get("admission") == "reservation"] == [KEYWORD_ONLY], out["items"]
+    assert STRONG in [it["content"] for it in out["items"] if it.get("admission") != "reservation"], out["items"]
     lite = await R.do_reconstruct(AGENT, "apples orchard", count=5, mode="lite")
     assert [it["content"] for it in lite["items"] if it.get("admission") == "reservation"] == [KEYWORD_ONLY]
+    recalled = await M.do_recall(AGENT, "apples orchard", limit=5)
+    assert KEYWORD_ONLY not in [m["content"] for m in recalled["messages"]]
+
+
+@pytest.mark.asyncio
+async def test_the_reservation_bound_counts_the_seat_without_a_mode(monkeypatch):
+    """The count contract's bound on held items includes the seat for a call that names
+    no mode too: with the other places it adds up exactly, so the check would refuse a
+    response whose held places outnumber the places the call asked for."""
+    from cpersona import blocks, cue, far_seats, providers
+    from cpersona import reconstruct as R
+
+    bounds = []
+    real = providers.check_reconstruct_count
+    monkeypatch.setattr(providers, "check_reconstruct_count",
+                        lambda returned, reserved, effective, reservation: (bounds.append(reservation),
+                                                                             real(returned, reserved, effective, reservation)))
+    await _seed()
+    _gate("rrf", 0.05)
+    monkeypatch.setattr(M, "RECALL_MODE", "rrf")
+    await R.do_reconstruct(AGENT, "apples orchard", count=5)
+    others = blocks.BLOCK_RESERVATION + cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
+    assert bounds == [others + R.MODE_KEYWORD_SEATS], bounds
+
+
+@pytest.mark.asyncio
+async def test_an_identifier_the_uncalibrated_gate_refuses_comes_back_on_its_seat(monkeypatch):
+    """bug-808, as measured: five notes before calibration (the heuristic gate), one of
+    them a longer note that mentions an invoice number among other things, its vector
+    far from a search for the number. The gate refuses it (one keyword vote under a
+    three-vote threshold) and nothing else comes back; a call that names no mode
+    returns it on the keyword seat."""
+    from cpersona import reconstruct as R
+
+    monkeypatch.setattr(M, "RECALL_MODE", "rrf")
+    monkeypatch.setattr(config, "FUSED_GATE_ENABLED", False)  # no calibrated gate: the pool-size heuristic
+    note = ("shelf repo preference: when finishing a change commit it myself and start the commit "
+            "message with shelf: because the changelog script only picks up that prefix; also the "
+            "hosting renewal invoice INV-4471 due 30 Nov is already paid so no action is needed")
+    # The suite's fake embedder is a 64-dimensional bag of words, too coarse to dilute one
+    # token below the vector arm's floor as a real embedding of this note does, so its
+    # vector is packed from the note without the identifier.
+    await _insert(note, _pack_of(note.replace(" INV-4471", "")), "2026-01-01T00:00:00Z")
+    for i, text in enumerate(("late fees decided by the board thirty yen per day capped at six hundred",
+                              "the overnight job belongs to the city team so do not edit it",
+                              "members will be allowed at most three books out at once",
+                              "the front desk wants a report of overdue loans as a csv file"), 1):
+        await _insert(text, _pack_of(text), f"2026-01-01T00:00:0{i}Z")
+    recalled = await M.do_recall(AGENT, "INV-4471", limit=5)
+    assert note not in [m["content"] for m in recalled["messages"]], "fixture is vacuous: the gate admitted the note"
+    out = await R.do_reconstruct(AGENT, "INV-4471", count=5)
+    seated = [it["content"] for it in out["items"] if it.get("admission") == "reservation"]
+    assert seated == [note], out["items"]
 
 
 @pytest.mark.asyncio

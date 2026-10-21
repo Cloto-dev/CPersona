@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:9eb8daa3031466140f9f9f37fe91713305dcc691 -->
+<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:71a4422c8f8354416bc37e88bed34a906aa52919 -->
 # 連想記憶 — 設計 { #associative-memory-design }
 
 状態: 2.6 系。宣言 (§1–2)、§3 の再構成の段、`traverse` (§4) は実装済みです。
@@ -295,5 +295,5 @@ recall 側の拡張と reconstruct 側の拡張の間でホップ予算が複利
   記録に与えます。融合された行はほかのキーワードの一致と同じく recall の品質ゲートで判定され、
   この段階はゲートを変えないので、宣言された名前だけで一致した記録も、その一致がゲートを通れば
   返ります (融合点が問いの候補どうしの相対値である `rsf` では、キーワードだけの一致でも通ることが
-  あります)。`mode` の下ではキーワードの席を取ることもあります。そうした記録は宣言された entity を
+  あります)。`reconstruct` ではキーワードの席を取ることもあります。そうした記録は宣言された entity を
   名指しています。

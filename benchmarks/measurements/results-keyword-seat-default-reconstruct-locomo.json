@@ -1,0 +1,81 @@
+{
+  "seed": 20261031,
+  "instrument": {
+    "mode_mismatches": 0,
+    "default_not_superset": 0
+  },
+  "comparisons": {
+    "pub/default": {
+      "questions": 1536,
+      "A": 0.8873,
+      "C": 0.9147,
+      "diff": 0.0274,
+      "ci95": [
+        0.0202,
+        0.0353
+      ],
+      "better": 59,
+      "worse": 0
+    },
+    "pub/pro": {
+      "questions": 1536,
+      "A": 0.9621,
+      "C": 0.9621,
+      "diff": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "better": 0,
+      "worse": 0
+    },
+    "pub/lite": {
+      "questions": 1536,
+      "A": 0.9134,
+      "C": 0.9134,
+      "diff": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "better": 0,
+      "worse": 0
+    },
+    "fresh/default": {
+      "questions": 1536,
+      "A": 0.8941,
+      "C": 0.914,
+      "diff": 0.0199,
+      "ci95": [
+        0.0138,
+        0.0263
+      ],
+      "better": 47,
+      "worse": 0
+    },
+    "fresh/pro": {
+      "questions": 1536,
+      "A": 0.9648,
+      "C": 0.9648,
+      "diff": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "better": 0,
+      "worse": 0
+    },
+    "fresh/lite": {
+      "questions": 1536,
+      "A": 0.9127,
+      "C": 0.9127,
+      "diff": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "better": 0,
+      "worse": 0
+    }
+  }
+}

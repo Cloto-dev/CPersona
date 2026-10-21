@@ -550,6 +550,12 @@ async def observe_all() -> dict:
 # them is the review surface, exactly as the header above prescribes for an
 # intended change. The invariants themselves are pinned in tests/test_review_b.py.
 #
+# bug-808 (2.6.12): a reconstruct call that names no mode asks its candidate recall
+# for one keyword seat, as a mode does. m1-reconstruct-default, -count-budget and
+# -cue were re-recorded; the diff is the request's "keyword_seats": 1 and nothing
+# else, because their fixtures hold no row for the seat. The seat is pinned in
+# tests/test_keyword_seats.py.
+#
 # checks_run (bug-230): check_health echoes the registry names it executed, the
 # way deep_check always has. Additive -- it reports what the run did instead of
 # changing it -- and it exists because an unrecognised name selected nothing and

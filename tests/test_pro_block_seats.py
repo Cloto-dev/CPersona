@@ -131,7 +131,7 @@ async def test_pro_holds_the_extra_places_last(monkeypatch, seeded):
 
 
 @pytest.mark.asyncio
-async def test_lite_and_no_mode_ask_for_no_extra_place(monkeypatch, seeded):
+async def test_lite_and_no_mode_ask_for_no_extra_place(monkeypatch, seeded, no_keyword_seat):
     blocks_, _ = seeded
     lite, seen = await _reconstruct_kwargs(monkeypatch, mode="lite")
     assert "extra_block_seats" not in seen
