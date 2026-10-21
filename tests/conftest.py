@@ -154,6 +154,19 @@ def blocks_off(monkeypatch):
     monkeypatch.setattr(config, "BLOCK_RETRIEVAL_ENABLED", False)
 
 
+@pytest.fixture
+def no_keyword_seat(monkeypatch):
+    """reconstruct's keyword seat held off.
+
+    Since 2.6.12 a call that names no mode asks for the keyword seat as a mode does
+    (bug-808), so a test of another place, the count or the budget whose fixture has a
+    keyword-only row would count that seat as well. Such a test says so and holds it off;
+    the seat's own behaviour is pinned in test_keyword_seats."""
+    from cpersona import reconstruct
+
+    monkeypatch.setattr(reconstruct, "MODE_KEYWORD_SEATS", 0)
+
+
 @pytest.fixture(autouse=True)
 def _forget_backend_identity():
     """Forget the embedding backend identity around every test.

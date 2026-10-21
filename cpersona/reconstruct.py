@@ -199,9 +199,12 @@ _LITE_ENVELOPE = ("bounds", "effective_budget", "used_budget", "reserved_omitted
 MODE_LITE = "lite"
 MODE_PRO = "pro"
 MODE_CAPS = {MODE_LITE: 3000, MODE_PRO: 5000}
-# A mode asks its candidate recall for one keyword seat (memory_handlers._do_recall): the
-# row only the keyword arms found that holds the most of the question's parts. Without a
-# mode, reconstruct asks for none, and the recall tool never does.
+# Every call asks its candidate recall for one keyword seat (memory_handlers._do_recall):
+# the row only the keyword arms found that holds the most of the question's parts. A mode
+# has asked since 2.6.9; a call that names no mode asks since 2.6.12 (bug-808): on a small
+# store before calibration the gate refuses a row only a keyword list ranked, even the
+# one note holding an identifier searched for exactly, and the seat returns it beside the
+# window without displacing any row. The recall tool never asks.
 MODE_KEYWORD_SEATS = 1
 # Pro also asks for two block places beyond the block arm's reservation of two
 # (memory_handlers._do_recall): on development questions of a private pack of real
@@ -1673,7 +1676,7 @@ async def do_reconstruct(
         agent_id,
         query,
         effective_top_k,  # the candidate depth — NOT `count` (invariant 7)
-        **({"keyword_seats": MODE_KEYWORD_SEATS} if mode else {}),
+        keyword_seats=MODE_KEYWORD_SEATS,
         **({"extra_block_seats": MODE_EXTRA_BLOCK_SEATS[mode]} if mode in MODE_EXTRA_BLOCK_SEATS else {}),
         deep=deep,
         channel=channel,
@@ -2025,7 +2028,7 @@ async def do_reconstruct(
         providers.check_reconstruct_count(
             len(items), held_returned, effective_count,
             blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
-            + (MODE_KEYWORD_SEATS if mode else 0) + MODE_EXTRA_BLOCK_SEATS.get(mode, 0),
+            + MODE_KEYWORD_SEATS + MODE_EXTRA_BLOCK_SEATS.get(mode, 0),
         )
         if held_returned:
             # Beside the window, not in it: returned_count may exceed effective_count by this.

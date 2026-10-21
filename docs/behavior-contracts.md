@@ -365,8 +365,8 @@ either: both are byte-identical to a store without the tables. Where
   still sees the query as written. A record the alias finds is fused and gated
   like any other keyword match, so a record found only through the alias comes
   back when that match clears the gate (under `rsf`, whose fused score is
-  relative to the query's own candidates, a lone keyword match can), and under a
-  `mode` it can take the keyword seat. Such a record names the declared entity,
+  relative to the query's own candidates, a lone keyword match can), and in a
+  `reconstruct` call it can take the keyword seat. Such a record names the declared entity,
   which is what the alias is for.
 - **A relation between two records bundles them** into one item when both are
   candidates, and a role word as predicate labels the subject as that role. A

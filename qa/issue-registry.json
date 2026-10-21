@@ -12304,6 +12304,22 @@
       "category": "calibration",
       "fix_sketch": "Record in the calibration file that the gate was attempted and lacked samples, with the record counts it saw, and restore such a file without recalibrating until the store has changed enough to give the gate new samples. Name that boot 'restored', not 'gate_calibrated'.",
       "note": "Found on the LoCoMo stores of the OmniMemEval runs (benchmarks/measurements/results-omnimemeval-2_6_11.md): the original searches ran beside this recalibration, and a rerun that waited for it returned the same context for every question. The sample minimum and the adjacency labelling are in _calibrate_fused_gate."
+    },
+    {
+      "id": "bug-808",
+      "summary": "(HIGH) On a small store before calibration, reconstruct called without a mode could not return a row only the keyword arms found. The pool-size heuristic gate keys such a row on its fused rrf score, and one arm's vote (1/(K+1)) is below that threshold on pools of about 30 rows or fewer; bug-509 lowered it only for rows no vector list could rank, so a row with a stored vector the vector retriever did not find similar enough (an identifier inside a longer note) stayed refused, and only a mode asked for the keyword seat that holds such rows. Measured with the agent plugin in a five-row store: reconstruct('hosting invoice number') did not return the one note holding invoice INV-4471, ranked first by the keyword arm (0.0164 against 0.0203), and the agent that had stored it answered that it had no record.",
+      "severity": "HIGH",
+      "discovered": "2026-10-21T00:00:00Z",
+      "version": "2.6.12a1",
+      "file": "cpersona/reconstruct.py",
+      "pattern": "        keyword_seats=MODE_KEYWORD_SEATS,",
+      "expected": "present",
+      "status": "fixed",
+      "category": "silent-failure",
+      "fix_sketch": "Give a reconstruct call that names no mode the keyword seat a mode has; leave the gate as it is.",
+      "note": "Found while measuring the agent plugin over six separate conversations: of the runs where Sonnet 5.5 had stored the invoice number, half could not get it back later; three of those were this gate, two an agent id that differed between store and search.",
+      "fix_note": "reconstruct passes keyword_seats=MODE_KEYWORD_SEATS on every call and counts the seat in the count contract's bound; the gate is unchanged, so the seat returns the refused keyword-only row beside the window and displaces nothing. A first attempt that widened bug-509's one-vote cap to every keyword-only row was rejected: on LoCoMo it showed evidence sessions less often in every mode, because rows it let through ranked below the count, were cut, and lost the block reservation that had been returning them. The seat's check on LoCoMo (benchmarks/measurements/results-keyword-seat-default-reconstruct-locomo.md): the default call showed evidence sessions more often and on no question less, pro and lite came back identical. Reverting turns tests/test_keyword_seats.py::test_reconstruct_without_a_mode_holds_the_seat_too, ::test_the_reservation_bound_counts_the_seat_without_a_mode and ::test_an_identifier_the_uncalibrated_gate_refuses_comes_back_on_its_seat red.",
+      "fixed_in": "2.6.12"
     }
   ]
 }
