@@ -184,8 +184,9 @@ project without its recommended rerank: 84.03% against 59.09% on LoCoMo, and on 
 60-question LongMemEval screen, 52 against 51 correct with a quarter of the evidence
 tokens and no generative-model tokens at write time (OpenViking's model used 37 million,
 input and output). Not every cost
-favours CPersona: on LoCoMo its pro mode searched slower (72.7 against 50.0 ms
-median), and its context was 0.58 of OpenViking's.
+favours CPersona: on LoCoMo its context was 0.58 of OpenViking's, and at 2.6.11 its
+pro mode searched slower (72.7 against 50.0 ms median). 2.6.12 returns the same
+contexts faster: a later run of both put pro at 48.2 against 50.6 ms.
 
 One run each, by this project, at the 2.6.11 release. OmniMemEval lists the rows of
 both benchmarks among its
