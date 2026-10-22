@@ -233,17 +233,24 @@ MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8}
 # (+0.27 and +0.70 points) for a second ranking of its own.
 MODE_DEPTH_SEATS = {MODE_PRO: 8}
 # Pro's held items whose record is longer than PRO_HELD_LONG_RECORD_CHARS stored
-# characters take their places after every other passage of the sequence instead of in
-# the fused order (held_long_last). A held item quotes one or two passages: of a record of
-# a few thousand characters that is much of it, of a long conversation it seldom reaches
-# the evidence and takes the cap from the window's own quotes. On development questions
-# the held places of the private pack, whose held records' median was about 1,950
-# characters, carried evidence the window did not show; on LongMemEval-S, whose held
-# records' median was 11,875, they quoted no evidence-turn character and lowered the
-# share of evidence-turn characters Pro quoted from 70.0% to 68.3%. With this rule at
-# 6,000 the private pack kept nearly all of the places' gain (48 questions up and 3 down
-# under rrf against 2.6.10's places) and the share rose to 71.7%; 8,000 measured the same,
-# and 4,000 or less lost much of the private pack's gain.
+# characters keep their first passage in the fused order, and their later passages take
+# their places after every other passage of the sequence (held_long_last). A held item
+# quotes one or two passages: of a record of a few thousand characters that is much of
+# it, of a long conversation it seldom reaches the evidence and takes the cap from the
+# window's own quotes. On development questions the held places of the private pack, whose
+# held records' median was about 1,950 characters, carried evidence the window did not
+# show; on LongMemEval-S, whose held records' median was 11,875, they quoted no
+# evidence-turn character and lowered the share of evidence-turn characters Pro quoted
+# from 70.0% to 68.3%. Moving every passage of such a record last kept nearly all of the
+# places' gain on the private pack (48 questions up and 3 down under rrf against 2.6.10's
+# places) and raised that share to 71.7% at a limit of 6,000; 8,000 measured the same, and
+# 4,000 or less lost much of the gain. But on 8 of LongMemEval-S's 400 test questions it
+# left out an answer session a held place had quoted, every one longer than 6,000
+# characters: the window's quotes filled the cap before the record's turn came. With the
+# first passage kept in place none was left out, and on development questions the private
+# pack showed every evidence record on 4.44 points more Pro answers than 2.6.12 under rrf
+# (4.32 with every passage moved) and 2.59 more under rsf with confidence (the same),
+# while the share on LongMemEval-S was 69.7% (2.6.12 70.0%, every passage moved 71.7%).
 PRO_HELD_LONG_RECORD_CHARS = 6000
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
@@ -1478,8 +1485,10 @@ def whole_order(records: list[list[tuple]], whole: list[bool]) -> list[tuple[int
 def held_long_last(
     order: list[tuple], n_window: int, records: list[tuple], limit: int = PRO_HELD_LONG_RECORD_CHARS
 ) -> list[tuple]:
-    """Pro's payload sequence with the passages of held items whose record is longer than
-    ``limit`` stored characters moved after every other passage, each part in its own order.
+    """Pro's payload sequence with the later passages of held items whose record is longer
+    than ``limit`` stored characters moved after every other passage, each part in its own
+    order. Such an item's first passage in ``order`` keeps its place or moves up, so a cap
+    that quotes the record in the fused order still quotes it.
 
     ``order`` holds ``(item, passage, cost)`` entries; items below ``n_window`` are the
     window's and the rest are held. ``records[i][0]`` is item ``i``'s stored text. The
@@ -1487,7 +1496,12 @@ def held_long_last(
     the response is still the longest prefix of a sequence the budget does not shape
     (invariant 9).
     """
-    later = {k for k, (i, _, _) in enumerate(order) if i >= n_window and len(records[i][0]) > limit}
+    later, seen = set(), set()
+    for k, (i, _, _) in enumerate(order):
+        if i >= n_window and len(records[i][0]) > limit:
+            if i in seen:
+                later.add(k)
+            seen.add(i)
     if not later:
         return order
     return [e for k, e in enumerate(order) if k not in later] + [e for k, e in enumerate(order) if k in later]
