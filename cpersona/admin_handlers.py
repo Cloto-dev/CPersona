@@ -60,6 +60,7 @@ from cpersona.utils import (
     _clamp_limit,
     _parse_timestamp_utc,
     content_cap,
+    episode_timestamp,
     error_response,
     fits_sqlite_integer,
     future_timestamp_issue,
@@ -314,6 +315,119 @@ async def do_list_memories(agent_id: str, limit: int, project_id: str | None = N
         # bug-385: the row cap reported the way the character budget is -- absent
         # unless it withheld something, and naming the bound when it did.
         result["budget_rows"] = LIST_MEMORIES_MAX_ROWS
+    return result
+
+
+# The levels of the logical directory, outermost first. A path names one folder
+# by giving a value for the first N of them; `[]` is the top, the agents.
+DIRECTORY_LEVELS = ("agent", "project", "channel", "year", "month")
+
+
+def _directory_period(ts_raw: str | None) -> tuple[str, str]:
+    """(year, month) of a stored time, in UTC; ("", "") when it cannot be read.
+
+    Grouped in Python with the same parser recall uses, not by the first
+    characters of the text: stored times mix offsets, so `...T08:00:00+09:00` on
+    the 1st of a month is the previous month in UTC, and a naive stamp is UTC
+    (bug-114).
+    """
+    dt = _parse_timestamp_utc(ts_raw or "")
+    if dt is None:
+        return ("", "")
+    return (f"{dt.year:04d}", f"{dt.month:02d}")
+
+
+def _directory_time(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt is not None else None
+
+
+async def do_list_directory(
+    agent_id: str, limit: int, path: list, project_id: str | None = None
+) -> dict:
+    """One level of the logical directory: a read-only folder view of the records.
+
+    The folders are what each record already carries -- agent, project ('' is the
+    global pool), channel ('' is none), then the UTC year and month of its time
+    ('' when the time cannot be read). Memories and episodes sit in the same
+    folders and are counted apart; their refs (`mem:<id>` / `ep:<id>`) tell them
+    apart at the month level. The rows are the ones list_memories and
+    list_episodes can read under the same agent_id and project_id: the same
+    isolation predicate, so a folder the caller cannot read is neither listed
+    nor counted. No record text is returned; a ref expands through get_contents.
+    """
+    if (
+        not isinstance(path, list)
+        or len(path) > len(DIRECTORY_LEVELS)
+        or not all(isinstance(segment, str) for segment in path)
+    ):
+        return error_response(
+            f"path must be a list of at most {len(DIRECTORY_LEVELS)} strings: " + " / ".join(DIRECTORY_LEVELS),
+            path=path,
+            children=[],
+        )
+    iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
+    # The first three levels are columns, so they narrow the read itself; the
+    # time levels are computed per row below.
+    columns = ("agent_id", "project_id", "channel")
+    fixed = "".join(f" AND {column} = ?" for column in columns[: min(len(path), 3)])
+    params = (*iso.params, *path[:3])
+    async with connection() as db:
+        memory_rows = await db.execute_fetchall(
+            f"SELECT id, agent_id, project_id, channel, timestamp, locked FROM memories "
+            f"WHERE 1 = 1{iso.and_clause}{fixed}",
+            params,
+        )
+        episode_rows = await db.execute_fetchall(
+            f"SELECT id, agent_id, project_id, channel, start_time, created_at FROM episodes "
+            f"WHERE 1 = 1{iso.and_clause}{fixed}",
+            params,
+        )
+
+    entries = []  # (folder keys, kind, id, time, locked)
+    for row in memory_rows:
+        dt = _parse_timestamp_utc(row[4] or "")
+        keys = (row[1], row[2], row[3], *_directory_period(row[4]))
+        entries.append((keys, "mem", row[0], dt, bool(row[5])))
+    for row in episode_rows:
+        stamp = episode_timestamp(row[4], row[5])
+        dt = _parse_timestamp_utc(stamp)
+        keys = (row[1], row[2], row[3], *_directory_period(stamp))
+        entries.append((keys, "ep", row[0], dt, False))
+    depth = len(path)
+    entries = [e for e in entries if list(e[0][:depth]) == path]
+
+    def summary(group: list) -> dict:
+        times = [e[3] for e in group if e[3] is not None]
+        return {
+            "memory_count": sum(1 for e in group if e[1] == "mem"),
+            "episode_count": sum(1 for e in group if e[1] == "ep"),
+            "first": _directory_time(min(times) if times else None),
+            "last": _directory_time(max(times) if times else None),
+        }
+
+    result = {"path": path, **summary(entries), "locked": sum(1 for e in entries if e[4])}
+    if depth < len(DIRECTORY_LEVELS):
+        level = DIRECTORY_LEVELS[depth]
+        groups: dict[str, list] = {}
+        for entry in entries:
+            groups.setdefault(entry[0][depth], []).append(entry)
+        names = sorted(groups)
+        if level in ("year", "month"):
+            # Newest first; a time nobody can read ('') goes last.
+            names = sorted((n for n in names if n), reverse=True) + [n for n in names if not n]
+        result["level"] = level
+        result["children"] = [{"name": name, **summary(groups[name])} for name in names]
+        return result
+    # The month folder: the records themselves, as refs, newest first. Fewer refs
+    # than memory_count + episode_count means `limit` (clamped like list_memories)
+    # cut the list.
+    ordered = sorted(
+        entries,
+        key=lambda e: (e[3] is not None, e[3] or datetime.min.replace(tzinfo=timezone.utc), e[2]),
+        reverse=True,
+    )
+    result["level"] = "records"
+    result["refs"] = [f"{e[1]}:{e[2]}" for e in ordered[: _clamp_limit(limit, LIST_MEMORIES_MAX_ROWS)]]
     return result
 
 
