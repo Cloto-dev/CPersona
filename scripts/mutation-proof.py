@@ -5103,7 +5103,7 @@ MUTATIONS += [
         expect='test_update_check.py::test_check_update_and_check_health_name_the_notes_too',
     ),
     Mutation(
-        id='M503',
+        id='M538',
         tests=('tests/test_logical_directory.py',),
         target='logical directory — the month folder is the UTC month',
         file='cpersona/admin_handlers.py',
@@ -5113,7 +5113,7 @@ MUTATIONS += [
         expect='test_logical_directory.py::test_the_month_is_the_utc_month_whatever_offset_the_time_was_written_with',
     ),
     Mutation(
-        id='M504',
+        id='M539',
         tests=('tests/test_logical_directory.py',),
         target='logical directory — the folders are read through the isolation predicate',
         file='cpersona/admin_handlers.py',
@@ -5123,7 +5123,7 @@ MUTATIONS += [
         expect='test_logical_directory.py::test_a_project_the_caller_cannot_read_is_neither_listed_nor_counted',
     ),
     Mutation(
-        id='M505',
+        id='M540',
         tests=('tests/test_logical_directory.py',),
         target='logical directory — off leaves list_memories as it was',
         file='cpersona/server.py',
