@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:587d3d4a0485cd199549ceb69ae0c013d24ccfa9 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:cfb0a23f820c21ecf9dba17d1c177fc14a742c1a -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -44,7 +44,7 @@
 | 19 | 2.6.7a2 | `block_log_clock`、`record_block_changes`: どの記録の Block が変わったかの記録。Block の索引ファイルが on の間だけ付けます ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **自動で作ります**: キューで作ります。ファイルを off にした場合を除きます ([下](#the-block-index-file-is-on-by-default)) |
 | 20 | 2.6.11a2 | `vector_log_clock`、`record_vector_changes`: ベクトル索引ファイルが持つ行のうち、どれが変わったかの記録。そのファイルが 1 つでもある間だけ付けます ([設計 §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **ベクトル索引を作っているなら、あり**: 作り直します ([下](#build-the-vector-index-again)) |
 
-2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1、2.6.7、2.6.8a1、2.6.8、2.6.9a1、2.6.9、2.6.10a1、2.6.10a2、2.6.10a3、2.6.10a4、2.6.10、2.6.11a1、2.6.11a3、2.6.11a4、2.6.11a5、2.6.11a6、2.6.11、2.6.12a1、2.6.12、2.6.13a1 はスキーマを変えていません。
+2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1、2.6.7、2.6.8a1、2.6.8、2.6.9a1、2.6.9、2.6.10a1、2.6.10a2、2.6.10a3、2.6.10a4、2.6.10、2.6.11a1、2.6.11a3、2.6.11a4、2.6.11a5、2.6.11a6、2.6.11、2.6.12a1、2.6.12、2.6.13a1、2.6.13a2 はスキーマを変えていません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -247,9 +247,14 @@ exit 2 を返し、想起は走査を使います (答えは同じで、速く�
   プラグインの `agent_id` の設定をその名前にするか、`merge_memories` で記録を `default` へ移してください
   ([はじめに](getting-started.md#let-the-agent-do-it-claude-code))。
 
+- **`mode: "pro"` の `reconstruct` が返す item が変わります** (2.6.13a2)。Pro は窓の後に続く held の item として、
+  キーワードの追加の場所を 8 つと深い場所を 8 つ頼み、長い held の記録の 2 か所目以降の passage を最後に引用します。
+  上限は同じ 5,000 トークンです。`lite` と mode を指定しない呼び出しは今までと同じものを返します
+  ([Reliable Recall](RELIABLE_RECALL_2_6.md))。
+
 2.6 で新しく入り、求めない限り何もしないものは、`reconstruct` ツール、recall の trace (`trace=true`)、
 時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、関連の別枠
-(`CPERSONA_RECALL_PROPAGATION_SEAT`) です。
+(`CPERSONA_RECALL_PROPAGATION_SEAT`)、`list_memories` のフォルダの表示 (`CPERSONA_LOGICAL_DIRECTORY`) です。
 
 ## 結果を確かめる { #checking-the-result }
 

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:2fd472c1480c7c3223b9af5b10029b86a63ec0cf -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:ecd3b8d1713e2ecb9bc8909bf7bdd4686bb5177a -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -11,7 +11,7 @@
 リリースが食い違う場合、正しいのはリリースです。
 
 2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7、2026-10-11 に 2.6.8 と 2.6.9、2026-10-12 に 2.6.10、2026-10-19 に 2.6.11、2026-10-21 に 2.6.12 が続き、バージョンを指定しない導入は 2.6.12 になります。
-2.6.13a1 (2026-10-21) は pre-release で、バージョンを指定した時だけ入ります。
+2.6.13a1 (2026-10-21) と 2.6.13a2 (2026-10-22) は pre-release で、バージョンを指定した時だけ入ります。
 pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -90,6 +90,7 @@ pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI
 | 2.6.12a1 | pre-release。スキーマと依存は変えていません。`reconstruct` は同じ応答をより速く返します。上限のある応答のトークン数を、1 回の呼び出しで約 33 回数えていたのを 1 回の処理ごとに 1 回にしました。OmniMemEval のハーネスで LoCoMo のストアを検索すると、`pro` の中央値は 71.9 ms から 48.2 ms になりました ([結果](https://github.com/Cloto-dev/CPersona/pull/511))。このリポジトリが、Claude Code と Codex のプラグインの配布元になりました。プラグイン `cpersona` は、Agent Skill と 3 つのフックを持ちます。フックは、セッションの最初の作業の前、発言のたび、会話が圧縮された後に、エージェントの文脈へ知らせを 1 つずつ足します ([はじめに](getting-started.md#let-the-agent-do-it-claude-code))。プラグインはサーバーを含まないので、ツールの名前は変わりません。skill のソースは `plugin/skills/` に移り、wheel は今までどおり `cpersona/skills/` に入れます。`examples/claude-code-hooks/` は無くなり、そのフックはプラグインの 3 つのうちの 1 つになりました。 | [#511](https://github.com/Cloto-dev/cpersona/pull/511)、[#518](https://github.com/Cloto-dev/cpersona/pull/518) |
 | 2.6.12 | 2.6.12 系の final です。スキーマと依存は変えていません。2.6.11 に比べて、バージョンを指定しない導入は上の 2.6.12a1 (同じ応答をより速く返す `reconstruct` と、エージェント用のプラグイン) と、その後の 2 つの変更を含みます。`check_update` は、知らせるバージョンのリリースノートの場所を添えます。skill は、更新が見つかったらその更新の節を読むようエージェントに伝えます。`mode` を指定しない `reconstruct` の呼び出しも、mode と同じくキーワードの席を持つようになりました (bug-808)。較正前の小さなストアでは、ストアの大きさで決まるゲートがキーワードの経路だけが見つけた行を拒むので、mode を指定しない呼び出しは、問いがそのまま名指した識別子を含むただ 1 つのメモを返せませんでした。LoCoMo の会話ごとのストアでは、既定の呼び出しが根拠のセッションを返す問いが増え、減った問いはなく、1 回の答えの item は約 1 つ増えました。`pro` と `lite` は今までと同じものを返しました ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-keyword-seat-default-reconstruct-locomo.md))。2.6.12 は精度を主張しません。2.6.12a1 を本番に約 19 時間置き、再起動もエラーもないことを確かめてから出しました | [#521](https://github.com/Cloto-dev/cpersona/pull/521)、[#524](https://github.com/Cloto-dev/cpersona/pull/524) |
 | 2.6.13a1 | pre-release。スキーマ・依存・サーバーのコードは変えていません。エージェント用のプラグインの知らせが、呼び出しに使う `agent_id` を名指すようになりました (bug-809)。CPersona は、記録を保存した時と同じ `agent_id` で呼んだ時にだけその記録を返します。2.6.12 のプラグインは名前を名指さなかったので、方針の一節が無い構成のエージェントはセッションごとに名前を推測し、自分の記録を引けないことがありました。セッション開始と圧縮の後の知らせは、プラグインの `agent_id` の設定、無ければ `CPERSONA_AGENT_ID`、それも無ければ `default` を名指します。`default` は、常に読み込まれる指示がすでに決めた名前に譲ります ([はじめに](getting-started.md#let-the-agent-do-it-claude-code))。1 回につき別々の会話 6 つ、モデルごとに 16 回、名前を設定しない条件で測ると、Sonnet 5.5 も Opus 5.5 もすべての回で 1 つの `agent_id` を使い続けました (2.6.12 のプラグインでは 16 回中 6 回と 4 回)。前の会話の内容をどれだけ使えたかが変わったとは主張しません | [#526](https://github.com/Cloto-dev/cpersona/pull/526) |
+| 2.6.13a2 | pre-release。スキーマと依存は変えていません。`mode: "pro"` の `reconstruct` は、上限 5,000 トークンの使い方が変わりました。キーワードの追加の場所を 8 つと深い場所を 8 つ頼み、保存本文が 6,000 字を超える記録の held の item では、最初の passage を元の位置で、2 か所目以降をほかのどの passage よりも後ろで引用します ([Reliable Recall](RELIABLE_RECALL_2_6.md))。`lite` と mode を指定しない呼び出しは今までと同じものを返します。エージェントの記憶の非公開のパックの未使用の 369 問では、これらの場所と、長い記録の規則の前の形 (そうした記録の passage をすべて後ろへ回す) を持つ Pro が、すべての根拠の記録を見せた問いを 2.6.12 より 2.40 ポイント増やしました (z 2.98、rrf)。その形は LongMemEval-S の判定用 400 問のうち 8 問で長い答えの会話を応答から落とし、それを落とさないこのリリースの形は、新しい問いでは確かめていません。その 400 問で Pro の正答は 347 問で、2.6.12 の 352 問に対し、走らせる前に書いた則でははっきり悪いとは言えません (正→誤 14、誤→正 9、片側 p 0.20)。`list_memories` が記録を読み取り専用のフォルダとして返せるようになりました (`CPERSONA_LOGICAL_DIRECTORY`、既定は off、[設定](configuration.md)) | [#479](https://github.com/Cloto-dev/cpersona/pull/479)、[#530](https://github.com/Cloto-dev/cpersona/pull/530)、[#529](https://github.com/Cloto-dev/cpersona/pull/529) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
