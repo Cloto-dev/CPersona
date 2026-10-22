@@ -211,6 +211,40 @@ MODE_KEYWORD_SEATS = 1
 # agent memories, four places put more of the evidence inside Pro's cap and none
 # outside it, while Lite's 3,000 tokens had no room for them. Lite asks for none.
 MODE_EXTRA_BLOCK_SEATS = {MODE_PRO: 2}
+# Pro also asks for eight extra keyword places (memory_handlers._do_recall) for rows only
+# the keyword arms found that the gate refused on their rrf score, after every held place
+# but the depth places. On development questions of the private pack, under rrf, eight
+# places put 44 more evidence records inside Pro's cap than 2.6.10a2 and 3 fewer, and 10,
+# 12 or 15 gained nothing measurable over eight. Where no row is keyed on rrf they hold
+# nothing, so under rsf or confidence Pro's answer is unchanged. Lite asks for none: with
+# one place and a 3,600-character budget it answered 317 of LongMemEval-S's 400 test
+# questions against 324 (benchmarks/measurements/results-omnimemeval-lme-2_6_10.md).
+MODE_EXTRA_KEYWORD_SEATS = {MODE_PRO: 8}
+# Pro also asks for eight depth places (memory_handlers._do_recall): rows a deeper ranking
+# of the same recall admits that the candidate depth left out, after every other held
+# place. On development questions of the private pack, most evidence Pro still missed
+# lay past the candidate depth, and ranking the window deeper broke the fused order; eight
+# held places showed every evidence record on more Pro answers under rrf (+2.07 points
+# against 2.6.10a3, 22 questions up and 1 down) and under rsf with confidence (+2.59, 39
+# up and none down), against 4 places or the deeper order alone. The deeper ranking is a
+# second fetch of the vector arm (the keyword arms are read once, memory_handlers
+# _keyword_reads): on 100,000 records on an Intel N150, Pro's median rose from 1.20 to
+# 1.36 s, about 1.13 to 1.17 times. Lite asks for none: one place gained little there
+# (+0.27 and +0.70 points) for a second ranking of its own.
+MODE_DEPTH_SEATS = {MODE_PRO: 8}
+# Pro's held items whose record is longer than PRO_HELD_LONG_RECORD_CHARS stored
+# characters take their places after every other passage of the sequence instead of in
+# the fused order (held_long_last). A held item quotes one or two passages: of a record of
+# a few thousand characters that is much of it, of a long conversation it seldom reaches
+# the evidence and takes the cap from the window's own quotes. On development questions
+# the held places of the private pack, whose held records' median was about 1,950
+# characters, carried evidence the window did not show; on LongMemEval-S, whose held
+# records' median was 11,875, they quoted no evidence-turn character and lowered the
+# share of evidence-turn characters Pro quoted from 70.0% to 68.3%. With this rule at
+# 6,000 the private pack kept nearly all of the places' gain (48 questions up and 3 down
+# under rrf against 2.6.10's places) and the share rose to 71.7%; 8,000 measured the same,
+# and 4,000 or less lost much of the private pack's gain.
+PRO_HELD_LONG_RECORD_CHARS = 6000
 PRO_COUNT = 15
 PRO_WHOLE_FLOOR_ITEMS = 10
 #: error of a mode call whose smallest possible response exceeds the cap.
@@ -1441,6 +1475,24 @@ def whole_order(records: list[list[tuple]], whole: list[bool]) -> list[tuple[int
     return firsts + [entry for entry in order if not whole[entry[0]]]
 
 
+def held_long_last(
+    order: list[tuple], n_window: int, records: list[tuple], limit: int = PRO_HELD_LONG_RECORD_CHARS
+) -> list[tuple]:
+    """Pro's payload sequence with the passages of held items whose record is longer than
+    ``limit`` stored characters moved after every other passage, each part in its own order.
+
+    ``order`` holds ``(item, passage, cost)`` entries; items below ``n_window`` are the
+    window's and the rest are held. ``records[i][0]`` is item ``i``'s stored text. The
+    result depends on the stored texts and the fused order only, never on the budget, so
+    the response is still the longest prefix of a sequence the budget does not shape
+    (invariant 9).
+    """
+    later = {k for k, (i, _, _) in enumerate(order) if i >= n_window and len(records[i][0]) > limit}
+    if not later:
+        return order
+    return [e for k, e in enumerate(order) if k not in later] + [e for k, e in enumerate(order) if k in later]
+
+
 def _step_costs(order: list[tuple], records: list[list[tuple]]):
     """What each step of ``order`` adds to its record's quote, one step at a time.
 
@@ -1678,6 +1730,8 @@ async def do_reconstruct(
         effective_top_k,  # the candidate depth — NOT `count` (invariant 7)
         keyword_seats=MODE_KEYWORD_SEATS,
         **({"extra_block_seats": MODE_EXTRA_BLOCK_SEATS[mode]} if mode in MODE_EXTRA_BLOCK_SEATS else {}),
+        **({"extra_keyword_seats": MODE_EXTRA_KEYWORD_SEATS[mode]} if mode in MODE_EXTRA_KEYWORD_SEATS else {}),
+        **({"depth_seats": MODE_DEPTH_SEATS[mode]} if mode in MODE_DEPTH_SEATS else {}),
         deep=deep,
         channel=channel,
         project_id=project_id,
@@ -1930,6 +1984,8 @@ async def do_reconstruct(
             )
         else:
             order = evidence_order(record_sets)
+        if mode == MODE_PRO:
+            order = held_long_last(order, len(window), records)
         # The payload sequence: every passage in `order`, then the excerpts. An excerpt
         # follows every passage (bug fixed in 2.6.8): when the excerpts took what the
         # passages left of the budget, a larger budget that took one more passage
@@ -2028,7 +2084,8 @@ async def do_reconstruct(
         providers.check_reconstruct_count(
             len(items), held_returned, effective_count,
             blocks.BLOCK_RESERVATION + _time_cue.MAX_SEATS + (far_seats.SEATS if far_seats.enabled() else 0)
-            + MODE_KEYWORD_SEATS + MODE_EXTRA_BLOCK_SEATS.get(mode, 0),
+            + MODE_KEYWORD_SEATS + MODE_EXTRA_BLOCK_SEATS.get(mode, 0)
+            + MODE_EXTRA_KEYWORD_SEATS.get(mode, 0) + MODE_DEPTH_SEATS.get(mode, 0),
         )
         if held_returned:
             # Beside the window, not in it: returned_count may exceed effective_count by this.
