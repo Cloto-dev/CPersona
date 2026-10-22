@@ -569,21 +569,29 @@ effective_budget = min(budget_base, max_budget)
     both rankings read every arm. `lite` asks for none: one place gained 0.27
     and 0.70 points for a second ranking of its own. A call that names no mode,
     and the recall tool, hold no depth place.
-  - `pro` quotes the passages of a held item whose record is longer than
+  - `pro` quotes the later passages of a held item whose record is longer than
     6,000 stored characters after every other passage of its sequence (2.6.13a2),
-    the window's and the other held items' alike; each part keeps its own order.
-    A held item quotes one or two passages. Of a record of a few thousand
-    characters that is much of it, but of a long conversation it seldom reaches
-    the evidence and takes the cap from the window's own quotes: with the held
-    places of 2.6.10a4, Pro answered 343 of LongMemEval-S's 400 test questions
-    against 354 without them. On development questions the held records of the
-    private pack, a median of about 1,950 characters, carried evidence the
-    window did not show, while on LongMemEval-S, a median of 11,875, they quoted
-    no evidence-turn character and lowered the share of evidence-turn
-    characters Pro quoted from 70.0% to 68.3%. At 6,000 the private pack kept
-    nearly all of what the places gained (48 questions up and 3 down under rrf
-    against 2.6.10's places) and the share rose to 71.7%; 8,000 measured the
-    same and 4,000 or less lost much of the private pack's gain. The rule
+    the window's and the other held items' alike, while the item's first passage
+    keeps its place; each part keeps its own order. A held item quotes one or two
+    passages. Of a record of a few thousand characters that is much of it, but of
+    a long conversation it seldom reaches the evidence and takes the cap from the
+    window's own quotes: with the held places of 2.6.10a4, Pro answered 343 of
+    LongMemEval-S's 400 test questions against 354 without them. On development
+    questions the held records of the private pack, a median of about 1,950
+    characters, carried evidence the window did not show, while on
+    LongMemEval-S, a median of 11,875, they quoted no evidence-turn character and
+    lowered the share of evidence-turn characters Pro quoted from 70.0% to 68.3%.
+    Moving every passage of such a record last kept nearly all of what the
+    places gained on the private pack (48 questions up and 3 down under rrf
+    against 2.6.10's places) and raised the share to 71.7% at 6,000; 8,000
+    measured the same and 4,000 or less lost much of the gain. But on 8 of
+    LongMemEval-S's 400 test questions it left out an answer session a held place
+    had quoted, each longer than 6,000 characters, because the window's quotes
+    filled the cap before the record's turn came. With the first passage kept in
+    place none was left out; on development questions the private pack showed
+    every evidence record on 4.44 points more Pro answers than 2.6.12 under rrf
+    (4.32 with every passage moved) and 2.59 more under rsf with confidence (the
+    same), and the share on LongMemEval-S was 69.7% (2.6.12 70.0%). The rule
     reads only the stored texts and the fused order, never the budget, so the
     response is still the longest prefix of a sequence the budget does not
     shape. `lite` and a call that names no mode keep the fused order.
