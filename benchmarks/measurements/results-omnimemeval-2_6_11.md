@@ -178,6 +178,36 @@ half of OpenViking's, (3) the median search latency is not higher.
   questions; as registered, those were answered once more, and every question
   has an answer and a judgement.
 
+#### Search latency after the 2.6.12 speed-up
+
+2.6.12 ships a change that makes `reconstruct` return the same responses faster
+([#511](https://github.com/Cloto-dev/CPersona/pull/511)): a capped response is
+tokenized once per pass instead of about 33 times a call. Later on 2026-10-19,
+the same LoCoMo stores were searched again through the harness with the same
+procedure (`locomo_search.py --workers 1`, each arm on its own copy of the store
+after the startup calibration had finished), one arm after the other: 2.6.11
+(`39dea2f`), the change's commit (`9dd9762`), and OpenViking 0.5.0.
+
+| Arm | Search median | p95 |
+| --- | ---: | ---: |
+| CPersona 2.6.11, pro mode | 71.9 ms | 81.0 ms |
+| CPersona with the change, pro mode | 48.2 ms | 55.3 ms |
+| CPersona 2.6.11, lite mode | 31.0 ms | 35.0 ms |
+| CPersona with the change, lite mode | 28.8 ms | 33.1 ms |
+| OpenViking 0.5.0 | 50.6 ms | 54.8 ms |
+
+- The contexts handed to the answer model were identical between 2.6.11 and the
+  change for all 1,540 questions in both modes, so the accuracy and the context
+  sizes above stand unchanged.
+- Under the same registered rule, (3) now holds: 48.2 ms against 50.6 ms. The
+  p95 is not part of the rule, and there OpenViking is slightly faster. The cost
+  lead is still not decisive, because (2) still fails.
+- OpenViking's median moved from 50.0 to 50.6 ms between the two runs; the
+  difference between runs on one machine is of that order.
+- The only later change to `reconstruct` before 2.6.12 gives one keyword seat to
+  a call that names no mode; `pro` and `lite` calls asked for that seat already,
+  so 2.6.12 returns these modes' responses unchanged from the measured commit.
+
 ### LongMemEval, OAMB's 60-question screen
 
 The 60 questions of the [Open Agent Memory Benchmark](https://github.com/rocke2020/open-agent-memory-benchmark)
