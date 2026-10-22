@@ -706,6 +706,14 @@ FUTURE_TIMESTAMP_MODE = _parse_choice(
 
 FTS_ENABLED = _parse_bool("CPERSONA_FTS_ENABLED", True)
 
+# The logical directory (a trial in the 2.6 line, off by default): with it on,
+# list_memories takes a `path` and answers with one level of a read-only folder
+# view built from what every record already carries -- agent, project, channel,
+# and the UTC year and month of its time. Nothing is stored, moved or narrowed:
+# recall is untouched. Off, the tool's definition and every response are what
+# they were, which is the point of shipping it switched off.
+LOGICAL_DIRECTORY = _parse_bool("CPERSONA_LOGICAL_DIRECTORY", False)
+
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the
 # generic key shared across Cloto MCP servers (matches the CScheduler convention
 # and the marketplace catalog, which sets EMBEDDING_MODE / EMBEDDING_HTTP_URL).

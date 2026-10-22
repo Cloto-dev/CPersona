@@ -21,6 +21,7 @@ This shell:
 
 import asyncio
 import contextlib
+import copy
 import hmac
 import ipaddress
 import logging
@@ -46,12 +47,14 @@ from cpersona._vendored_mcp_common import no_persist
 # server itself builds one through vector.build_embedding_client().
 from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # noqa: F401
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
+from cpersona._vendored_mcp_common.validation import validate_int, validate_str
 
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
 from cpersona import vector_index
 from cpersona.admin_handlers import (
+    DIRECTORY_LEVELS,
     LIST_EPISODES_MAX_ROWS,
     LIST_MEMORIES_MAX_ROWS,
     do_calibrate_threshold,
@@ -63,6 +66,7 @@ from cpersona.admin_handlers import (
     do_get_queue_status,
     do_get_recall_precision,
     do_import_memories,
+    do_list_directory,
     do_list_episodes,
     do_list_memories,
     do_lock_memory,
@@ -462,15 +466,23 @@ async def do_archive_episode_boundary(
     return _oc_annotate(result, project_id, pid, warning)
 
 
-async def do_list_memories_boundary(agent_id: str, limit: int, project_id: str | None = None) -> dict:
+async def do_list_memories_boundary(
+    agent_id: str, limit: int, project_id: str | None = None, path: list | None = None
+) -> dict:
     resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
     if error:
         # bug-232 (the bug-169 class, on the read side): every OTHER failure mode of
         # this tool keeps its collection, so a caller reading resp["memories"] hit a
         # KeyError on exactly the gate-refusal path. A failure still owes its caller
         # the shape it documents.
+        if path is not None:
+            return {**_oc_reject(error), "path": path, "children": []}
         return {**_oc_reject(error), "memories": [], "count": 0}
-    result = await do_list_memories(agent_id, limit, project_id=resolved)
+    if path is not None:
+        # Only the logical directory's registration passes a path (see below).
+        result = await do_list_directory(agent_id, limit, path, project_id=resolved)
+    else:
+        result = await do_list_memories(agent_id, limit, project_id=resolved)
     return _oc_annotate(result, project_id, resolved, warning)
 
 
@@ -2108,6 +2120,57 @@ registry.auto_tool(
     [("agent_id", str), ("limit", int, 100), ("project_id", str, None)],
     annotations=ToolAnnotations(readOnlyHint=True),
 )
+
+
+# The logical directory (CPERSONA_LOGICAL_DIRECTORY, off by default; a trial in
+# the 2.6 line). Off, the registration above is the whole tool, so its definition
+# and its answers are exactly what they were. On, list_memories also takes
+# `path`. Swapped in here rather than declared through auto_tool because the list
+# validator answers a missing list with [] -- and [] is a real path, the top of
+# the directory -- so "no path" has to be read from the arguments themselves.
+_LIST_MEMORIES_PATH_DESCRIPTION = (
+    " With `path`, the call returns one level of a read-only folder view instead of "
+    "the list. The folders are agent, project ('' is the global pool), channel ('' is "
+    "none), then the UTC year and month of each record's time ('' when it cannot be "
+    "read): [] lists the agents, [agent, project] lists that project's channels, and a "
+    "five-part path lists the refs in that month, newest first, which get_contents "
+    "expands. Every folder gives memory_count, episode_count, first and last; memories "
+    "and episodes share the folders. Nothing is moved, and recall is unchanged."
+)
+_LIST_MEMORIES_PATH_PROPERTY = {
+    "type": "array",
+    "items": {"type": "string"},
+    "maxItems": len(DIRECTORY_LEVELS),
+    "description": "The folder to open: agent, project, channel, year (YYYY), month (MM). [] is the top.",
+}
+
+
+def _enable_logical_directory(registry) -> None:
+    for index, tool in enumerate(registry._tools):
+        if tool.name == "list_memories":
+            schema = copy.deepcopy(tool.inputSchema)
+            schema["properties"]["path"] = _LIST_MEMORIES_PATH_PROPERTY
+            registry._tools[index] = tool.model_copy(
+                update={"description": tool.description + _LIST_MEMORIES_PATH_DESCRIPTION, "inputSchema": schema}
+            )
+            break
+    listing = registry._handlers["list_memories"]
+
+    async def list_memories(arguments: dict) -> dict:
+        if arguments.get("path") is None:
+            return await listing(arguments)
+        return await do_list_memories_boundary(
+            validate_str(arguments, "agent_id"),
+            validate_int(arguments, "limit", 100),
+            validate_str(arguments, "project_id", None),
+            arguments["path"],
+        )
+
+    registry._handlers["list_memories"] = list_memories
+
+
+if config.LOGICAL_DIRECTORY:
+    _enable_logical_directory(registry)
 
 registry.auto_tool(
     "list_episodes",

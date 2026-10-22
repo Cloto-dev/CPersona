@@ -5102,6 +5102,36 @@ MUTATIONS += [
         breaks="check_update loses the link to the offered release's notes",
         expect='test_update_check.py::test_check_update_and_check_health_name_the_notes_too',
     ),
+    Mutation(
+        id='M503',
+        tests=('tests/test_logical_directory.py',),
+        target='logical directory — the month folder is the UTC month',
+        file='cpersona/admin_handlers.py',
+        find='    dt = _parse_timestamp_utc(ts_raw or "")\n    if dt is None:\n        return ("", "")\n    return (f"{dt.year:04d}", f"{dt.month:02d}")',
+        replace='    s = ts_raw or ""\n    return (s[:4], s[5:7]) if len(s) >= 7 and s[:4].isdigit() else ("", "")',
+        breaks='a time written with an offset is filed under the month its text shows, not its UTC month',
+        expect='test_logical_directory.py::test_the_month_is_the_utc_month_whatever_offset_the_time_was_written_with',
+    ),
+    Mutation(
+        id='M504',
+        tests=('tests/test_logical_directory.py',),
+        target='logical directory — the folders are read through the isolation predicate',
+        file='cpersona/admin_handlers.py',
+        find='f"SELECT id, agent_id, project_id, channel, timestamp, locked FROM memories "\n            f"WHERE 1 = 1{iso.and_clause}{fixed}",\n            params,',
+        replace='f"SELECT id, agent_id, project_id, channel, timestamp, locked FROM memories "\n            f"WHERE 1 = 1{fixed}",\n            params[len(iso.params) :],',
+        breaks="a folder lists and counts another project's memories",
+        expect='test_logical_directory.py::test_a_project_the_caller_cannot_read_is_neither_listed_nor_counted',
+    ),
+    Mutation(
+        id='M505',
+        tests=('tests/test_logical_directory.py',),
+        target='logical directory — off leaves list_memories as it was',
+        file='cpersona/server.py',
+        find='if config.LOGICAL_DIRECTORY:\n    _enable_logical_directory(registry)',
+        replace='if True:\n    _enable_logical_directory(registry)',
+        breaks='with the setting off, list_memories still advertises and acts on path',
+        expect='test_logical_directory.py::test_off_is_the_tool_as_it_was_and_on_adds_only_path',
+    ),
 ]
 
 
