@@ -1687,6 +1687,32 @@ _EXPECTED_OBJECTS: dict[str, dict] = {
         "OR (object_kind = 'ep' AND object_id = old.id) "
         "OR anchor_ref = 'ep:' || old.id; END",
     },
+    # v21 (see FOLDERS_SQL in database.py). Warn, not critical: a membership left
+    # behind by a missing trigger names a record or folder that is gone, which no
+    # search reads (folders never narrow) and folder_integrity removes.
+    "folders_memories_ad": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER folders_memories_ad AFTER DELETE ON memories BEGIN "
+        "DELETE FROM folder_members WHERE ref = 'mem:' || old.id; END",
+    },
+    "folders_episodes_ad": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER folders_episodes_ad AFTER DELETE ON episodes BEGIN "
+        "DELETE FROM folder_members WHERE ref = 'ep:' || old.id; END",
+    },
+    "folders_folders_ad": {
+        "kind": "trigger",
+        "severity": "warn",
+        "sql": "CREATE TRIGGER folders_folders_ad AFTER DELETE ON folders BEGIN "
+        "DELETE FROM folder_members WHERE folder_id = old.id; END",
+    },
+    "idx_folder_members_folder": {
+        "kind": "index",
+        "severity": "warn",
+        "sql": "CREATE INDEX idx_folder_members_folder ON folder_members(folder_id)",
+    },
     # The graph's lookup indexes. Losing one costs a scan on alias matching,
     # on the walk, or on the delete triggers above — latency, never an answer.
     "idx_entity_aliases_normalized": {
@@ -4066,6 +4092,128 @@ class Check:
         self.cross_agent_fix = cross_agent_fix
 
 
+async def check_folder_unfiled(db, agent_id: str, fix: bool) -> list[dict]:
+    """How many records of each project that has folders sit in none of them.
+
+    info, never warn: filing is the agent's judgement and most records predate the
+    folders, so an unfiled record is work an agent may choose to do, not a defect.
+    Projects without a folder are not listed -- nobody has started organizing them.
+    The refs themselves are read with list_memories' folder view.
+    """
+    iso = isolation_where(agent_id=agent_id or None, alias="f")
+    scopes = await db.execute_fetchall(
+        f"SELECT DISTINCT f.agent_id, f.project_id FROM folders f{iso.where} ORDER BY f.agent_id, f.project_id",
+        iso.params,
+    )
+    issues: list[dict] = []
+    for aid, project_id in scopes:
+        counts = {}
+        for kind, table in (("mem", "memories"), ("ep", "episodes")):
+            rows = await db.execute_fetchall(
+                f"SELECT COUNT(*), SUM(EXISTS (SELECT 1 FROM folder_members m WHERE m.ref = '{kind}:' || t.id)) "
+                f"FROM {table} t WHERE t.agent_id = ? AND t.project_id = ?",
+                (aid, project_id),
+            )
+            counts[kind] = (rows[0][0], rows[0][1] or 0)
+        total = counts["mem"][0] + counts["ep"][0]
+        filed = counts["mem"][1] + counts["ep"][1]
+        if total > filed:
+            issues.append({
+                "type": "folder_unfiled", "agent_id": aid, "project_id": project_id,
+                "unfiled": total - filed, "filed": filed,
+            })
+    return issues
+
+
+async def check_folder_integrity(db, agent_id: str, fix: bool) -> list[dict]:
+    """Mechanical faults in the declared folders, and the one repair that needs no judgement.
+
+    A membership naming a record or folder that is gone, or a record of another
+    agent or project, is removed by fix (the record becomes unfiled). A folder past
+    the depth limit (after the limit was lowered), one whose parent is gone, one in
+    a cycle, and an empty one are reported only: moving or deleting folders is the
+    agent's call.
+    """
+    iso = isolation_where(agent_id=agent_id or None, alias="f")
+    rows = await db.execute_fetchall(
+        f"SELECT f.id, f.agent_id, f.project_id, f.parent_id FROM folders f{iso.where}", iso.params
+    )
+    by_id = {r[0]: r for r in rows}
+    every = {r[0]: r for r in await db.execute_fetchall("SELECT id, agent_id, project_id, parent_id FROM folders")}
+    issues: list[dict] = []
+
+    bad_members: list[tuple[str, str]] = []
+    member_rows = await db.execute_fetchall("SELECT ref, folder_id FROM folder_members")
+    for ref, folder_id in member_rows:
+        folder = every.get(folder_id)
+        parsed = associations.parse_ref(ref)
+        record = None
+        if parsed:
+            table = "memories" if parsed[0] == "mem" else "episodes"
+            found = await db.execute_fetchall(f"SELECT agent_id, project_id FROM {table} WHERE id = ?", (parsed[1],))
+            record = found[0] if found else None
+        # A membership is the folder's agent's, or, with the folder gone, its record's;
+        # one that names neither belongs to no agent and only an all-agent run sees it.
+        owner = folder[1] if folder else record[0] if record else ""
+        if agent_id and owner != agent_id:
+            continue
+        if folder is None or record is None:
+            bad_members.append((ref, "dangling"))
+        elif (record[0], record[1]) != (folder[1], folder[2]):
+            bad_members.append((ref, "scope"))
+    for reason, kind in (("dangling", "folder_member_dangling"), ("scope", "folder_member_scope")):
+        refs = [ref for ref, why in bad_members if why == reason]
+        if not refs:
+            continue
+        issue = {"type": kind, "count": len(refs), "refs": refs[:20], "repairable": len(refs)}
+        if fix:
+            for start in range(0, len(refs), 500):
+                chunk = refs[start : start + 500]
+                await db.execute(
+                    f"DELETE FROM folder_members WHERE ref IN ({','.join('?' * len(chunk))})", chunk
+                )
+            issue["fixed"] = len(refs)
+        issues.append(issue)
+
+    too_deep, orphans, cycles = [], [], []
+    for folder_id in by_id:
+        depth, current, seen = 0, folder_id, set()
+        while current != 0:
+            if current in seen:
+                cycles.append(folder_id)
+                break
+            seen.add(current)
+            row = every.get(current)
+            if row is None:
+                orphans.append(folder_id)
+                break
+            depth += 1
+            current = row[3]
+        else:
+            if depth > config.FOLDER_MAX_DEPTH:
+                too_deep.append(folder_id)
+    if too_deep:
+        issues.append({"type": "folder_too_deep", "count": len(too_deep), "folder_ids": too_deep[:20],
+                       "limit": config.FOLDER_MAX_DEPTH, "repairable": 0})
+    if orphans:
+        issues.append({"type": "folder_orphan", "count": len(orphans), "folder_ids": orphans[:20], "repairable": 0})
+    if cycles:
+        issues.append({"type": "folder_cycle", "count": len(cycles), "folder_ids": cycles[:20],
+                       "severity": "critical", "repairable": 0})
+    if by_id:
+        empty = await db.execute_fetchall(
+            f"SELECT f.id FROM folders f{iso.where}{' AND' if iso.where else ' WHERE'} "
+            "NOT EXISTS (SELECT 1 FROM folder_members m WHERE m.folder_id = f.id) "
+            "AND NOT EXISTS (SELECT 1 FROM folders c WHERE c.parent_id = f.id)",
+            iso.params,
+        )
+        if empty:
+            ids = [r[0] for r in empty]
+            issues.append({"type": "folder_empty", "count": len(ids), "folder_ids": ids[:20],
+                           "severity": "info", "repairable": 0})
+    return issues
+
+
 HEALTH_CHECKS: list[Check] = [
     Check("memory_annotation", "info", True, check_memory_annotation),
     Check("discord_mention", "info", True, check_discord_mention),
@@ -4146,6 +4294,14 @@ HEALTH_CHECKS: list[Check] = [
     Check("missing_nodes", "info", True, check_missing_nodes),
     Check("missing_blocks", "info", True, check_missing_blocks),
 ]
+
+# Declared folders (config.DECLARED_FOLDERS, off by default): registered only with
+# the tools, so a store that has never seen a folder reports what it did.
+if config.DECLARED_FOLDERS:
+    HEALTH_CHECKS += [
+        Check("folder_unfiled", "info", False, check_folder_unfiled),
+        Check("folder_integrity", "warn", True, check_folder_integrity),
+    ]
 
 HEALTH_CHECK_NAMES = [c.name for c in HEALTH_CHECKS]
 

@@ -953,11 +953,54 @@ def test_pause_persistence_description_names_every_gated_tool():
     )
     gated = _handlers_consulting_no_persist()
     assert len(gated) >= 14, f"gate collapsed — only found {sorted(gated)}"
-    missing = sorted(name for name in gated if name not in description)
+    # A tool registered only under a setting is named only then: the test below
+    # checks those with the setting on.
+    missing = sorted(name for name in gated if name not in description and name not in server.SETTING_GATED_TOOLS)
     assert not missing, (
         "pause_persistence's description does not mention every tool whose handler "
         f"consults no_persist.is_paused() (audit C26): {missing}"
     )
+
+
+def test_a_setting_gated_tool_passes_the_registry_gates_with_its_setting_on(tmp_path):
+    """The gates above exempt a setting-gated tool from the registry they read with
+    the settings off. With its setting on, the tool is registered, pause_persistence
+    names it when it consults the pause, and its project_id documents @auto when its
+    boundary resolves it."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from cpersona import server
+
+    assert server.SETTING_GATED_TOOLS, "no setting-gated tool — drop the exemptions above"
+    paused = _handlers_consulting_no_persist()
+    tree = ast.parse((PKG / "server.py").read_text(encoding="utf-8"), filename="server.py")
+    resolving = {
+        node.name[len("do_"):-len("_boundary")]
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name.endswith("_boundary")
+        and "check_project_id" in ast.dump(node)
+    }
+    code = (
+        "import json; from cpersona import server; "
+        "t = {x.name: x for x in server.registry._tools}; "
+        "print(json.dumps({'names': sorted(t), 'pause': t['pause_persistence'].description, "
+        "'project': {n: x.inputSchema.get('properties', {}).get('project_id', {}).get('description', '') "
+        "for n, x in t.items()}}))"
+    )
+    for tool, setting in sorted(server.SETTING_GATED_TOOLS.items()):
+        env = {**os.environ, "CPERSONA_DB_PATH": str(tmp_path / "x.db"), setting: "true"}
+        out = subprocess.run([sys.executable, "-c", code], cwd=PKG.parent, env=env,
+                             capture_output=True, text=True, check=True)
+        live = json.loads(out.stdout.strip().splitlines()[-1])
+        assert tool in live["names"], tool
+        if tool in paused:
+            assert tool in live["pause"], tool
+        if tool in resolving:
+            assert "@auto" in live["project"][tool], tool
 
 
 # --------------------------------------------------------------------------------------
@@ -990,7 +1033,8 @@ def test_every_auto_resolving_tool_documents_the_sentinel():
         in tool.inputSchema.get("properties", {}).get("project_id", {}).get("description", "")
     }
     expected = {name[len("do_"):-len("_boundary")] for name in boundaries_resolving_auto}
-    missing = sorted(expected - documented)
+    # A tool registered only under a setting is checked with the setting on (below).
+    missing = sorted(expected - documented - set(server.SETTING_GATED_TOOLS))
     assert not missing, (
         "these tools resolve the @auto sentinel but their project_id description does "
         f"not mention it (audit C26): {missing}"
@@ -2975,6 +3019,9 @@ def test_the_gate_sees_every_registered_tool():
 
     seen = {name for name, _p, _k in _registration_sites()}
     registered = {tool.name for tool in server.registry._tools}
+    # A tool registered only under a setting is in the source either way; with its
+    # setting off it is absent from the registry by design (checked on, below).
+    seen -= set(server.SETTING_GATED_TOOLS) - registered
 
     assert seen == registered, (
         f"registration sites and the live registry disagree: only-in-source="

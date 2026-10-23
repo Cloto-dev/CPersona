@@ -92,7 +92,7 @@ and how long a line keeps receiving fixes, is
 - **~3,865 test functions** across ~297 test modules — ~5,612 cases once the
   behavioural matrix is parametrised (~104,757 LOC, more test code than server
   code), including the structural-enforcement gates above
-- **Schema v20** (auto-migrating)
+- **Schema v21** (auto-migrating)
 - **MIT License**
 
 These counts are approximations on purpose, and they are themselves gated.

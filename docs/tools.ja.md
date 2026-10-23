@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:fe3ff2fdcc6adc7aac5cf29c573a60d6f9817f4d -->
+<!-- i18n-source: docs/tools.md@blob:2f7afc7d3cbd323f5011c8b1af3b5dd19db7e0cf -->
 
 # ツール一覧
 
@@ -21,6 +21,7 @@
 | `archive_episode` | セッション要約を保存します。同時に [エピソード境界](behavior-contracts.md#3-episode-boundary-penalty) を動かします。それ以前に書かれたものが減点されるのは `CPERSONA_EPISODE_PENALTY_ENABLED` を有効にした場合だけです (既定では無効) |
 | `update_memory` | 既存の記憶の内容を変更します。保存済みの事実を訂正するのはこのツールで、同じ `msg_id` での再 `store` ではありません |
 | `declare_associations` | 連想記憶を後から宣言します。別名付きの entity と、主語・述語・目的語の関係を、名指した記録に結び付けます。`retract` で宣言を取り消します。同じオブジェクトは `store` の `associations` に載せて渡すこともできます。そのまま保存され、`reconstruct` が読みます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md)) |
+| `organize_folders` | `CPERSONA_DECLARED_FOLDERS=true` の時だけ登録されます。project の下にフォルダを宣言し (作成・名前の変更・移動・空の時の削除)、各記憶とエピソードをそのどれか 1 つに入れます。`store` も同じフォルダを `folder` で受け取ります。フォルダは分類するだけで絞り込みません。どの検索もフォルダを読みません ([設定](configuration.md)) |
 | `traverse` | 宣言された entity の近傍をグラフとして返します。中身は、別名と、その entity とそこからたどった entity に宣言された関係 (`max_hops` まで) と、各 entity に言及する記録の ref です。記録のテキストは返しません。`limit` は entity 数と entity ごとの ref 数を抑えます ([連想記憶の設計](ASSOCIATIVE_MEMORY_DESIGN.md#4-traverse)) |
 
 ## プロフィールと運用者コンテキスト { #profile-and-operator-context }

@@ -14,7 +14,7 @@ from cpersona.config import DB_PATH, FTS_ENABLED
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # bug-042/043: all four data tables share a single aiosqlite connection, and
 # aiosqlite has no per-coroutine transaction isolation — any coroutine's
@@ -1067,6 +1067,55 @@ CREATE TRIGGER IF NOT EXISTS associations_episodes_ad AFTER DELETE ON episodes B
 END;
 """
 
+# v21: declared folders (cpersona/folders.py). An agent files a record into a
+# folder it declared under a project; a folder has at most one parent, a record at
+# most one folder (the primary key of folder_members). Nothing in `memories` or
+# `episodes` changes, so a locked record can be filed, and nothing here is read on
+# the recall path: filing a record changes no search result.
+#
+# The same trigger discipline as the associations above: deleting a memory or an
+# episode takes its membership, and deleting a folder takes the memberships that
+# point at it (the organize handler deletes empty folders only, so this guards the
+# bulk paths such as delete_agent_data).
+#
+# Run on every boot, like ASSOCIATIONS_SQL (bug-118), whether or not the tools are
+# enabled: the tables are empty until something is filed. check_schema_objects
+# watches the three triggers.
+FOLDERS_SQL = """
+CREATE TABLE IF NOT EXISTS folders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT    NOT NULL,
+    project_id  TEXT    NOT NULL DEFAULT '',
+    parent_id   INTEGER NOT NULL DEFAULT 0,
+    name        TEXT    NOT NULL,
+    normalized  TEXT    NOT NULL,
+    declared_by TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    UNIQUE (agent_id, project_id, parent_id, normalized)
+);
+
+CREATE TABLE IF NOT EXISTS folder_members (
+    ref         TEXT    PRIMARY KEY,
+    folder_id   INTEGER NOT NULL,
+    declared_by TEXT    NOT NULL,
+    declared_at TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_folder_members_folder ON folder_members(folder_id);
+
+CREATE TRIGGER IF NOT EXISTS folders_memories_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM folder_members WHERE ref = 'mem:' || old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS folders_episodes_ad AFTER DELETE ON episodes BEGIN
+    DELETE FROM folder_members WHERE ref = 'ep:' || old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS folders_folders_ad AFTER DELETE ON folders BEGIN
+    DELETE FROM folder_members WHERE folder_id = old.id;
+END;
+"""
+
 _db: aiosqlite.Connection | None = None
 _read_db: aiosqlite.Connection | None = None
 # bug-105: maintenance CLIs (checkup without --fix) set this before first DB
@@ -1351,6 +1400,7 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
     await db.executescript(BLOCK_LOG_SQL)
     await db.executescript(VECTOR_LOG_SQL)
     await db.executescript(ASSOCIATIONS_SQL)
+    await db.executescript(FOLDERS_SQL)
 
     # bug-026: detect whether the FTS index is being created for the first time on
     # THIS boot (a DB originally created with CPERSONA_FTS_ENABLED=false, now

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:db8dee36e3923c971f175dbb39187617bbeee290 -->
+<!-- i18n-source: docs/configuration.md@blob:f60a4e20725b23a106323b51841d8df156e1936e -->
 
 # 設定リファレンス
 
@@ -32,6 +32,8 @@
 | `CPERSONA_REMOTE_INDEX_TIMEOUT_SECS` | `10.0` | 書き込み時のリモート `/index` 送信に許す秒数。送信に失敗しても書き込みは失敗しません |
 | `CPERSONA_FTS_ENABLED` | `true` | 起動時に全文 (キーワード) 索引を作る。`false` では索引を持たないデータベースに索引を作らないため、その上の recall にはキーワード経路がありません。`true` に戻すと、次の起動で索引を作り、保存済みの行から埋めます。すでにある索引を消すことはありません |
 | `CPERSONA_LOGICAL_DIRECTORY` | `false` | 2.6 系での試験。`true` にすると、`list_memories` が `path` を受け取り、記録を読み取り専用のフォルダの階層として 1 段ずつ返す。階層は エージェント、project、channel、記録の時刻の UTC の年と月の順で、各フォルダに記憶とエピソードの件数を、月のフォルダに ref を出す。保存も移動も絞り込みもせず、想起は変わらない。`false` ではツールの定義も応答も今までどおり |
+| `CPERSONA_DECLARED_FOLDERS` | `false` | `true` にすると、エージェントが project の下にフォルダを宣言し、各記憶とエピソードをそのどれか 1 つに入れられる。`store` が `folder` を受け取り、`organize_folders` ツールがフォルダの作成・名前の変更・移動・削除と、記録の出し入れをする。フォルダは分類するだけで絞り込まない。どの検索もフォルダを読まず、記録の行は書き換えないので、ロックした記録も入れられる。`check_health` に `folder_unfiled` (info) と `folder_integrity` が加わる。`false` ではどのツールの定義も応答も今までどおりで、2 つのテーブルはどちらでも作られ、空のまま |
+| `CPERSONA_FOLDER_MAX_DEPTH` | `6` | project の下に置けるフォルダの段の数 (1〜16)。下げても、それより深いフォルダは読めるまま残る。上限より下への新しいフォルダと記録の出し入れは拒まれ、`folder_integrity` が上限を超えたフォルダを挙げる |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`)。後述 |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211)。超えた分の行はプレビュー階層に戻り (関連度の高い行から全文で残します、bug-214)、応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効にします。無効な階層へ降格すると本文が知らないうちに落ちるため、切り詰めをやめる選択は、どこでも切り詰めないという選択になります。`CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` と `CPERSONA_RECONSTRUCT_MAX_BUDGET` は、未設定ならこの大きさの抜粋 1 つ分まで引き上がります |
 | `CPERSONA_RECALL_EXCERPT_CHARS` | `800` | プレビューが本文を切ったとき、recall の行がプレビューの傍らに持つクエリに関連する抜粋。一致したレコードの部分を、ランキング順にこの文字数まで詰め、本文中の順序で並べて示します ([設計](RECALL_PREVIEW_TIER_DESIGN.md#excerpt-26))。全文が示される行 (`full_content=true` で応答の予算内に収まる行を含む) には付きません。`full_content=true` の行のうち予算でプレビューへ切り戻された行には付きます。`0` で無効化され、プレビュー階層が無効なときは常に off です |

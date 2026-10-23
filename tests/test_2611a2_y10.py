@@ -369,7 +369,10 @@ async def test_every_boundary_gates_as_a_write_exactly_when_its_tool_writes(monk
         await fn(**{**args, "agent_id": WRITER, "project_id": "ghost"})
 
     tool = name[len("do_"):-len("_boundary")]
-    demands = acl.ACL_CLASSIFICATION[tool]({"agent_id": WRITER})
+    # A tool registered only under a setting has its row only then; the row it gets
+    # is the conditional one.
+    classification = acl.ACL_CLASSIFICATION.get(tool) or acl.CONDITIONAL_CLASSIFICATION[tool]
+    demands = classification({"agent_id": WRITER})
     writes = max(required for _, required in demands) == acl.PERM_WRITE
     assert seen == [writes], f"{name}: gate called with write={seen}, but {tool} writes={writes}"
 

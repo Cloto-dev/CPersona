@@ -29,6 +29,7 @@ from cpersona.isolation import isolation_where
 from cpersona import acl
 from cpersona import associations
 from cpersona import blocks
+from cpersona import folders
 from cpersona import config
 from cpersona import fileperms
 from cpersona import generation
@@ -885,6 +886,9 @@ async def _delete_agent_rows(db, agent_id: str) -> dict:
     # only the agent axis can reach.
     await db.execute("DELETE FROM entities WHERE agent_id = ?", (agent_id,))
     await db.execute("DELETE FROM relations WHERE agent_id = ?", (agent_id,))
+    # Declared folders (schema v21): the records' memberships went with them by
+    # trigger; the folders themselves only the agent axis can reach.
+    await db.execute("DELETE FROM folders WHERE agent_id = ?", (agent_id,))
     return {
         "deleted_memories": mem_cursor.rowcount,
         "deleted_profiles": prof_cursor.rowcount,
@@ -3347,6 +3351,17 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
             for kind, (from_sql, params) in graph_sql.items():
                 cur = await db.execute(f"SELECT COUNT(*) {from_sql}", params)
                 graph_counts[kind] = (await cur.fetchone())[0]
+            # Declared folders (schema v21). Written, and named in the header, only when
+            # the agent has any, so an export of a store without folders is what it was.
+            folder_rows, member_rows = [], []
+            if agent_id:
+                folder_rows, member_rows = await folders.read_tree(db, agent_id)
+            else:
+                cur = await db.execute("SELECT DISTINCT agent_id FROM folders ORDER BY agent_id")
+                for (aid,) in await folders.drain_rows(cur):
+                    tree = await folders.read_tree(db, aid)
+                    folder_rows += tree[0]
+                    member_rows += tree[1]
 
             with fileperms.open_private(tmp_path, "w", encoding="utf-8") as f:
                 header = {
@@ -3366,6 +3381,11 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                     "mention_count": graph_counts["mentions"],
                     "relation_count": graph_counts["relations"],
                 }
+                if folder_rows:
+                    # 1.2 adds the folder / folder_member records and their counts.
+                    header["version"] = "cpersona-export/1.2"
+                    header["folder_count"] = len(folder_rows)
+                    header["folder_member_count"] = len(member_rows)
                 f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
                 # bug-016: carry the project_id / channel γ-isolation axes and the
@@ -3482,6 +3502,12 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
                         record = {"_type": "relation", **associations.relation_record(row)}
                         f.write(json.dumps(record, ensure_ascii=False) + "\n")
                         exported_graph["relations"] += 1
+                # The folders after the records their memberships name, parents first
+                # (ids ascend in creation order, and a parent exists before its child).
+                for record in folder_rows:
+                    f.write(json.dumps({"_type": "folder", **record}, ensure_ascii=False) + "\n")
+                for record in member_rows:
+                    f.write(json.dumps({"_type": "folder_member", **record}, ensure_ascii=False) + "\n")
         os.replace(tmp_path, output_path)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -3497,6 +3523,8 @@ async def do_export_memories(agent_id: str, output_path: str, include_embeddings
     }
     if any(exported_graph.values()):
         result["associations"] = exported_graph
+    if folder_rows:
+        result["folders"] = {"folders": len(folder_rows), "members": len(member_rows)}
     return result
 
 
@@ -3740,6 +3768,12 @@ class _ImportTally:
     graph: associations.Graph = field(default_factory=associations.Graph)
     ref_map: dict[str, str] = field(default_factory=dict)
     associations: dict | None = None
+    # Declared folders (export 1.2): held until the records they name are imported.
+    file_folders: int = 0
+    file_folder_members: int = 0
+    folder_records: list = field(default_factory=list)
+    member_records: list = field(default_factory=list)
+    folders: dict | None = None
     # bug-070: dry_run performs no INSERT OR IGNORE, so it cannot collide against a row
     # it "inserted" earlier IN THE SAME FILE — a duplicate later in the file was
     # over-counted as imported (a real run sees its own uncommitted row on the shared
@@ -4352,6 +4386,13 @@ def _validate_file_header(tally: _ImportTally) -> None:
         )
     # The graph section comes last, so it is where a cut file ends. A file written
     # before the graph was exported declares no graph counts and is not checked here.
+    declared_folders = [tally.file_header.get(k) for k in ("folder_count", "folder_member_count")]
+    in_file_folders = [tally.file_folders, tally.file_folder_members]
+    if any(isinstance(d, int) and d != n for d, n in zip(declared_folders, in_file_folders)):
+        raise ValueError(
+            "file truncated or inconsistent: header declares {} folders / {} folder members, "
+            "file contains {} / {}".format(*declared_folders, *in_file_folders)
+        )
     declared_graph = [tally.file_header.get(f"{kind}_count") for kind in ("entity", "mention", "relation")]
     in_file = [tally.file_entities, tally.file_mentions, tally.file_relations]
     if any(isinstance(d, int) and d != n for d, n in zip(declared_graph, in_file)):
@@ -4383,6 +4424,22 @@ def _collect_graph_record(record: dict, rtype: str, target_agent_id: str, tally:
         tally.errors.append(f"Line {line_num}: entity missing id")
         return
     tally.graph.entities[entity_id] = {**record, "agent_id": aid}
+
+
+async def _import_folders(db, tally: _ImportTally, target_agent_id: str) -> None:
+    """Write the file's folders and memberships, pointed at the rows its records now live in."""
+    if not tally.folder_records and not tally.member_records:
+        return
+    carried = await folders.carry(
+        db, tally.folder_records, tally.member_records, tally.ref_map,
+        agent_id=target_agent_id or None, dry_run=tally.dry_run,
+    )
+    tally.folders = {"folders": carried["folders"], "members": carried["members"]}
+    if carried["dropped"]:
+        tally.errors.append(
+            f"{carried['dropped']} folders or memberships were not restored: they are malformed, name a "
+            "record this import did not restore, or the record is already filed"
+        )
 
 
 async def _import_graph(db, tally: _ImportTally) -> None:
@@ -4494,6 +4551,14 @@ async def do_import_memories(
                 elif rtype in ("entity", "mention", "relation"):
                     _collect_graph_record(record, rtype, target_agent_id, tally, line_num)
 
+                elif rtype == "folder":
+                    tally.file_folders += 1
+                    tally.folder_records.append(record)
+
+                elif rtype == "folder_member":
+                    tally.file_folder_members += 1
+                    tally.member_records.append(record)
+
                 else:
                     if rtype:
                         tally.errors.append(f"Line {line_num}: unknown type '{rtype}'")
@@ -4502,6 +4567,7 @@ async def do_import_memories(
             # rather than commit a partial restore (bug-091).
             _validate_file_header(tally)
             await _import_graph(db, tally)
+            await _import_folders(db, tally, target_agent_id)
             # Said only of a file that presents itself as an export. A hand-written
             # file without the key means the global pool; an export without it means
             # the axis was never written, whatever project the rows lived in.
@@ -4549,6 +4615,8 @@ async def do_import_memories(
     }
     if tally.associations is not None:
         result["associations"] = tally.associations
+    if tally.folders is not None:
+        result["folders"] = tally.folders
     if tally.future_timestamps:
         result["future_timestamps"] = tally.future_timestamps
     if tally.future_episode_timestamps:
@@ -4606,6 +4674,8 @@ class _MergeTally:
     # False when some of the source's declarations could not be carried; the move
     # then leaves the source's graph where it is rather than delete the only copy.
     graph_carried: bool = True
+    # Declared folders carried to the target (folders.carry's counts), or None.
+    folders: dict | None = None
     # bug-132: queue only rows actually inserted, then sync after commit.
     remote_items: list[dict] = field(default_factory=list)
 
@@ -4957,6 +5027,8 @@ async def _delete_merged_source_rows(db, source_agent_id: str, tally: _MergeTall
         if tally.graph_carried:
             await db.execute("DELETE FROM entities WHERE agent_id = ?", (source_agent_id,))
             await db.execute("DELETE FROM relations WHERE agent_id = ?", (source_agent_id,))
+        if not (tally.folders or {}).get("dropped"):
+            await db.execute("DELETE FROM folders WHERE agent_id = ?", (source_agent_id,))
     for kind, sql in _MOVE_LEFT_GRAPH_SQL:
         rows = await db.execute_fetchall(sql, (source_agent_id,))
         if rows[0][0]:
@@ -5048,6 +5120,14 @@ async def do_merge_memories(
                 )
                 tally.graph_carried = not (carried.dropped or carried.aliases_dropped)
 
+            # Declared folders follow the same way, before a move deletes the records
+            # (their delete triggers would take the memberships with them).
+            folder_rows, member_rows = await folders.read_tree(db, source_agent_id)
+            if folder_rows:
+                tally.folders = await folders.carry(
+                    db, folder_rows, member_rows, tally.ref_map, agent_id=target_agent_id, dry_run=dry_run
+                )
+
             move_counts = None
             left_at_source = None
             if mode == "move" and not dry_run:
@@ -5117,6 +5197,8 @@ async def do_merge_memories(
             # A declaration naming a record that was not copied, or an alias that
             # already names another entity in the target.
             result["associations"]["not_carried"] = not_carried
+    if tally.folders is not None:
+        result["folders"] = tally.folders
     if move_result:
         result["source_deleted"] = move_result
         # bug-218/bug-222: the residue is part of the answer — a caller that reads

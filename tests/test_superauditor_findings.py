@@ -230,6 +230,9 @@ _TIERED_RUNNERS = {
     # it is tiered for the same reason vector_index is: listing it as single-valued
     # would make severity_for_kind report info for a backend that is not answering.
     "check_embedding_backend",
+    # Memberships and depth at the registry default (warn), a cycle stamped critical
+    # and an empty folder stamped info.
+    "check_folder_integrity",
 }
 _SINGLE_VALUE_RUNNERS = {"check_fts_integrity", "check_sqlite_integrity"}
 
