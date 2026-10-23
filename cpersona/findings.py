@@ -75,6 +75,7 @@ _TIERED_CHECKS = frozenset(
         "vector_index",
         "coarse_index",
         "embedding_backend",
+        "folder_integrity",
     }
 )
 
@@ -107,6 +108,16 @@ _TIER_KINDS: dict[str, str] = {
     # because of the embedding settings. Recall is degraded exactly as when the
     # backend does not answer, so it is delivered at the same severity.
     "embedding_backend_misconfigured": "warn",
+    # folder_integrity: the registry default (warn) covers the faults in the
+    # memberships and the folders past the depth limit. A folder in a cycle is
+    # stamped critical (its records can be reached by no path), an empty folder
+    # info (nothing is wrong; an agent may want to tidy it).
+    "folder_integrity": "warn",
+    "folder_integrity_cycle": "critical",
+    "folder_integrity_empty": "info",
+    # folder_unfiled is single-valued (info); named here because the registry row
+    # exists only with declared folders on, and the map is read either way.
+    "folder_unfiled": "info",
     # Not a probe — a probe that could not run (see module docstring).
     "check_crashed": "warn",
 }
@@ -170,6 +181,10 @@ def finding_kind(issue: dict) -> str:
         if reported in ("embedding_backend_unreachable", "embedding_backend_misconfigured"):
             return reported
         return "embedding_backend"
+    if check == "folder_integrity":
+        if stamped == "critical":
+            return "folder_integrity_cycle"
+        return "folder_integrity_empty" if stamped == "info" else check
     if check in ("vector_index", "coarse_index"):
         # warn is the runner's stamp for "an index the recall should be using is
         # not"; the unstamped states are observations, not defects.

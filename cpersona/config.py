@@ -714,6 +714,25 @@ FTS_ENABLED = _parse_bool("CPERSONA_FTS_ENABLED", True)
 # they were, which is the point of shipping it switched off.
 LOGICAL_DIRECTORY = _parse_bool("CPERSONA_LOGICAL_DIRECTORY", False)
 
+# Declared folders (2.6.14a1, off by default): with it on, an agent can declare
+# folders under a project, file each record into one of them (store's `folder`,
+# the organize_folders tool), and read where a record sits. Folders classify and
+# never narrow: no search reads them. Off, no tool definition or response changes;
+# the tables exist either way (schema 21) and stay empty.
+DECLARED_FOLDERS = _parse_bool("CPERSONA_DECLARED_FOLDERS", False)
+
+# How deep a folder may sit below its project (the project itself is depth 0).
+# Lowering it leaves deeper folders readable; it refuses new folders and filings
+# below the limit, and check_health names the folders past it.
+FOLDER_MAX_DEPTH_CEILING = 16
+_folder_depth = _parse_int("CPERSONA_FOLDER_MAX_DEPTH", 6)
+if not 1 <= _folder_depth <= FOLDER_MAX_DEPTH_CEILING:
+    logger.warning(
+        "CPERSONA_FOLDER_MAX_DEPTH=%r is outside 1..%d; using 6", _folder_depth, FOLDER_MAX_DEPTH_CEILING
+    )
+    _folder_depth = 6
+FOLDER_MAX_DEPTH = _folder_depth
+
 # Embedding env: the server-specific CPERSONA_* key takes precedence, then the
 # generic key shared across Cloto MCP servers (matches the CScheduler convention
 # and the marketplace catalog, which sets EMBEDDING_MODE / EMBEDDING_HTTP_URL).

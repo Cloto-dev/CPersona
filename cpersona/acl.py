@@ -631,6 +631,12 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     "check_update": _update_demands,
 }
 
+# Registered only with declared folders on (config.DECLARED_FOLDERS), so the row
+# exists only then: the exhaustiveness test compares this table with the tools.
+CONDITIONAL_CLASSIFICATION: dict[str, Demands] = {"organize_folders": _scoped(PERM_WRITE)}
+if config.DECLARED_FOLDERS:
+    ACL_CLASSIFICATION.update(CONDITIONAL_CLASSIFICATION)
+
 
 # ---------------------------------------------------------------------------
 # Dispatch guard (design §5.2)

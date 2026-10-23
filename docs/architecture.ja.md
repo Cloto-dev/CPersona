@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:fbf432128e06430d0d384c5102992ae242a41262 -->
+<!-- i18n-source: docs/architecture.md@blob:4203769b504b360d9cec41fd53ad7b605e9e1173 -->
 
 # アーキテクチャ
 
@@ -36,14 +36,14 @@ flowchart TB
 
 ## ストレージ { #storage }
 
-ストレージは WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`) です。現在の **schema v20** で、起動時に自動で前方へマイグレーションされます。データ用テーブルは
+ストレージは WAL モードの SQLite データベース 1 つ (`CPERSONA_DB_PATH`) です。現在の **schema v21** で、起動時に自動で前方へマイグレーションされます。データ用テーブルは
 `memories` / `episodes` / `profiles` / `pending_memory_tasks` の 4 つです。加えて
 記録用の `schema_version` テーブルと、トリガーで同期される FTS5 仮想テーブルが
 2 つあります。5 つ目のテーブル `record_nodes` は長い記憶とエピソードの本文への
 オフセットだけを持ちます ([overflow tree](OVERFLOW_TREE_DESIGN.md))。記録が削除
 されるか本文が変わると、トリガーがその記録のノードを削除します。さらに 4 つのテーブル (`entities` / `entity_aliases` / `entity_mentions` / `relations`) が、[連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md) の宣言されたグラフを持ちます。entity や
 記録が削除されると、それに依存していた別名・言及・関係をトリガーがすべて取り除くので、
-グラフの中に消えた行を指すものは残りません。さらに 1 つ、`record_blocks` は
+グラフの中に消えた行を指すものは残りません。さらに 2 つのテーブル (`folders` / `folder_members`) が、エージェントが project の下に宣言したフォルダと、分類した各記録が入っている 1 つのフォルダを持ちます (`CPERSONA_DECLARED_FOLDERS`、既定 off)。どの検索もこの 2 つを読まず、記録を削除するとトリガーがその所属も取り除きます。さらに 1 つ、`record_blocks` は
 同じ記録を節に相当する範囲へ分け、各範囲の符号量子化ベクトルを持ちます
 ([Block による到達](BLOCK_REACH_DESIGN.md))。2.6.0 から既定で on で、そのトリガーは
 本文が変われば Block を削除し、記録が retag されれば分離軸の写しを更新します。その隣で

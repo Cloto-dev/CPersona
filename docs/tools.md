@@ -18,6 +18,7 @@
 | `archive_episode` | Store a session summary. Also moves the [episode boundary](behavior-contracts.md#3-episode-boundary-penalty), which down-weights earlier records only when `CPERSONA_EPISODE_PENALTY_ENABLED` is on (it is off by default) |
 | `update_memory` | Correct the content of an existing memory. Use this, not a re-`store` with the same `msg_id` |
 | `declare_associations` | Declare associative memory after the fact — entities with aliases, and subject–predicate–object relations — anchored to a record you name; `retract` removes declarations. The same object rides on `store` as `associations`. Stored verbatim and read by `reconstruct` ([associative memory design](ASSOCIATIVE_MEMORY_DESIGN.md)) |
+| `organize_folders` | Registered only with `CPERSONA_DECLARED_FOLDERS=true`. Declare folders under a project (create, rename, move, delete when empty) and file each memory or episode into one of them; `store` takes the same folder as `folder`. Folders classify and never narrow: no search reads them ([configuration](configuration.md)) |
 | `traverse` | The neighbourhood of a declared entity, as a graph: its aliases, the relations declared on it and on what they reach up to `max_hops`, and the refs of the records that mention each entity. No record text; `limit` bounds entities and refs per entity ([associative memory design](ASSOCIATIVE_MEMORY_DESIGN.md#4-traverse)) |
 
 ## Profile and operator context

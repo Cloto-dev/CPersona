@@ -41,6 +41,7 @@ from cpersona import associations as associations_module
 from cpersona import block_index
 from cpersona import blocks
 from cpersona import excerpts
+from cpersona import folders as folders_module
 from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
 # Re-exported: benchmarks/benchmark_latency.py imports the client from here; the
@@ -2866,6 +2867,7 @@ _ARGUMENT_REFUSALS: dict[str, Callable[[str, dict], dict]] = {
     "recall_with_context": lambda error, arguments: error_response(error, messages=[]),
     "reconstruct": lambda error, arguments: error_response(error, items=[], returned_count=0),
     "update_profile": lambda error, arguments: {"ok": False, "profiles_updated": 0, "reason": error},
+    "organize_folders": lambda error, arguments: error_response(error, applied=[], dropped=[]),
 }
 
 
@@ -2885,6 +2887,128 @@ def _refuse_lone_surrogates(name: str, handler):
 def _install_surrogate_guard(registry) -> None:
     for name, handler in list(registry._handlers.items()):
         registry._handlers[name] = _refuse_lone_surrogates(name, handler)
+
+
+# Declared folders (2.6.14a1, config.DECLARED_FOLDERS, off by default). On, store
+# takes `folder` and organize_folders is registered; off, neither definition nor
+# any response changes. Folders classify and never narrow: no search reads them.
+_ORGANIZE_FOLDERS_DESCRIPTION = (
+    "Declare folders under a project and file records into them, so memories can be "
+    "grouped by what they are about. A path is a list of folder names below the "
+    "project ([] is the project itself); folders nest up to {depth} levels. Operations "
+    "run in order: create (path; its parent must exist), rename (path, name), move "
+    "(path, parent), file (ref, path: a memory or episode of this agent and project; "
+    "a record is in at most one folder, so filing it again moves it), unfile (ref), "
+    "delete (path; empty folders only). Names compare case- and width-insensitively. "
+    "A refused operation is listed in `dropped` with its reason, and a missing folder "
+    "names the folders that exist at that level. Filing changes no search result, and "
+    "the records themselves are not written, so a locked record can be filed."
+)
+_STORE_FOLDER_DESCRIPTION = (
+    " With `folder`, the stored memory is also filed into that declared folder "
+    "(organize_folders creates folders); a folder that does not exist leaves it stored "
+    "but unfiled, and the response's `folder` names the folders that exist."
+)
+_STORE_FOLDER_PROPERTY = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": "Declared folder to file the memory into: names below the project.",
+}
+
+
+async def do_organize_folders_boundary(
+    agent_id: str, operations=None, project_id: str = "", session_key: str = ""
+) -> dict:
+    resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=True)
+    if error:
+        return {**_oc_reject(error), "applied": [], "dropped": []}
+    key, _declared = resolve_session_key(session_key)
+    if session.is_paused_for(key):
+        return session.make_skipped_response({"ok": True, "applied": [], "dropped": []}, "organize_folders", key)
+    result = {"ok": True, **await folders_module.organize(agent_id, operations, project_id=resolved)}
+    return _oc_annotate(result, project_id, resolved, warning)
+
+
+# Tools registered only under a setting. The structural gates read the source, so
+# they see these tools whatever the setting is; this is how they know a tool is
+# absent by design rather than missing a row, and which setting brings it.
+SETTING_GATED_TOOLS = {"organize_folders": "CPERSONA_DECLARED_FOLDERS"}
+
+
+def _enable_declared_folders(registry) -> None:
+    registry.auto_tool(
+        "organize_folders",
+        _ORGANIZE_FOLDERS_DESCRIPTION.format(depth=config.FOLDER_MAX_DEPTH),
+        {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Agent identifier"},
+                "project_id": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "description": "The project the folders sit under; '' is the global pool. '@auto' resolves "
+                    "this agent's default from the server's operating context, echoed as resolved_project_id.",
+                },
+                "operations": {
+                    "type": "array",
+                    "maxItems": folders_module.MAX_OPERATIONS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {"type": "string", "enum": list(folders_module.OPERATIONS)},
+                            "path": {"type": "array", "items": {"type": "string"}},
+                            "name": {"type": "string"},
+                            "parent": {"type": "array", "items": {"type": "string"}},
+                            "ref": {"type": "string"},
+                        },
+                        "required": ["op"],
+                    },
+                },
+                "session_key": _SESSION_KEY_PROPERTY_SHORT,
+            },
+            "required": ["agent_id", "operations"],
+        },
+        do_organize_folders_boundary,
+        [("agent_id", str, ""), ("operations", list, None), ("project_id", str, ""), ("session_key", str, "")],
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False),
+    )
+    for index, tool in enumerate(registry._tools):
+        if tool.name == "store":
+            schema = copy.deepcopy(tool.inputSchema)
+            schema["properties"]["folder"] = _STORE_FOLDER_PROPERTY
+            registry._tools[index] = tool.model_copy(
+                update={"description": tool.description + _STORE_FOLDER_DESCRIPTION, "inputSchema": schema}
+            )
+            break
+    for index, tool in enumerate(registry._tools):
+        if tool.name == "pause_persistence":
+            registry._tools[index] = tool.model_copy(
+                update={"description": tool.description.replace(
+                    "set_recall_precision — ", "set_recall_precision, organize_folders — ", 1)}
+            )
+            break
+    storing = registry._handlers["store"]
+
+    async def store(arguments: dict) -> dict:
+        if "folder" not in arguments:
+            return await storing(arguments)
+        arguments = dict(arguments)
+        folder = arguments.pop("folder")
+        result = await storing(arguments)
+        if result.get("result") == "stored" and isinstance(result.get("id"), int):
+            result["folder"] = await folders_module.file_stored(
+                result.get("resolved_agent_id") or arguments.get("agent_id") or "",
+                result.get("resolved_project_id", arguments.get("project_id", "")),
+                f"mem:{result['id']}",
+                folder,
+            )
+        return result
+
+    registry._handlers["store"] = store
+
+
+if config.DECLARED_FOLDERS:
+    _enable_declared_folders(registry)
 
 
 # Below the last registration and above the capability guard, so a call is
