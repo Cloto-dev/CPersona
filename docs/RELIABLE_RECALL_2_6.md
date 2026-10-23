@@ -603,6 +603,10 @@ effective_budget = min(budget_base, max_budget)
     stated, a claim that says more than its head is kept, and the response
     names its `mode`. `trace=true` returns every field and is not held to the
     cap; its `used_tokens` is what the same call returns without the trace.
+    `include_folders: true` (with declared folders on, `CPERSONA_DECLARED_FOLDERS`)
+    is outside the cap too: the folders are added after the answer is cut, so the
+    quotes are the ones the same call returns without them; `used_tokens` counts
+    the response with them and `folder_tokens` says how many they add.
   - Both registered tests of `whole` were measured at the lite budget
     ([results](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)):
     on LongMemEval-S it answered no worse than the evidence sequence with about

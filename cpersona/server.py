@@ -42,6 +42,7 @@ from cpersona import block_index
 from cpersona import blocks
 from cpersona import excerpts
 from cpersona import folders as folders_module
+from cpersona import tokens as tokens_module
 from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
 # Re-exported: benchmarks/benchmark_latency.py imports the client from here; the
@@ -68,6 +69,7 @@ from cpersona.admin_handlers import (
     do_get_recall_precision,
     do_import_memories,
     do_list_directory,
+    do_list_folder_view,
     do_list_episodes,
     do_list_memories,
     do_lock_memory,
@@ -2909,6 +2911,44 @@ _STORE_FOLDER_DESCRIPTION = (
     "(organize_folders creates folders); a folder that does not exist leaves it stored "
     "but unfiled, and the response's `folder` names the folders that exist."
 )
+_INCLUDE_FOLDERS_PROPERTY = {
+    "type": "boolean",
+    "description": "Also return the declared folder of each record (a list of names below the project; "
+    "[] when unfiled). Added after the answer is cut, outside a mode's cap: used_tokens counts them and "
+    "folder_tokens says how many they add.",
+}
+_LIST_MEMORIES_VIEW_PROPERTY = {
+    "type": "string",
+    "enum": ["folders"],
+    "description": "With path: \"folders\" opens the declared folders: [agent, project, folder, ...].",
+}
+_LIST_MEMORIES_VIEW_DESCRIPTION = (
+    " With `view: \"folders\"`, `path` opens the declared folders instead: [] lists the agents, "
+    "[agent] their projects, and [agent, project, folder...] a folder's subfolders, each counting its whole "
+    "subtree, with the refs of the records filed directly there (at the project, the records in no folder)."
+)
+
+
+def _attach_folders(found: dict, rows, key: str) -> None:
+    for row in rows or []:
+        ref = row.get(key) if isinstance(row, dict) else None
+        if ref:
+            row["folder"] = found.get(ref, [])
+
+
+def _settle_folder_tokens(result: dict, before: int) -> None:
+    """used_tokens becomes the whole response's count; folder_tokens what the folders added."""
+    result["folder_tokens"] = 0
+    for _ in range(6):
+        result["used_tokens"] = before + result["folder_tokens"]
+        total = tokens_module.count_json(result)
+        added = total - before
+        if added == result["folder_tokens"] and total == result["used_tokens"]:
+            return
+        result["folder_tokens"] = added
+    result["used_tokens"] = tokens_module.count_json(result)
+
+
 _STORE_FOLDER_PROPERTY = {
     "type": "array",
     "items": {"type": "string"},
@@ -3005,6 +3045,87 @@ def _enable_declared_folders(registry) -> None:
         return result
 
     registry._handlers["store"] = store
+
+    def add_property(name: str, prop: str, value: dict, description: str = "") -> None:
+        for index, tool in enumerate(registry._tools):
+            if tool.name == name:
+                schema = copy.deepcopy(tool.inputSchema)
+                schema["properties"][prop] = value
+                registry._tools[index] = tool.model_copy(
+                    update={"description": tool.description + description, "inputSchema": schema}
+                )
+                return
+
+    # recall and reconstruct: the folder of each record, on request, after the answer.
+    add_property("recall", "include_folders", _INCLUDE_FOLDERS_PROPERTY)
+    add_property("reconstruct", "include_folders", _INCLUDE_FOLDERS_PROPERTY)
+    recalling = registry._handlers["recall"]
+    reconstructing = registry._handlers["reconstruct"]
+
+    async def recall(arguments: dict) -> dict:
+        if arguments.get("include_folders") is not True:
+            return await recalling({k: v for k, v in arguments.items() if k != "include_folders"})
+        result = await recalling({k: v for k, v in arguments.items() if k != "include_folders"})
+        messages = result.get("messages") or []
+        found = await folders_module.read_folders_of([m["ref"] for m in messages if m.get("ref")])
+        _attach_folders(found, messages, "ref")
+        return result
+
+    async def reconstruct(arguments: dict) -> dict:
+        if arguments.get("include_folders") is not True:
+            return await reconstructing({k: v for k, v in arguments.items() if k != "include_folders"})
+        result = await reconstructing({k: v for k, v in arguments.items() if k != "include_folders"})
+        items = result.get("items") or []
+        refs = [i["head_ref"] for i in items if i.get("head_ref")]
+        refs += [c["ref"] for i in items for c in i.get("claims") or [] if c.get("ref")]
+        found = await folders_module.read_folders_of(sorted(set(refs)))
+        for item in items:
+            head = found.get(item.get("head_ref"), [])
+            if item.get("head_ref"):
+                item["folder"] = head
+            for claim in item.get("claims") or []:
+                if claim.get("ref") and found.get(claim["ref"], []) != head:
+                    claim["folder"] = found.get(claim["ref"], [])
+        if isinstance(result.get("used_tokens"), int):
+            _settle_folder_tokens(result, result["used_tokens"])
+        return result
+
+    registry._handlers["recall"] = recall
+    registry._handlers["reconstruct"] = reconstruct
+
+    # list_memories: the folder view, beside the logical directory's when that is on.
+    for index, tool in enumerate(registry._tools):
+        if tool.name == "list_memories":
+            schema = copy.deepcopy(tool.inputSchema)
+            path_property = dict(schema["properties"].get("path") or _LIST_MEMORIES_PATH_PROPERTY)
+            path_property["maxItems"] = 2 + config.FOLDER_MAX_DEPTH_CEILING
+            schema["properties"]["path"] = path_property
+            schema["properties"]["view"] = _LIST_MEMORIES_VIEW_PROPERTY
+            registry._tools[index] = tool.model_copy(
+                update={"description": tool.description + _LIST_MEMORIES_VIEW_DESCRIPTION, "inputSchema": schema}
+            )
+            break
+    listing = registry._handlers["list_memories"]
+
+    async def list_memories(arguments: dict) -> dict:
+        view = arguments.get("view")
+        if view is None:
+            if arguments.get("path") is not None and not config.LOGICAL_DIRECTORY:
+                return error_response(
+                    'path opens the declared folders with view: "folders"', path=arguments["path"], children=[]
+                )
+            return await listing(arguments)
+        if view != "folders":
+            return error_response('view must be "folders"', path=arguments.get("path"), children=[])
+        path = arguments.get("path")
+        return await do_list_folder_view(
+            validate_str(arguments, "agent_id"),
+            validate_int(arguments, "limit", 100),
+            [] if path is None else path,
+            validate_str(arguments, "project_id", None),
+        )
+
+    registry._handlers["list_memories"] = list_memories
 
 
 if config.DECLARED_FOLDERS:
