@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:bd2d101f2aa8ba5095efe6aa878d5fe6bad64f16 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:00b29c5ed69d26e4ee973225082f95f95814b962 -->
 
 # 2.6 系はいまどこまで来ているか
 
@@ -11,6 +11,7 @@
 リリースが食い違う場合、正しいのはリリースです。
 
 2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7、2026-10-11 に 2.6.8 と 2.6.9、2026-10-12 に 2.6.10、2026-10-19 に 2.6.11、2026-10-21 に 2.6.12、2026-10-23 に 2.6.13 が続き、バージョンを指定しない導入は 2.6.13 になります。
+2.6.14a1 (2026-10-23) は pre-release で、バージョンを指定した時だけ入ります。
 pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -91,6 +92,7 @@ pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI
 | 2.6.13a1 | pre-release。スキーマ・依存・サーバーのコードは変えていません。エージェント用のプラグインの知らせが、呼び出しに使う `agent_id` を名指すようになりました (bug-809)。CPersona は、記録を保存した時と同じ `agent_id` で呼んだ時にだけその記録を返します。2.6.12 のプラグインは名前を名指さなかったので、方針の一節が無い構成のエージェントはセッションごとに名前を推測し、自分の記録を引けないことがありました。セッション開始と圧縮の後の知らせは、プラグインの `agent_id` の設定、無ければ `CPERSONA_AGENT_ID`、それも無ければ `default` を名指します。`default` は、常に読み込まれる指示がすでに決めた名前に譲ります ([はじめに](getting-started.md#let-the-agent-do-it-claude-code))。1 回につき別々の会話 6 つ、モデルごとに 16 回、名前を設定しない条件で測ると、Sonnet 5.5 も Opus 5.5 もすべての回で 1 つの `agent_id` を使い続けました (2.6.12 のプラグインでは 16 回中 6 回と 4 回)。前の会話の内容をどれだけ使えたかが変わったとは主張しません | [#526](https://github.com/Cloto-dev/cpersona/pull/526) |
 | 2.6.13a2 | pre-release。スキーマと依存は変えていません。`mode: "pro"` の `reconstruct` は、上限 5,000 トークンの使い方が変わりました。キーワードの追加の場所を 8 つと深い場所を 8 つ頼み、保存本文が 6,000 字を超える記録の held の item では、最初の passage を元の位置で、2 か所目以降をほかのどの passage よりも後ろで引用します ([Reliable Recall](RELIABLE_RECALL_2_6.md))。`lite` と mode を指定しない呼び出しは今までと同じものを返します。エージェントの記憶の非公開のパックの未使用の 369 問では、これらの場所と、長い記録の規則の前の形 (そうした記録の passage をすべて後ろへ回す) を持つ Pro が、すべての根拠の記録を見せた問いを 2.6.12 より 2.40 ポイント増やしました (z 2.98、rrf)。その形は LongMemEval-S の判定用 400 問のうち 8 問で長い答えの会話を応答から落とし、それを落とさないこのリリースの形は、新しい問いでは確かめていません。その 400 問で Pro の正答は 347 問で、2.6.12 の 352 問に対し、走らせる前に書いた則でははっきり悪いとは言えません (正→誤 14、誤→正 9、片側 p 0.20)。`list_memories` が記録を読み取り専用のフォルダとして返せるようになりました (`CPERSONA_LOGICAL_DIRECTORY`、既定は off、[設定](configuration.md)) | [#479](https://github.com/Cloto-dev/cpersona/pull/479)、[#530](https://github.com/Cloto-dev/cpersona/pull/530)、[#529](https://github.com/Cloto-dev/cpersona/pull/529) |
 | 2.6.13 | 2.6.13 系の final で、パッケージのコードは 2.6.13a2 から変えていません。スキーマと依存は変えていません。2.6.12 と比べて、バージョンを指定しない導入に上の 2 つの pre-release が入ります。エージェントのプラグインの知らせが、呼ぶ時の `agent_id` を名指します (bug-809)。`mode: "pro"` の `reconstruct` は、窓の横にキーワードの追加の場所を 8 つと深い場所を 8 つ持ち、長い held の記録の 2 か所目以降を、同じ上限の中で後ろで引用します。`list_memories` は、記録を読み取り専用のフォルダの階層として返せます (`CPERSONA_LOGICAL_DIRECTORY`、既定 off)。2.6.13 では精度を主張しません。ここで出す長い記録の規則の形は、新しい問いで確かめていないためです。2.6.13a2 を本番で約 16 時間使ってから出しました。その間、設定を on にするための再起動が 1 回あり、エラーはありませんでした | [#526](https://github.com/Cloto-dev/cpersona/pull/526), [#479](https://github.com/Cloto-dev/cpersona/pull/479), [#530](https://github.com/Cloto-dev/cpersona/pull/530), [#529](https://github.com/Cloto-dev/cpersona/pull/529) |
+| 2.6.14a1 | pre-release。依存は変えていません。最初の起動でスキーマをバージョン 21 に移行し、空の表を 2 つ足します。宣言フォルダを足します (既定 off、`CPERSONA_DECLARED_FOLDERS`)。エージェントは project の下にフォルダを 6 段まで宣言し (`CPERSONA_FOLDER_MAX_DEPTH`)、各記憶とエピソードを、`store` の `folder` か `organize_folders` ツールで、そのどれか 1 つに入れます。`list_memories` は `view: "folders"` でフォルダを開き、`recall` と `reconstruct` は `include_folders: true` で各記録のフォルダを返します。フォルダは答えを切り詰めた後で足し、mode の上限の外に置きます (`folder_tokens`)。フォルダは分類するだけで絞り込みません。どの検索もフォルダを読まず、ロックした記録も入れられます。`check_health` に `folder_unfiled` と `folder_integrity` が加わり、export・import・merge がフォルダを運びます。off ではどのツールの定義も応答も変わりません。精度の主張はしていません | [#532](https://github.com/Cloto-dev/cpersona/pull/532), [#534](https://github.com/Cloto-dev/cpersona/pull/534) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
