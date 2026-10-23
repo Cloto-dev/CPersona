@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:d6469263c5ddd2610a593138d644971f0b679c0b -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:76939e87eed02b189b345fe4459424c445d48590 -->
 
 # Reliable Recall — 2.6 系
 
@@ -480,6 +480,9 @@ effective_budget = min(budget_base, max_budget)
     不足理由は引き続き述べ、先頭以上のことを述べる claim は残し、応答は自分の `mode` を述べます。
     `trace=true` はすべての欄を返し、上限は掛かりません。その `used_tokens` は、同じ呼び出しが trace なしで
     返すものの値です。
+    `include_folders: true` (宣言フォルダが on の時、`CPERSONA_DECLARED_FOLDERS`) も上限の外です。
+    フォルダは答えを切り詰めた後で足すので、引用は同じ呼び出しがフォルダなしで返すものと同じです。
+    `used_tokens` はフォルダを含めた応答を数え、`folder_tokens` がフォルダで増えた分を示します。
   - `whole` の登録済みの判定は 2 つとも lite の予算で測りました
     ([結果](https://github.com/Cloto-dev/CPersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-v1_5-whole.md)): LongMemEval-S では、全件の
     約半分の検索テキストで evidence 列に劣らない答えを返し、非公開の実運用パックでは、全予算の既定の列より

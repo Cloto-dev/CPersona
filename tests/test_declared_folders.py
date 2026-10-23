@@ -530,3 +530,252 @@ async def test_store_files_the_new_memory_and_keeps_it_when_the_folder_is_missin
         {"agent_id": "fa", "project_id": "p1", "content": "no folder"}
     )
     assert "folder" not in plain
+
+
+# --- list_memories' folder view ----------------------------------------------------
+
+
+async def _seed_tree(db):
+    """p1 of agent fa: design/ holds 1 memory, design/recall/ holds 2 memories and 1
+    episode, release/ is empty, and 2 memories are unfiled. Times are spelled out so the
+    newest-first order of the refs is known."""
+    ids = {}
+    for name, stamp in (
+        ("a", "2026-10-01T00:00:00+00:00"),
+        ("b", "2026-10-02T00:00:00+00:00"),
+        ("c", "2026-10-03T00:00:00+00:00"),
+        ("u1", "2026-10-04T00:00:00+00:00"),
+        ("u2", "2026-10-05T00:00:00+00:00"),
+    ):
+        cur = await db.execute(
+            "INSERT INTO memories (agent_id, project_id, content, timestamp) VALUES ('fa', 'p1', ?, ?)",
+            (f"tree {name}", stamp),
+        )
+        ids[name] = cur.lastrowid
+    cur = await db.execute(
+        "INSERT INTO episodes (agent_id, project_id, summary, keywords, start_time) "
+        "VALUES ('fa', 'p1', 'tree ep', '', '2026-10-06T00:00:00+00:00')"
+    )
+    ids["ep"] = cur.lastrowid
+    await db.commit()
+    await _organize(
+        _create("design"),
+        _create("design", "recall"),
+        _create("release"),
+        {"op": "file", "ref": f"mem:{ids['a']}", "path": ["design"]},
+        {"op": "file", "ref": f"mem:{ids['b']}", "path": ["design", "recall"]},
+        {"op": "file", "ref": f"mem:{ids['c']}", "path": ["design", "recall"]},
+        {"op": "file", "ref": f"ep:{ids['ep']}", "path": ["design", "recall"]},
+    )
+    return ids
+
+
+def _kids(result):
+    return {
+        c["name"]: (c["memory_count"], c["episode_count"]) for c in result["children"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_project_level_counts_subtrees_and_lists_the_unfiled(clean_db):
+    ids = await _seed_tree(clean_db)
+    top = await admin_handlers.do_list_folder_view("fa", 100, ["fa", "p1"])
+    assert top["level"] == "folder" and top["depth"] == 0
+    assert (top["memory_count"], top["episode_count"]) == (5, 1)
+    assert _kids(top) == {"design": (3, 1), "release": (0, 0)}
+    assert top["direct_count"] == 2 and top["refs"] == [
+        f"mem:{ids['u2']}",
+        f"mem:{ids['u1']}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_folder_lists_its_subfolders_and_its_own_records(clean_db):
+    ids = await _seed_tree(clean_db)
+    design = await admin_handlers.do_list_folder_view("fa", 100, ["fa", "p1", "design"])
+    assert (design["memory_count"], design["episode_count"], design["depth"]) == (
+        3,
+        1,
+        1,
+    )
+    assert _kids(design) == {"recall": (2, 1)}
+    assert design["refs"] == [f"mem:{ids['a']}"]
+    leaf = await admin_handlers.do_list_folder_view(
+        "fa", 2, ["fa", "p1", "design", "recall"]
+    )
+    assert leaf["children"] == [] and leaf["direct_count"] == 3
+    assert leaf["refs"] == [
+        f"ep:{ids['ep']}",
+        f"mem:{ids['c']}",
+    ]  # newest first, cut at limit 2
+
+
+@pytest.mark.asyncio
+async def test_a_missing_folder_names_the_existing_and_a_foreign_path_is_refused(
+    clean_db,
+):
+    await _seed_tree(clean_db)
+    missing = await admin_handlers.do_list_folder_view(
+        "fa", 100, ["fa", "p1", "desgin"]
+    )
+    assert missing["ok"] is False and missing["existing"] == ["design", "release"]
+    foreign_agent = await admin_handlers.do_list_folder_view("fb", 100, ["fa", "p1"])
+    foreign_project = await admin_handlers.do_list_folder_view(
+        "fa", 100, ["fa", "p1"], project_id="p2"
+    )
+    for refused in (foreign_agent, foreign_project):
+        assert (
+            refused["ok"] is False
+            and refused["children"] == []
+            and "refs" not in refused
+        )
+    assert (
+        await admin_handlers.do_list_folder_view(
+            "fa", 100, ["fa", "p1"], project_id="p1"
+        )
+    )["memory_count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_the_first_two_levels_are_the_logical_directorys(clean_db):
+    await _seed_tree(clean_db)
+    agents = await admin_handlers.do_list_folder_view("", 100, [])
+    projects = await admin_handlers.do_list_folder_view("fa", 100, ["fa"])
+    assert agents == await admin_handlers.do_list_directory("", 100, [])
+    assert projects == await admin_handlers.do_list_directory("fa", 100, ["fa"])
+
+
+# --- include_folders on recall and reconstruct --------------------------------------
+
+
+def _stub_with(recall_result=None, reconstruct_result=None):
+    from types import SimpleNamespace
+
+    from cpersona import server
+
+    async def recall(arguments):
+        assert "include_folders" not in arguments  # never reaches the search
+        return json.loads(json.dumps(recall_result))
+
+    async def reconstruct(arguments):
+        assert "include_folders" not in arguments
+        return json.loads(json.dumps(reconstruct_result))
+
+    handlers = dict(server.registry._handlers)
+    handlers.update(recall=recall, reconstruct=reconstruct)
+    stub = SimpleNamespace(_tools=list(server.registry._tools), _handlers=handlers)
+    stub.auto_tool = lambda *a, **k: None
+    server._enable_declared_folders(stub)
+    return stub
+
+
+@pytest.mark.asyncio
+async def test_recall_adds_folders_only_on_request(clean_db):
+    ids = await _seed_tree(clean_db)
+    rows = {
+        "messages": [
+            {"ref": f"mem:{ids['b']}", "content": "tree b"},
+            {"ref": f"mem:{ids['u1']}", "content": "tree u1"},
+        ]
+    }
+    stub = _stub_with(recall_result=rows)
+    plain = await stub._handlers["recall"]({"agent_id": "fa", "query": "tree"})
+    assert plain == rows
+    asked = await stub._handlers["recall"](
+        {"agent_id": "fa", "query": "tree", "include_folders": True}
+    )
+    assert [m["folder"] for m in asked["messages"]] == [["design", "recall"], []]
+    assert [
+        {k: v for k, v in m.items() if k != "folder"} for m in asked["messages"]
+    ] == rows["messages"]
+
+
+@pytest.mark.asyncio
+async def test_reconstruct_adds_folders_after_the_cut_and_counts_them(clean_db):
+    from cpersona import tokens
+
+    ids = await _seed_tree(clean_db)
+    capped = {
+        "items": [
+            {
+                "content": "tree b",
+                "head_ref": f"mem:{ids['b']}",
+                "claims": [{"ref": f"mem:{ids['b']}"}, {"ref": f"mem:{ids['a']}"}],
+            },
+            {"content": "tree u1", "head_ref": f"mem:{ids['u1']}"},
+        ],
+        "mode": "pro",
+        "cap": 5000,
+    }
+    capped["used_tokens"] = 0
+    capped["used_tokens"] = tokens.count_json(capped)
+    stub = _stub_with(reconstruct_result=capped)
+    plain = await stub._handlers["reconstruct"](
+        {"agent_id": "fa", "query": "tree", "mode": "pro"}
+    )
+    assert plain == capped
+    asked = await stub._handlers["reconstruct"](
+        {"agent_id": "fa", "query": "tree", "mode": "pro", "include_folders": True}
+    )
+    first, second = asked["items"]
+    assert first["folder"] == ["design", "recall"] and second["folder"] == []
+    # a claim carries its folder only where it differs from its item's
+    assert "folder" not in first["claims"][0] and first["claims"][1]["folder"] == [
+        "design"
+    ]
+    # the quotes are what the capped answer held
+    assert [i["content"] for i in asked["items"]] == [
+        i["content"] for i in capped["items"]
+    ]
+    assert asked["used_tokens"] == tokens.count_json(asked)
+    assert asked["folder_tokens"] == asked["used_tokens"] - capped["used_tokens"] > 0
+
+
+def test_off_leaves_recall_reconstruct_and_list_memories_as_they_were(tmp_path):
+    code = (
+        "import json; from cpersona import server; "
+        "t = {x.name: x for x in server.registry._tools}; "
+        "print(json.dumps({n: [t[n].description, t[n].inputSchema] for n in ('recall', 'reconstruct', 'list_memories')}))"
+    )
+    seen = {}
+    for value in ("false", "true"):
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+            env={
+                **os.environ,
+                "CPERSONA_DB_PATH": str(tmp_path / "x.db"),
+                "CPERSONA_DECLARED_FOLDERS": value,
+                "CPERSONA_LOGICAL_DIRECTORY": "false",
+            },
+        )
+        seen[value] = json.loads(out.stdout.strip().splitlines()[-1])
+    for name in ("recall", "reconstruct"):
+        assert "include_folders" not in seen["false"][name][1]["properties"]
+        assert "include_folders" in seen["true"][name][1]["properties"]
+    assert not {"view", "path"} & set(seen["false"]["list_memories"][1]["properties"])
+    assert {"view", "path"} <= set(seen["true"]["list_memories"][1]["properties"])
+
+
+@pytest.mark.asyncio
+async def test_list_memories_routes_the_folder_view(clean_db, monkeypatch):
+    ids = await _seed_tree(clean_db)
+    monkeypatch.setattr(config, "LOGICAL_DIRECTORY", False)
+    stub = _stub_with()
+    opened = await stub._handlers["list_memories"](
+        {"agent_id": "fa", "view": "folders", "path": ["fa", "p1"]}
+    )
+    assert opened["refs"] == [f"mem:{ids['u2']}", f"mem:{ids['u1']}"]
+    stray = await stub._handlers["list_memories"](
+        {"agent_id": "fa", "path": ["fa", "p1"]}
+    )
+    assert stray["ok"] is False and "view" in stray["error"]
+    listing = await stub._handlers["list_memories"]({"agent_id": "fa", "limit": 3})
+    assert (
+        listing["count"] == 3
+        and len(listing["memories"]) == 3
+        and "children" not in listing
+    )

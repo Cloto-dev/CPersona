@@ -432,6 +432,117 @@ async def do_list_directory(
     return result
 
 
+async def do_list_folder_view(
+    agent_id: str, limit: int, path: list, project_id: str | None = None
+) -> dict:
+    """One level of the declared folders (list_memories with view "folders").
+
+    `path` is [agent, project, folder, ...]. The first two levels are the logical
+    directory's (agents, then their projects). From [agent, project] on, the
+    children are the folders declared there, each with the records of its whole
+    subtree counted, and `refs` lists the records filed directly at this level,
+    newest first: at the project itself, the records in no folder. The rows are
+    the ones list_memories reads under the same agent_id and project_id, so a
+    project the caller cannot read is neither listed nor counted.
+    """
+    if not isinstance(path, list) or not all(isinstance(segment, str) for segment in path) or len(path) > (
+        2 + config.FOLDER_MAX_DEPTH_CEILING
+    ):
+        return error_response(
+            f"path must be a list of at most {2 + config.FOLDER_MAX_DEPTH_CEILING} strings: agent / project / "
+            "folder ...",
+            path=path,
+            children=[],
+        )
+    if len(path) < 2:
+        return await do_list_directory(agent_id, limit, path, project_id)
+    agent, project = path[0], path[1]
+    # The folders' names are read by agent and project, not through the rows, so a
+    # path outside what agent_id and project_id may read is refused before any name
+    # is read (project_id: None reads every project, '' the global pool only, 'X'
+    # X and the global pool).
+    readable_project = project_id is None or project in (project_id, "")
+    if (agent_id and agent != agent_id) or not readable_project:
+        return error_response("path names an agent or project this call does not read", path=path, children=[])
+    iso = isolation_where(agent_id=agent_id or None, project_id=project_id)
+    async with connection() as db:
+        memory_rows = await db.execute_fetchall(
+            f"SELECT id, timestamp, locked FROM memories WHERE 1 = 1{iso.and_clause} AND agent_id = ? AND project_id = ?",
+            (*iso.params, agent, project),
+        )
+        episode_rows = await db.execute_fetchall(
+            f"SELECT id, start_time, created_at FROM episodes WHERE 1 = 1{iso.and_clause} "
+            "AND agent_id = ? AND project_id = ?",
+            (*iso.params, agent, project),
+        )
+        node, parent, depth = await folders.resolve(db, agent, project, path[2:])
+        if node is None:
+            return error_response(
+                f"no folder {path[: depth + 3]!r}",
+                path=path,
+                children=[],
+                existing=await folders.children(db, agent, project, parent),
+            )
+        tree = await db.execute_fetchall(
+            "SELECT id, parent_id, name, normalized FROM folders WHERE agent_id = ? AND project_id = ?",
+            (agent, project),
+        )
+        members = dict(await db.execute_fetchall(
+            "SELECT m.ref, m.folder_id FROM folder_members m JOIN folders f ON f.id = m.folder_id "
+            "WHERE f.agent_id = ? AND f.project_id = ?",
+            (agent, project),
+        ))
+
+    parent_of = {row[0]: row[1] for row in tree}
+
+    def chain(folder_id: int) -> set:
+        """The folder and every folder above it, up to the project (0)."""
+        seen = {0}
+        current = folder_id
+        while current and current not in seen and len(seen) <= config.FOLDER_MAX_DEPTH_CEILING + 1:
+            seen.add(current)
+            current = parent_of.get(current, 0)
+        return seen
+
+    entries = []  # (ref, kind, time, locked, folder id or 0)
+    for row in memory_rows:
+        ref = f"mem:{row[0]}"
+        entries.append((ref, "mem", _parse_timestamp_utc(row[1] or ""), bool(row[2]), members.get(ref, 0)))
+    for row in episode_rows:
+        ref = f"ep:{row[0]}"
+        entries.append((ref, "ep", _parse_timestamp_utc(episode_timestamp(row[1], row[2])), False, members.get(ref, 0)))
+    above = {folder_id: chain(folder_id) for folder_id in parent_of}
+    under = [e for e in entries if node == 0 or node in above.get(e[4], {0})]
+
+    def summary(group: list) -> dict:
+        times = [e[2] for e in group if e[2] is not None]
+        return {
+            "memory_count": sum(1 for e in group if e[1] == "mem"),
+            "episode_count": sum(1 for e in group if e[1] == "ep"),
+            "first": _directory_time(min(times) if times else None),
+            "last": _directory_time(max(times) if times else None),
+        }
+
+    kids = sorted((row for row in tree if row[1] == node), key=lambda row: (row[3], row[0]))
+    direct = sorted(
+        (e for e in under if e[4] == node),
+        key=lambda e: (e[2] is not None, e[2] or datetime.min.replace(tzinfo=timezone.utc), e[0]),
+        reverse=True,
+    )
+    return {
+        "path": path,
+        **summary(under),
+        "locked": sum(1 for e in under if e[3]),
+        "level": "folder",
+        "depth": len(path) - 2,
+        "children": [
+            {"name": row[2], **summary([e for e in under if row[0] in above.get(e[4], {0})])} for row in kids
+        ],
+        "direct_count": len(direct),
+        "refs": [e[0] for e in direct[: _clamp_limit(limit, LIST_MEMORIES_MAX_ROWS)]],
+    }
+
+
 async def do_list_episodes(agent_id: str, limit: int, project_id: str | None = None) -> dict:
     """List archived episodes for dashboard display. Same γ semantics as do_list_memories.
 
