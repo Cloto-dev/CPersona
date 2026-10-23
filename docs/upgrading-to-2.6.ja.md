@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/upgrading-to-2.6.md@blob:92c2826b215888665332d079cca5e06724acae52 -->
+<!-- i18n-source: docs/upgrading-to-2.6.md@blob:6bbfb521d45edcb5ce6fb5940e511e84b5eacec6 -->
 
 # 2.5 から 2.6 への移行 { #upgrading-from-25-to-26 }
 
@@ -43,8 +43,11 @@
 | 18 | 2.6.3a1 | `memories` と `episodes` の `embedding_model`: 各ベクトルを作ったモデルのラベル。保存済みの行は空のラベル (不明) になります | なし: ベクトルは次に書かれるときにラベルが付きます |
 | 19 | 2.6.7a2 | `block_log_clock`、`record_block_changes`: どの記録の Block が変わったかの記録。Block の索引ファイルが on の間だけ付けます ([約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **自動で作ります**: キューで作ります。ファイルを off にした場合を除きます ([下](#the-block-index-file-is-on-by-default)) |
 | 20 | 2.6.11a2 | `vector_log_clock`、`record_vector_changes`: ベクトル索引ファイルが持つ行のうち、どれが変わったかの記録。そのファイルが 1 つでもある間だけ付けます ([設計 §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **ベクトル索引を作っているなら、あり**: 作り直します ([下](#build-the-vector-index-again)) |
+| 21 | 2.6.14a1 | `folders`、`folder_members`: 宣言したフォルダと、分類した各記録が入っている 1 つのフォルダ。`CPERSONA_DECLARED_FOLDERS` が on の時だけ使います ([設定](configuration.md)) | なし: 何かを分類するまで、表は空のままです |
 
 2.6.0a1、2.6.0a2、2.6.0a7、2.6.0a8、2.6.0b1、2.6.0b2、2.6.0、2.6.1、2.6.2、2.6.4a1、2.6.4a2、2.6.4、2.6.5a1、2.6.5a2、2.6.5a3、2.6.5、2.6.6a1、2.6.6、2.6.7a1、2.6.7、2.6.8a1、2.6.8、2.6.9a1、2.6.9、2.6.10a1、2.6.10a2、2.6.10a3、2.6.10a4、2.6.10、2.6.11a1、2.6.11a3、2.6.11a4、2.6.11a5、2.6.11a6、2.6.11、2.6.12a1、2.6.12、2.6.13a1、2.6.13a2、2.6.13 はスキーマを変えていません。
+
+2.6.14a1 から 2.6.13 に戻す時は、復元は要りません。2.6.13 はスキーマ 21 の DB を「DB の方が新しい」という警告付きで開き、今までどおり読み書きします。スキーマ 21 が足したトリガーは残るので、その間に削除した記録の所属も残りません。フォルダは、2.6.14a1 をもう一度起動するまで読まれません。
 
 ## 最初の起動の後 { #after-the-first-start }
 
@@ -254,7 +257,7 @@ exit 2 を返し、想起は走査を使います (答えは同じで、速く�
 
 2.6 で新しく入り、求めない限り何もしないものは、`reconstruct` ツール、recall の trace (`trace=true`)、
 時期の手がかり (`time_cue`)、`declare_associations` または `store` で宣言する連想、関連の別枠
-(`CPERSONA_RECALL_PROPAGATION_SEAT`)、`list_memories` のフォルダの表示 (`CPERSONA_LOGICAL_DIRECTORY`) です。
+(`CPERSONA_RECALL_PROPAGATION_SEAT`)、`list_memories` のフォルダの表示 (`CPERSONA_LOGICAL_DIRECTORY`)、宣言フォルダ (`CPERSONA_DECLARED_FOLDERS`) です。
 
 ## 結果を確かめる { #checking-the-result }
 

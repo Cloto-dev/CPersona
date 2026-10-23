@@ -45,8 +45,14 @@ recorded as done, so it is retried on the next start.
 | 18 | 2.6.3a1 | `embedding_model` on `memories` and `episodes`: the label of the model that produced each vector. Rows already stored take an empty label, which means unknown | No: a vector is labelled when it is next written |
 | 19 | 2.6.7a2 | `block_log_clock`, `record_block_changes`: the log of which records' blocks changed, kept only while the block index file is on ([contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) | **Built for you** on the queue, unless you turn the file off ([below](#the-block-index-file-is-on-by-default)) |
 | 20 | 2.6.11a2 | `vector_log_clock`, `record_vector_changes`: the log of which rows held by the vector index files changed, kept only while one of those files exists ([design §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **Yes, if you build the vector index**: build it again ([below](#build-the-vector-index-again)) |
+| 21 | 2.6.14a1 | `folders`, `folder_members`: declared folders and the one folder each filed record sits in, used only with `CPERSONA_DECLARED_FOLDERS` on ([configuration](configuration.md)) | No: the tables stay empty until something is filed |
 
 2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1, 2.6.7, 2.6.8a1, 2.6.8, 2.6.9a1, 2.6.9, 2.6.10a1, 2.6.10a2, 2.6.10a3, 2.6.10a4, 2.6.10, 2.6.11a1, 2.6.11a3, 2.6.11a4, 2.6.11a5, 2.6.11a6, 2.6.11, 2.6.12a1, 2.6.12, 2.6.13a1, 2.6.13a2 and 2.6.13 changed no schema.
+
+Going back from 2.6.14a1 to 2.6.13 needs no restore. 2.6.13 opens a schema 21 database with a
+warning that it is newer, reads and writes it as before, and the triggers schema 21 added stay in
+place, so a record deleted meanwhile leaves no membership behind. Its folders are not read until
+2.6.14a1 starts again.
 
 ## After the first start
 
@@ -303,8 +309,8 @@ Check these against what your deployment relies on. Each is off, or equal to
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with
 `declare_associations` or on `store`, the propagation seat
-(`CPERSONA_RECALL_PROPAGATION_SEAT`), and the folder view of `list_memories`
-(`CPERSONA_LOGICAL_DIRECTORY`).
+(`CPERSONA_RECALL_PROPAGATION_SEAT`), the folder view of `list_memories`
+(`CPERSONA_LOGICAL_DIRECTORY`), and declared folders (`CPERSONA_DECLARED_FOLDERS`).
 
 ## Checking the result
 
