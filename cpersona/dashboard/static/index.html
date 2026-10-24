@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>CPersona Dashboard</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<aside>
+  <div class="brand"><b>CPersona</b><div id="dbname"></div></div>
+  <nav aria-label="Views">
+    <button class="nav" data-view="overview"><span data-t="overview"></span></button>
+    <button class="nav" data-view="memories"><span data-t="memories"></span><span class="n" id="n-memories"></span></button>
+    <button class="nav" data-view="episodes"><span data-t="episodes"></span><span class="n" id="n-episodes"></span></button>
+    <button class="nav" data-view="entities"><span data-t="entities"></span><span class="n" id="n-entities"></span></button>
+  </nav>
+  <div class="section-label" data-t="browse"></div>
+  <div class="tree" id="tree" role="tree"></div>
+  <div class="foot">
+    <label><input type="checkbox" id="techAlways"> <span data-t="techAlways"></span></label>
+    <div><span class="seg" role="group" aria-label="Language"><button data-lang="en">EN</button><button data-lang="ja">日本語</button></span></div>
+    <div class="kbd" id="kbd"></div>
+    <div class="hint" id="schemaLine"></div>
+  </div>
+</aside>
+<main id="main"><div class="page" id="page"></div></main>
+<section class="drawer" id="drawer" aria-label="Memory detail"></section>
+<div class="palette-bg" id="paletteBg"><div class="palette" role="dialog" aria-label="Search">
+  <input id="paletteInput" autocomplete="off"><ul id="paletteList"></ul>
+</div></div>
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -490,6 +490,37 @@ command line) that adds a row to every block write with nothing to read it;
 `check_health(checks=["block_index"], fix=true)` stops it, and so does starting
 the server with the setting off.
 
+## The dashboard
+
+`cpersona dashboard` opens a read-only page of a store in the browser: an
+overview of what it holds and when it was written, the logical directory as a
+tree (agent, project, channel, year, month), a list you can narrow by folder,
+month and text, and each memory in full with how it is split into nodes and
+blocks.
+
+```bash
+cpersona dashboard --db ~/.claude/cpersona.db      # or: uvx cpersona dashboard --db …
+python -m cpersona.dashboard --db ~/.claude/cpersona.db
+```
+
+- **Which database**: the one `--db` names, else `CPERSONA_DB_PATH`. There is
+  no fallback to the server's relative default, which would resolve against the
+  terminal's directory. If CPersona runs from an MCP client, the path is the
+  `CPERSONA_DB_PATH` in that client's server configuration.
+- **It writes nothing.** The file is opened with SQLite's `mode=ro`, so a write
+  is refused by SQLite itself, and it can stay open beside a running server:
+  each page load reads the last committed state. A database whose schema this
+  release does not know (newer, or older than schema 19) is refused with a
+  message instead of being read.
+- **Who can see it**: it listens on 127.0.0.1 only, on a free port (`--port` to
+  choose one). The address it prints carries a token made for this start after
+  `#`, which the browser never sends in a request; the data is answered only to
+  requests carrying it, only for a Host header naming the loopback address, and
+  only to GET. Another user of the same machine can reach the port but not the
+  data. `--no-browser` prints the address without opening it.
+- Episodes, entities and recall traces are not shown yet, and nothing is edited
+  from the page.
+
 ## Maintenance cadence
 
 - **Monthly**: `check_health(agent_id, fix=true)` for deterministic integrity
