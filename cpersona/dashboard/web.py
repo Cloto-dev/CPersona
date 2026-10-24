@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from cpersona.dashboard import store
+from cpersona.dashboard import graph, store
 
 HOST = "127.0.0.1"
 
@@ -161,6 +161,17 @@ def make_handler(
                         out = store.memory(conn, int(q.get("id", 0)))
                         if out is None:
                             return self._json(404, {"error": "No memory with that id."})
+                    elif url.path == "/api/graph" and q.get("around"):
+                        out = graph.around(
+                            conn,
+                            db_path,
+                            int(q["around"]),
+                            int(q.get("hops", graph.DEFAULT_HOPS)),
+                        )
+                        if out is None:
+                            return self._json(404, {"error": "No memory with that id."})
+                    elif url.path == "/api/graph":
+                        out = graph.folder(conn, path, q.get("month", ""))
                     else:
                         return self._json(404, {"error": "not found"})
             except ValueError as e:

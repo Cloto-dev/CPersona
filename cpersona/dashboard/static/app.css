@@ -171,3 +171,33 @@
   .palette li .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--base); padding: 6px 14px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s; }
   .toast.show { opacity: 1; }
+
+  /* Memory network: the canvas fills the main area; the panels float over it. */
+  .graph { position: absolute; inset: 0; overflow: hidden; }
+  .graph canvas { display: block; cursor: grab; touch-action: none; }
+  .graph canvas.over { cursor: pointer; }
+  .graph canvas.dragging { cursor: grabbing; }
+  .g-panel { position: absolute; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .g-legend { top: 16px; left: 16px; width: min(340px, calc(100% - 32px)); }
+  .g-legend h1 { font-size: 16px; }
+  .g-legend .lead { font-size: 13px; margin: 2px 0 10px; }
+  .g-legend .crumbs { margin: 0 0 8px; }
+  .layer { display: grid; grid-template-columns: 18px 34px 1fr auto; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; font-size: 13px; }
+  .layer input { margin: 0; }
+  .layer .n { color: var(--faint); font-variant-numeric: tabular-nums; }
+  .layer svg { display: block; }
+  .l-declared { stroke: var(--accent); stroke-width: 2.4; }
+  .l-similar { stroke: url(#lg); stroke-opacity: .7; stroke-width: 1.2; }
+  .l-structure { stroke: currentColor; stroke-opacity: .35; stroke-width: 1; }
+  .s-a { stop-color: #6f9af2; }
+  .s-b { stop-color: #f0915e; }
+  .g-note { color: var(--faint); font-size: 12px; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .g-card { right: 16px; bottom: 16px; width: min(360px, calc(100% - 32px)); display: none; font-size: 13px; }
+  .g-card.open { display: block; }
+  .g-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .g-agent { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .g-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .g-card p { margin: 0 0 8px; }
+  .g-near { color: var(--faint); font-size: 12px; margin-bottom: 10px; }
+  .g-card .actions { margin: 0; }
+  .g-hint { position: absolute; left: 16px; bottom: 16px; color: var(--faint); font-size: 12px; }

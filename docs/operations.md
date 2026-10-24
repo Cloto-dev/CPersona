@@ -525,6 +525,18 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   requests carrying it, only for a Host header naming the loopback address, and
   only to GET. Another user of the same machine can reach the port but not the
   data. `--no-browser` prints the address without opening it.
+- **The network** draws memories as points joined by three kinds of line, each
+  of which can be hidden: relations an agent declared (entities a memory
+  mentions, and relations between entities and memories); similar content, each
+  memory to its 3 nearest memories by stored embedding at cosine 0.55 or more,
+  which the server computes and no agent declared; and each agent to its
+  memories. A folder's view draws its newest 800 memories and says how many it
+  left out. "See it in the network" on a memory draws that memory and the
+  memories reached from it in two nearest-neighbour steps across the whole
+  store. Vectors are compared only with vectors of the same width, are held in
+  the process serving the dashboard for up to five minutes while the store keeps the same
+  rows, and are never sent to the page. A store whose vectors exceed 128 MB is
+  read in chunks on each step instead of being held.
 - Episodes, entities and recall traces are not shown yet, and nothing is edited
   from the page. Store health appears only when an agent opened the page: started
   from a terminal, the dashboard cannot judge it from the file alone.

@@ -9,7 +9,8 @@ The read-only contract:
 - A database whose schema this reader was not built for is refused before
   anything is read: a newer one may have moved the columns read here, and an
   older one may lack them. Guessing would show wrong numbers without saying so.
-- Embedding vectors are never read; only whether a row has one.
+- Embedding vectors are not read here, only whether a row has one. The network
+  view (`graph.py`) reads them to compare memories and never sends them to the page.
 
 A reader running beside a live server sees each committed write: in WAL mode a
 read-only connection reads the last commit, and each request opens its own
