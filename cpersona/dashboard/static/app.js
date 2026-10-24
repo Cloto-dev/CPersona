@@ -648,7 +648,7 @@ function startGraph(G, lens) {
     else n.name = n.label;
   }
   // The calm look draws small, nearly even dots, a little larger the more they hold.
-  const calmR = n => hub(n) ? (state.look === "star" ? 9 : 4.5) : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
+  const calmR = n => hub(n) ? (state.look === "star" ? 7.5 : 4.5) : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
   const radius = n => state.look ? calmR(n) : n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
     : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
   const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
@@ -896,18 +896,21 @@ function startGraph(G, lens) {
     return (h >>> 0) / 4294967296;
   };
   const hsl = (h, sat, l, a = 1) => `hsla(${((h % 360) + 360) % 360},${sat}%,${l}%,${a})`;
-  function lookOf(agent) {
+  // Uncoloured, every star takes the memories' blue-white hue (218°) and keeps only its
+  // material; coloured by agent, each takes its own two hues.
+  function lookOf(agent, uniform = false) {
     const h1 = mix01(`${agent}:h`) * 360, h2 = h1 + 50 + mix01(`${agent}:g`) * 110;
     const sat = 62 + mix01(`${agent}:s`) * 26;
-    return { h1, h2, sat, material: MATERIALS[Math.floor(mix01(`${agent}:m`) * MATERIALS.length)] };
+    const material = MATERIALS[Math.floor(mix01(`${agent}:m`) * MATERIALS.length)];
+    return uniform ? { h1: 218, h2: 218, sat: 90, material, dl: 8 } : { h1, h2, sat, material, dl: 0 };
   }
   const crystals = new Map();
   // One sprite per size and agent, drawn once: the star's outline is four points and
   // four waists; the material decides how its inside catches the light.
-  function crystal(R, agent) {
-    const key = `${R}|${agent}`;
+  function crystal(R, agent, uniform) {
+    const key = `${R}|${agent}|${uniform ? 1 : 0}`;
     if (crystals.has(key)) return crystals.get(key);
-    const L = lookOf(agent), m = L.material;
+    const L = lookOf(agent, uniform), m = L.material;
     const pad = R * (m === "ember" ? 1.4 : 0.9), size = Math.ceil((R + pad) * 2), c = document.createElement("canvas");
     c.width = c.height = size * 2;
     const x = c.getContext("2d");
@@ -919,7 +922,7 @@ function startGraph(G, lens) {
     // bottom right; the two halves of each point differ in lightness, as cut faces do.
     const facet = (i, half, dl = 0) => {
       const t = [0.15, 0.35, 0.55, 0.75, 0.95, 0.75, 0.45, 0.25][i * 2 + half];
-      return hsl(L.h1 + (L.h2 - L.h1) * t, L.sat, (half ? 64 : 80) + dl);
+      return hsl(L.h1 + (L.h2 - L.h1) * t, L.sat, (half ? 64 : 80) + dl + L.dl);
     };
     x.shadowColor = hsl(m === "ember" ? L.h1 : L.h2, L.sat, 65); x.shadowBlur = R * (m === "ember" ? 1.7 : 0.9);
     shape(); x.fillStyle = hsl(L.h2, L.sat, 70, m === "ember" ? 0.5 : 1); x.fill();
@@ -971,7 +974,7 @@ function startGraph(G, lens) {
   function drawStar(n, r, on) {
     const k = s.view.k;
     if (hub(n)) {
-      const R = Math.round(r * 2 * k * 2) / 2, sp = crystal(R, n.agent), d = sp.size / k;
+      const R = Math.round(r * 2 * k * 2) / 2, sp = crystal(R, n.agent, !s.byAgent), d = sp.size / k;
       ctx.drawImage(sp.c, n.x - d / 2, n.y - d / 2, d, d);
       return;
     }
