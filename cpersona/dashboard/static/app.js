@@ -4,32 +4,32 @@
 const T = {
   en: {
     overview: "Overview", memories: "Memories", episodes: "Episodes", entities: "Entities", browse: "Browse",
-    techAlways: "Always show technical details",
+    techAlways: "Always show details",
     kbd: ["⌘K search", "/ find in list", "j/k move", "Enter open", "Esc close"],
     overviewLead: "What this store holds and when it was written.",
     nMemories: "memories", nEpisodes: "episodes", nEntities: "entities", nAgents: "agents",
     spanOf: (a, b) => `from ${a} to ${b}`,
-    byMonth: "Memories written each month", byMonthHint: "Select a month to see what was written then.",
-    byAgent: "By agent", byAgentHint: "Each agent keeps its own memory. Select one to browse it.",
+    byMonth: "Memories by month", byMonthHint: "Select a month to see what was written then.",
+    byAgent: "By agent", byAgentHint: "Each agent keeps its own memory. Select an agent to browse its memory.",
     allMemories: "All memories", searchPh: "Search memory text", shown: (a, b) => `${a} of ${b}`, loadMore: "Show more",
     noMatch: "No memory contains that text.", noMatchHint: "Try a shorter word, or leave the folder you are in.",
     noMemories: "No memories yet",
     noMemoriesP: "Memories appear here as your agent stores them.",
     askMemories: "“Remember that I prefer short answers.”",
-    recalled: n => `used ${n}×`, locked: "Locked",
+    recalled: n => `recalled ${n}×`, locked: "Locked",
     lvl: { agent: "Agent", project: "Project", channel: "Channel", year: "Year", month: "Month" },
     global: "No project", noChannel: "No channel",
-    when: "Written", who: "Agent", where: "Project / channel", from: "Stored by", used: "Used in answers",
+    when: "Recorded", who: "Agent", where: "Project / channel", from: "Source", used: "Times recalled",
     usedN: (n, t) => n ? `${n} times, last ${t}` : "Not yet", lockedQ: "Locked", yes: "Yes, it cannot be edited or deleted", no: "No",
     length: "Length", chars: n => `${n.toLocaleString()} characters`,
     copyRef: "Copy reference", copied: r => `Copied ${r}`, close: "Close",
-    tech: "Technical details", split: "How it is split",
+    tech: "Details", split: "Split",
     nodes: "Nodes", nodesN: n => `${n} node${n === 1 ? "" : "s"}`,
-    nodesHint: "Parts that each fit the embedding window, so each part can be found and quoted.",
+    nodesHint: "Parts short enough for the embedding model's input limit, so each can be found by search and quoted.",
     blocks: "Blocks", blocksN: n => `${n} block${n === 1 ? "" : "s"}`,
-    blocksHint: "Smaller spans that search reaches inside a long memory.",
-    splitHint: "Point at a part to see it in the text.",
-    vector: "Search vector", vectorMissing: "None stored", ids: "Identifiers", raw: "Raw record",
+    blocksHint: "Shorter spans, so search can find text deep inside a long memory.",
+    splitHint: "Click a part to highlight it in the text and scroll to it. Click it again to clear.",
+    vector: "Search vector", vectorMissing: "None stored", ids: "Identifiers", raw: "Original memory",
     emptyEpisodes: "No episodes yet",
     emptyEpisodesP: "An episode is a summary of a whole conversation. Your agent writes one when a session ends.",
     emptyEntities: "No entities yet",
@@ -44,32 +44,32 @@ const T = {
   },
   ja: {
     overview: "概要", memories: "記憶", episodes: "エピソード", entities: "実体", browse: "たどる",
-    techAlways: "技術的な情報をいつも開く",
+    techAlways: "詳細情報を常に開く",
     kbd: ["⌘K 検索", "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
     overviewLead: "この記録先に何が入っていて、いつ書かれたかを見られます。",
     nMemories: "件の記憶", nEpisodes: "件のエピソード", nEntities: "件の実体", nAgents: "エージェント",
     spanOf: (a, b) => `${a} から ${b} まで`,
-    byMonth: "月ごとに書かれた記憶", byMonthHint: "月を選ぶと、その月に書かれた記憶を見られます。",
-    byAgent: "エージェントごと", byAgentHint: "エージェントはそれぞれ自分の記憶を持っています。選ぶとその記憶をたどれます。",
+    byMonth: "月間記憶グラフ", byMonthHint: "月を選ぶと、その月に書かれた記憶を見られます。",
+    byAgent: "エージェントごと", byAgentHint: "エージェントはそれぞれ自分の記憶を持っています。エージェントを選ぶと、その記憶をたどれます。",
     allMemories: "すべての記憶", searchPh: "記憶の本文を検索", shown: (a, b) => `${b} 件中 ${a} 件`, loadMore: "さらに表示",
-    noMatch: "その語を含む記憶はありません。", noMatchHint: "短い語にするか、今いるフォルダを出てみてください。",
+    noMatch: "その語を含む記憶はありません。", noMatchHint: "短い語にするか、今いるフォルダから出てみてください。",
     noMemories: "記憶はまだありません",
-    noMemoriesP: "エージェントが記憶を保存すると、ここに出ます。",
+    noMemoriesP: "エージェントが記憶を保存すると、ここに表示されます。",
     askMemories: "「短い答えが好みだと覚えておいて」",
-    recalled: n => `${n} 回使用`, locked: "ロック中",
+    recalled: n => `${n} 回想起`, locked: "ロック中",
     lvl: { agent: "エージェント", project: "プロジェクト", channel: "チャンネル", year: "年", month: "月" },
     global: "プロジェクトなし", noChannel: "チャンネルなし",
-    when: "書いた日時", who: "エージェント", where: "プロジェクト / チャンネル", from: "保存した人", used: "答えに使われた",
+    when: "記録日時", who: "エージェント", where: "プロジェクト / チャンネル", from: "保存元", used: "想起された回数",
     usedN: (n, t) => n ? `${n} 回 (最後は ${t})` : "まだありません", lockedQ: "ロック", yes: "はい (編集・削除できません)", no: "いいえ",
     length: "長さ", chars: n => `${n.toLocaleString()} 文字`,
     copyRef: "参照をコピー", copied: r => `${r} をコピーしました`, close: "閉じる",
-    tech: "技術的な情報", split: "分け方",
+    tech: "詳細情報", split: "分割",
     nodes: "ノード", nodesN: n => `${n} 個のノード`,
-    nodesHint: "埋め込みの窓に収まる長さの区間です。区間ごとに見つけて引用できます。",
+    nodesHint: "埋め込みモデルの入力上限に収まる長さの区間です。区間ごとに検索で見つけ、引用できます。",
     blocks: "ブロック", blocksN: n => `${n} 個のブロック`,
-    blocksHint: "長い記憶の中まで検索が届くための、より短い区間です。",
-    splitHint: "区間を指すと、本文の該当箇所が光ります。",
-    vector: "検索用のベクトル", vectorMissing: "保存されていません", ids: "識別子", raw: "記録そのもの",
+    blocksHint: "長い記憶の中まで検索で探せるように分けた、より短い区間です。",
+    splitHint: "区間をクリックすると、本文の該当箇所を強調表示して移動します。もう一度クリックすると解除します。",
+    vector: "検索用のベクトル", vectorMissing: "保存されていません", ids: "識別子", raw: "原記憶",
     emptyEpisodes: "エピソードはまだありません",
     emptyEpisodesP: "エピソードは、会話 1 回分のまとめです。セッションが終わる時にエージェントが書きます。",
     emptyEntities: "実体はまだありません",
@@ -341,21 +341,23 @@ async function openDetail(id) {
     navigator.clipboard?.writeText(`mem:${m.id}`);
     toast(t("copied")(`mem:${m.id}`));
   });
-  // Light a part in the text: wrap the span in a <mark class="lit node|block">.
+  // Clicking a part lights it in the text and scrolls to it; clicking it again clears.
+  // Hovering does nothing, so moving the pointer across the bars never moves the text.
   const content = $("content");
   const plain = mark(m.content, state.q);
+  let lit = null;
   for (const b of d.querySelectorAll(".part")) {
     const list = b.dataset.kind === "nodes" ? nodes : blocks;
     const p = list.find(x => x.i === Number(b.dataset.i));
-    const on = () => {
+    b.addEventListener("click", () => {
+      for (const o of d.querySelectorAll(".part.on")) o.classList.remove("on");
+      if (lit === b) { lit = null; content.innerHTML = plain; return; }
+      lit = b;
       const cls = b.dataset.kind === "nodes" ? "is-node" : "is-block";
       content.innerHTML = esc(m.content.slice(0, p.start)) + `<span class="lit ${cls}">${esc(m.content.slice(p.start, p.end))}</span>` + esc(m.content.slice(p.end));
-      content.querySelector(".lit")?.scrollIntoView({ block: "nearest" });
+      content.querySelector(".lit")?.scrollIntoView({ block: "center" });
       b.classList.add("on");
-    };
-    const off = () => { content.innerHTML = plain; b.classList.remove("on"); };
-    b.addEventListener("mouseenter", on); b.addEventListener("focus", on);
-    b.addEventListener("mouseleave", off); b.addEventListener("blur", off);
+    });
   }
 }
 

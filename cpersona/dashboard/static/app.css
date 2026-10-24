@@ -131,7 +131,7 @@
   .drawer .top { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
   .drawer h2 { font-size: 15px; font-weight: 650; margin: 0; }
   .drawer .x { border: 0; background: none; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
-  .facts-list { display: grid; grid-template-columns: 116px 1fr; gap: 6px 12px; margin: 14px 0; font-size: 13px; }
+  .facts-list { display: grid; grid-template-columns: 156px 1fr; gap: 6px 12px; margin: 14px 0; font-size: 13px; }
   .facts-list dt { color: var(--faint); }
   .facts-list dd { margin: 0; overflow-wrap: anywhere; }
   .actions { display: flex; gap: 8px; margin: 4px 0 14px; }
