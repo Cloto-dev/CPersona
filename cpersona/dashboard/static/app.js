@@ -492,6 +492,36 @@ const LAYERS = {
 };
 let gs = null; // the graph on screen, or null
 
+// A number in [0, 1) from a string (FNV-1a), so a point's first place comes from its
+// id and the same graph lays out the same way on every load.
+function hash01(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0) / 4294967296;
+}
+
+// Where each point of a picture was left, per store and picture, so a reload, or a
+// memory added since, does not move the points already seen. Kept in this browser
+// only, for the pictures opened most recently.
+const LAYOUT_KEY = "cp.layout", LAYOUT_KEEP = 20;
+function layoutKey() {
+  const where = state.around ? `a:${state.around}` : state.cluster ? `c:${state.cluster}`
+    : state.entity ? `e:${state.entity}` : state.path.length || state.month ? `f:${JSON.stringify(state.path)}:${state.month}`
+    : `map:${state.lens}`;
+  return `${overviewData.db}|${where}`;
+}
+function loadLayout(key) {
+  try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")[key]?.pos || null; } catch { return null; }
+}
+function saveLayout(key, nodes) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
+    all[key] = { t: Date.now(), pos: Object.fromEntries(nodes.map(n => [n.id, [Math.round(n.x * 10) / 10, Math.round(n.y * 10) / 10]])) };
+    const keep = Object.keys(all).sort((a, b) => all[b].t - all[a].t).slice(0, LAYOUT_KEEP);
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(Object.fromEntries(keep.map(k => [k, all[k]]))));
+  } catch {}
+}
+
 function stopGraph() {
   if (gs) { gs.alive = false; gs.observer?.disconnect(); }
   gs = null;
@@ -593,18 +623,32 @@ function startGraph(G, lens) {
   const radius = n => n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
     : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
   const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
-  // Start each agent's points near its own angle (or, around a memory, by step),
+  // A point seen before starts where it was left. A new one starts beside the seen
+  // points it is tied to, or else near its agent's angle (around a memory, by step),
   // so the layout settles in a few hundred steps.
+  const key = layoutKey(), saved = loadLayout(key) || {};
+  const rnd = (n, salt) => hash01(`${n.id}:${salt}`);
   for (const n of G.nodes) {
+    n.vx = n.vy = 0;
+    if (saved[n.id]) { [n.x, n.y] = saved[n.id]; n.kept = true; continue; }
     const i = Math.max(0, agents.indexOf(n.agent)), ang = (i / Math.max(1, agents.length)) * Math.PI * 2;
     const depth = n.kind === "group" ? n.path.length : 0;
-    const r = state.around && n.kind === "memory" ? n.hop * 90 : hub(n) ? 220 : 220 + depth * 30 + (Math.random() - 0.5) * 160;
-    const spin = state.around && n.kind === "memory" || lens === "clusters" || lens === "entities" ? Math.random() * Math.PI * 2 : ang;
-    n.x = Math.cos(spin) * r + (Math.random() - 0.5) * 60; n.y = Math.sin(spin) * r + (Math.random() - 0.5) * 60; n.vx = n.vy = 0;
+    const r = state.around && n.kind === "memory" ? n.hop * 90 : hub(n) ? 220 : 220 + depth * 30 + (rnd(n, "r") - 0.5) * 160;
+    const spin = state.around && n.kind === "memory" || lens === "clusters" || lens === "entities" ? rnd(n, "a") * Math.PI * 2 : ang;
+    n.x = Math.cos(spin) * r + (rnd(n, "x") - 0.5) * 60; n.y = Math.sin(spin) * r + (rnd(n, "y") - 0.5) * 60;
   }
+  for (const n of G.nodes) {
+    if (n.kept) continue;
+    const seen = [...adj.get(n.id)].map(id => byId.get(id)).filter(m => m.kept);
+    if (!seen.length) continue;
+    n.x = seen.reduce((a, m) => a + m.x, 0) / seen.length + (rnd(n, "x") - 0.5) * 40;
+    n.y = seen.reduce((a, m) => a + m.y, 0) / seen.length + (rnd(n, "y") - 0.5) * 40;
+  }
+  const kept = G.nodes.filter(n => n.kept).length;
   const SPRING = { structure: [46, 0.03], part: [36, 0.06], near: [70, 0.03], co: [60, 0.05], declared: [34, 0.08] };
 
-  function tick(alpha, friction = 0.6) {
+  // pin: points seen before hold still, so only the new ones find their place.
+  function tick(alpha, friction = 0.6, pin = false) {
     const N = G.nodes;
     for (let i = 0; i < N.length; i++) {
       const a = N[i], ra = radius(a);
@@ -626,6 +670,7 @@ function startGraph(G, lens) {
     for (const n of N) {
       n.vx -= n.x * 0.002 * alpha; n.vy -= n.y * 0.002 * alpha;
       if (n === s.drag) continue;
+      if (pin && n.kept) { n.vx = n.vy = 0; continue; }
       const fr = hub(n) ? Math.min(friction, HUB_FRICTION) : friction;
       n.vx *= fr; n.vy *= fr; n.x += n.vx; n.y += n.vy;
     }
@@ -700,7 +745,10 @@ function startGraph(G, lens) {
   function loop() {
     if (!s.alive) return;
     let moved = false;
-    if (s.heat > 0.004) { tick(s.heat, FRICTION); s.heat *= 0.985; moved = true; }
+    if (s.heat > 0.004) {
+      tick(s.heat, FRICTION); s.heat *= 0.985; moved = true;
+      if (s.heat <= 0.004) saveLayout(key, G.nodes); // still again: remember where it settled
+    }
     if (s.panV && !s.panning) {
       s.view.x += s.panV.x; s.view.y += s.panV.y; s.panV.x *= 0.92; s.panV.y *= 0.92;
       if (Math.hypot(s.panV.x, s.panV.y) < 0.05) s.panV = null;
@@ -792,8 +840,12 @@ function startGraph(G, lens) {
 
   resize();
   // Fewer warm-up steps for a large graph: each step compares every pair of points.
-  const warm = Math.max(60, Math.min(400, Math.round(120000 / Math.max(1, G.nodes.length))));
-  for (let i = 0; i < warm; i++) tick(1 - i / warm);
+  // A picture whose every point was seen before is drawn as it was left.
+  if (kept < G.nodes.length) {
+    const warm = Math.max(60, Math.min(400, Math.round(120000 / Math.max(1, G.nodes.length))));
+    for (let i = 0; i < warm; i++) tick(1 - i / warm, 0.6, kept > 0);
+  }
+  saveLayout(key, G.nodes); // also marks this picture as recently opened
   fit();
   draw();
   requestAnimationFrame(loop);
