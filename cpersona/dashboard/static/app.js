@@ -60,8 +60,9 @@ const T = {
       entities: "Entities are names agents declared. A “mentioned in the same memory” line joins two entities one memory mentions; the thicker it is, the more such memories.",
       clusters: "Groups are computed from the stored embeddings. No agent made them, and they can change as memories are added.",
     },
-    lens: { tree: "Folders", entities: "Entities", clusters: "Similar groups" },
+    lens: { memories: "Memories", tree: "Folders", entities: "Entities", clusters: "Similar groups" },
     lensLead: {
+      memories: "Each point is a memory, gathered around its agent, newest 800 at most. Lines join memories with similar content.",
       tree: "Each point is a folder: agent, project, channel and month. Its size is the number of memories in it.",
       entities: "Each point is an entity an agent declared. Its size is the number of memories that mention it.",
       clusters: "Each point is a group of memories with similar content. It is named by quoting the start of the memory nearest its centre.",
@@ -135,8 +136,9 @@ const T = {
       entities: "実体は、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
       clusters: "まとまりは、保存された埋め込みから計算したものです。エージェントが分けたものではありません。記憶が増えると、分け方が変わることがあります。",
     },
-    lens: { tree: "分け方", entities: "実体", clusters: "内容の近いまとまり" },
+    lens: { memories: "記憶", tree: "分け方", entities: "実体", clusters: "内容の近いまとまり" },
     lensLead: {
+      memories: "記憶を点にして、エージェントのまわりに集めています。新しい順に 800 件までです。線は、内容が似ている記憶どうしを結んでいます。",
       tree: "記憶の分け方 (エージェント・プロジェクト・チャンネル・月) を点にしています。点の大きさは記憶の件数です。",
       entities: "エージェントが宣言した実体を点にしています。点の大きさは、その実体に言及している記憶の件数です。",
       clusters: "内容の近い記憶をまとめて点にしています。点の名前は、まとまりの中心にいちばん近い記憶の冒頭の引用です。",
@@ -172,6 +174,8 @@ if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
 if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
 if (["calm", "star"].includes(H0.get("look"))) state.look = H0.get("look"); // prototype looks, for comparison
+// Prototype: every memory at once, as first drawn; the constellation look opens on it.
+if (state.look && H0.get("lens") === "memories" || state.look === "star" && !H0.get("lens")) state.lens = "memories";
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
 try { state.lang = localStorage.getItem("cp.lang") || (navigator.language || "").startsWith("ja") && "ja" || "en"; } catch {}
 if (H0.get("lang")) state.lang = H0.get("lang");
@@ -219,7 +223,7 @@ function saveHash() {
   if (state.month) h.set("month", state.month);
   if (state.id) h.set("id", state.id);
   for (const k of ["around", "cluster", "entity"]) if (state[k]) h.set(k, state[k]);
-  if (state.lens !== "tree") h.set("lens", state.lens);
+  if (state.lens !== "tree" || state.look === "star") h.set("lens", state.lens);
   if (state.look) h.set("look", state.look);
   history.replaceState(null, "", "#" + h);
 }
@@ -544,12 +548,13 @@ async function renderGraph() {
   const page = $("page");
   if (!overviewData.counts.memories) return renderEmptyMemories();
   const memoryView = state.around || state.cluster || state.entity || state.path.length || state.month;
+  const allMemories = !memoryView && state.lens === "memories";
   const G = state.around ? await api("/api/graph", { around: state.around })
     : state.cluster ? await api("/api/graph", { cluster_of: state.cluster })
     : state.entity ? await api("/api/graph", { entity: state.entity })
-    : memoryView ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month })
+    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month })
     : await api("/api/map", { lens: state.lens });
-  const lens = memoryView ? "memories" : G.lens;
+  const lens = memoryView || allMemories ? "memories" : G.lens;
   const back = `<div class="crumbs"><button id="backBtn">${t("backToMap")}</button></div>`;
   const shown = G.shown != null ? `<span class="hint">${esc(t("nGraph")(G.shown, G.total))}${G.without_vector ? "<br>" + esc(t("noVectorN")(G.without_vector)) : ""}</span>` : "";
   let head;
@@ -559,9 +564,10 @@ async function renderGraph() {
   else if (state.entity) head = `<h1>${esc(t("entityTitle")(G.label))}</h1><p class="lead">${shown}</p>${back}`;
   else if (memoryView) head = `<h1>${t("graph")}</h1><p class="lead">${t("graphLead")}<br>${shown}</p>${back}`;
   else {
-    const seg = ["tree", "entities", "clusters"].map(l =>
+    const seg = [...(state.look ? ["memories"] : []), "tree", "entities", "clusters"].map(l =>
       `<button data-lens="${l}" aria-pressed="${l === lens}">${t("lens")[l]}</button>`).join("");
     let lead = t("lensLead")[lens];
+    if (allMemories) lead += `<br>${shown}`;
     if (lens === "tree" && !G.months_shown) lead += " " + t("treeNoMonths")(G.months);
     if (lens === "clusters" && G.groups != null) lead += `<br><span class="hint">${esc(t("clusterCount")(G.groups, G.grouped))}${G.not_grouped ? "<br>" + esc(t("notGrouped")(G.not_grouped)) : ""}</span>`;
     head = `<h1>${t("graph")}</h1><div class="seg lens" role="group" aria-label="${t("graph")}">${seg}</div><p class="lead">${lead}</p>`;
@@ -575,7 +581,7 @@ async function renderGraph() {
     <div class="g-top">${head}</div>
     <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet">${t("display")}</button>
     <div class="g-panel g-set" id="gSet">
-      ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), k !== "structure")).join("") : ""}
+      ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), state.look !== "calm" || k !== "structure")).join("") : ""}
       ${G.nodes ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
       ${note ? `<div class="g-note">${note}</div>` : ""}
     </div>
@@ -623,7 +629,7 @@ function startGraph(G, lens) {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const pal = PALETTE[dark ? "dark" : "light"];
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !(state.look && k === "structure")])),
+  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !(state.look === "calm" && k === "structure")])),
     heat: 0, panV: null, hover: null, sel: null, drag: null, panning: null, W: 0, H: 0, DPR: 1 };
   const byId = new Map(G.nodes.map(n => [n.id, n]));
   const adj = new Map(G.nodes.map(n => [n.id, new Set()]));
@@ -674,8 +680,10 @@ function startGraph(G, lens) {
   // distance cut-off), springs that yield at the busier end, collision, and a pull to
   // the centre, so the graph settles into one round body. A first view starts on a
   // sunflower spiral and is shown blooming out of it.
-  const calm = !!state.look, star = state.look === "star";
-  if (calm && !kept) G.nodes.forEach((n, i) => {
+  // The constellation look keeps the first layout (each agent's memories gathered
+  // round it); only the calm look uses the forces below.
+  const calm = !!state.look, star = state.look === "star", calmPhysics = state.look === "calm";
+  if (calmPhysics && !kept) G.nodes.forEach((n, i) => {
     const r = 10 * Math.sqrt(0.5 + i), a = i * Math.PI * (3 - Math.sqrt(5));
     n.x = r * Math.cos(a); n.y = r * Math.sin(a);
   });
@@ -800,7 +808,7 @@ function startGraph(G, lens) {
   function fitView() {
     const xs = G.nodes.map(n => n.x), ys = G.nodes.map(n => n.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    const k = Math.min(calm ? 1.3 : 2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
+    const k = Math.min(calmPhysics ? 1.3 : 2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
     return { k, x: s.W / 2 - (minX + maxX) / 2 * k, y: s.H / 2 - (minY + maxY) / 2 * k };
   }
   function fit() { Object.assign(s.view, fitView()); }
@@ -1027,7 +1035,7 @@ function startGraph(G, lens) {
   function loop() {
     if (!s.alive) return;
     let moved = false;
-    if (calm && (s.alpha > 0.001 || s.alphaTarget)) {
+    if (calmPhysics && (s.alpha > 0.001 || s.alphaTarget)) {
       for (let i = G.nodes.length > 600 ? 1 : 2; i > 0; i--) { s.alpha += (s.alphaTarget - s.alpha) * 0.0228; calmTick(s.alpha); }
       moved = true;
       if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.12; s.view.x += (v.x - s.view.x) * 0.12; s.view.y += (v.y - s.view.y) * 0.12; }
@@ -1093,7 +1101,7 @@ function startGraph(G, lens) {
   }
   cv.addEventListener("pointermove", e => {
     const [x, y] = at(e);
-    if (s.drag) { [s.drag.x, s.drag.y] = world(x, y); s.drag.vx = s.drag.vy = 0; s.drag.moved = true; if (calm) { s.alphaTarget = 0.3; s.alpha = Math.max(s.alpha, 0.1); } else s.heat = Math.max(s.heat, 0.3); return; }
+    if (s.drag) { [s.drag.x, s.drag.y] = world(x, y); s.drag.vx = s.drag.vy = 0; s.drag.moved = true; if (calmPhysics) { s.alphaTarget = 0.3; s.alpha = Math.max(s.alpha, 0.1); } else s.heat = Math.max(s.heat, 0.3); return; }
     if (s.panning) {
       const nx = x - s.panning.x, ny = y - s.panning.y;
       s.panning.v = { x: nx - s.view.x, y: ny - s.view.y }; s.view.x = nx; s.view.y = ny; draw(); return;
@@ -1133,8 +1141,8 @@ function startGraph(G, lens) {
   // A picture whose every point was seen before is drawn as it was left.
   // A first view settles its first steps unseen, so it opens near its final size,
   // and is shown finding its place from there.
-  if (calm && !kept) { s.alpha = 1; for (let i = 0; i < 40; i++) { s.alpha -= s.alpha * 0.0228; calmTick(s.alpha); } s.autoFit = true; }
-  else if (calm && kept < G.nodes.length) for (let i = 0; i < 200; i++) calmTick(0.5 * (1 - i / 200), true);
+  if (calmPhysics && !kept) { s.alpha = 1; for (let i = 0; i < 40; i++) { s.alpha -= s.alpha * 0.0228; calmTick(s.alpha); } s.autoFit = true; }
+  else if (calmPhysics && kept < G.nodes.length) for (let i = 0; i < 200; i++) calmTick(0.5 * (1 - i / 200), true);
   else if (kept < G.nodes.length) {
     const warm = Math.max(60, Math.min(400, Math.round(120000 / Math.max(1, G.nodes.length))));
     for (let i = 0; i < warm; i++) tick(1 - i / warm, 0.6, kept > 0);
