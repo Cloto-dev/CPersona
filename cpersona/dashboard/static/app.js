@@ -54,7 +54,7 @@ const T = {
     layer: { declared: "Declared relations", similar: "Similar content (computed)", structure: "Grouped by agent",
       part: "Folder and subfolder", co: "Mentioned in the same memory", near: "Groups with close centres (computed)" },
     linesN: n => `${n}`,
-    colourByAgent: "Colour by agent",
+    colourByAgent: "Colour by agent", display: "Display",
     layerNote: {
       memories: "Similar lines are computed from the stored embeddings. No agent declared them.",
       entities: "Entities are names agents declared. A “mentioned in the same memory” line joins two entities one memory mentions; the thicker it is, the more such memories.",
@@ -129,7 +129,7 @@ const T = {
     layer: { declared: "宣言した関係", similar: "内容が似ている (自動)", structure: "エージェントごとのまとまり",
       part: "フォルダの親子", co: "同じ記憶で言及", near: "中心が近いまとまり (自動)" },
     linesN: n => `${n} 本`,
-    colourByAgent: "エージェントで色分け",
+    colourByAgent: "エージェントで色分け", display: "表示",
     layerNote: {
       memories: "「内容が似ている」線は、保存された埋め込みから計算したつながりです。エージェントが宣言した関係ではありません。",
       entities: "実体は、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
@@ -531,11 +531,11 @@ function stopGraph() {
   gs = null;
 }
 
-function layerRow(kind, n) {
+function layerRow(kind, n, on = true) {
   const swatch = kind === "similar" || kind === "near"
     ? `<defs><linearGradient id="lg-${kind}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="34" y2="0"><stop offset="0" class="s-a"/><stop offset="1" class="s-b"/></linearGradient></defs><line x1="0" y1="5" x2="34" y2="5" class="l-similar l-${kind}"/>`
     : `<line x1="0" y1="5" x2="34" y2="5" class="l-${kind}"/>`;
-  return `<label class="layer"><input type="checkbox" data-layer="${kind}" checked>
+  return `<label class="layer"><input type="checkbox" data-layer="${kind}"${on ? " checked" : ""}>
     <svg width="34" height="10" aria-hidden="true">${swatch}</svg>
     <span>${t("layer")[kind]}</span><span class="n">${esc(t("linesN")(n))}</span></label>`;
 }
@@ -568,14 +568,30 @@ async function renderGraph() {
   }
   const count = k => G.links ? G.links.filter(l => l.kind === k).length : 0;
   const note = t("layerNote")[lens];
-  page.innerHTML = `<div class="graph" id="graphWrap"><canvas id="gc"></canvas>
+  // Prototype (look=calm): the picture takes the whole pane; what to show sits behind
+  // a button at the top right, as in a notes app's graph view.
+  const calmLook = state.look === "calm";
+  page.innerHTML = calmLook ? `<div class="graph calm" id="graphWrap"><canvas id="gc"></canvas>
+    <div class="g-top">${head}</div>
+    <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet">${t("display")}</button>
+    <div class="g-panel g-set" id="gSet">
+      ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), k !== "structure")).join("") : ""}
+      ${G.nodes ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
+      ${note ? `<div class="g-note">${note}</div>` : ""}
+    </div>
+    <div class="g-panel g-card" id="gcard"></div>
+    <div class="g-hint">${t("graphHint")}</div></div>` : `<div class="graph" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-panel g-legend">${head}
       ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k))).join("") : ""}
-      ${G.nodes && state.look === "calm" ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
       ${note ? `<div class="g-note">${note}</div>` : ""}
     </div>
     <div class="g-panel g-card" id="gcard"></div>
     <div class="g-hint">${t("graphHint")}</div></div>`;
+  if (calmLook) {
+    const lead = page.querySelector(".g-top .lead");
+    if (lead) $("gSet").prepend(lead);
+    $("gGear").addEventListener("click", () => { const open = $("gSet").classList.toggle("open"); $("gGear").setAttribute("aria-expanded", open); });
+  }
   $("backBtn")?.addEventListener("click", () => go({ view: "graph", path: [], month: "" }));
   for (const b of page.querySelectorAll("[data-lens]")) b.addEventListener("click", () => go({ view: "graph", path: [], month: "", lens: b.dataset.lens }));
   // A lens with nothing to draw says why, instead of an empty canvas.
@@ -607,7 +623,7 @@ function startGraph(G, lens) {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const pal = PALETTE[dark ? "dark" : "light"];
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, true])),
+  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !(state.look === "calm" && k === "structure")])),
     heat: 0, panV: null, hover: null, sel: null, drag: null, panning: null, W: 0, H: 0, DPR: 1 };
   const byId = new Map(G.nodes.map(n => [n.id, n]));
   const adj = new Map(G.nodes.map(n => [n.id, new Set()]));
@@ -625,8 +641,10 @@ function startGraph(G, lens) {
     else if (n.kind === "cluster") n.name = n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label;
     else n.name = n.label;
   }
-  const radius = n => n.count != null ? (state.look === "calm" ? 3 + 10 * Math.sqrt(n.count / maxCount) : 4 + 16 * Math.sqrt(n.count / maxCount))
-    : n.kind === "agent" ? 7 : state.look === "calm" && n.kind === "memory" ? 2.2 + Math.sqrt(n.deg) * 1.1 + (n.hop === 0 ? 1.5 : 0) : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
+  // The calm look draws small, nearly even dots, a little larger the more they hold.
+  const calmR = n => hub(n) ? 4.5 : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
+  const radius = n => state.look === "calm" ? calmR(n) : n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
+    : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
   const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
   // A point seen before starts where it was left. A new one starts beside the seen
   // points it is tied to, or else near its agent's angle (around a memory, by step),
@@ -662,8 +680,8 @@ function startGraph(G, lens) {
     n.x = r * Math.cos(a); n.y = r * Math.sin(a);
   });
   const deg = new Map(G.nodes.map(n => [n.id, Math.max(1, adj.get(n.id).size)]));
-  const charge = n => -30 * Math.max(1, radius(n) / 4);
-  const LINK_LEN = { structure: 60, part: 34, near: 120, co: 70, declared: 40, similar: 45 };
+  const charge = n => -90 * Math.max(1, radius(n) / 3);
+  const LINK_LEN = { structure: 50, part: 30, near: 60, co: 45, declared: 35, similar: 35 };
   function quadTree(N) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of N) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); }
@@ -735,7 +753,7 @@ function startGraph(G, lens) {
       }
     });
     for (const n of N) {
-      n.vx -= n.x * 0.08 * alpha; n.vy -= n.y * 0.08 * alpha;
+      n.vx -= n.x * 0.05 * alpha; n.vy -= n.y * 0.05 * alpha;
       if (n === s.drag || pin && n.kept) { n.vx = n.vy = 0; continue; }
       n.vx *= 0.6; n.vy *= 0.6; n.x += n.vx; n.y += n.vy;
     }
@@ -782,7 +800,7 @@ function startGraph(G, lens) {
   function fitView() {
     const xs = G.nodes.map(n => n.x), ys = G.nodes.map(n => n.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    const k = Math.min(2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
+    const k = Math.min(calm ? 1.3 : 2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
     return { k, x: s.W / 2 - (minX + maxX) / 2 * k, y: s.H / 2 - (minY + maxY) / 2 * k };
   }
   function fit() { Object.assign(s.view, fitView()); }
@@ -845,18 +863,18 @@ function startGraph(G, lens) {
   function drawCalm() {
     const { view } = s;
     ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
-    ctx.fillStyle = css("--base"); ctx.fillRect(0, 0, s.W, s.H);
+    ctx.fillStyle = dark ? "#1e1e1e" : "#ffffff"; ctx.fillRect(0, 0, s.W, s.H);
     ctx.setTransform(s.DPR * view.k, 0, 0, s.DPR * view.k, s.DPR * view.x, s.DPR * view.y);
     const focus = s.hover || s.sel, near = focus ? adj.get(focus.id) : null;
     const lit = n => !focus || n === focus || near.has(n.id);
-    const ink = dark ? "220,224,230" : "40,44,52", accent = css("--accent"), grey = css("--muted");
+    const ink = dark ? "255,255,255" : "0,0,0", accent = css("--accent"), grey = dark ? "#bdbdbd" : "#8a8a8a";
     ctx.lineWidth = 0.9 / view.k;
     for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
       if (!s.show[kind]) continue;
       for (const l of G.links) {
         if (l.kind !== kind) continue;
         const on = focus && (l.a === focus || l.b === focus);
-        let alpha = kind === "structure" || kind === "part" ? 0.13 : kind === "declared" ? 0.5 : 0.2;
+        let alpha = kind === "structure" ? 0.1 : kind === "declared" ? 0.5 : 0.22;
         if (on) alpha = 0.9; else if (focus) alpha *= 0.35;
         ctx.globalAlpha = alpha;
         ctx.strokeStyle = on || kind === "declared" ? accent : `rgb(${ink})`;
@@ -875,13 +893,13 @@ function startGraph(G, lens) {
     ctx.font = `400 ${11.5 / view.k}px system-ui, sans-serif`;
     const ramp = v => Math.max(0, Math.min(1, v));
     for (const n of G.nodes) {
-      // Only the agents are named from afar; other names fade in on the way closer.
-      let a = n.kind === "memory" ? ramp((view.k - 3) / 1) : ramp((view.k - 1.6) / 0.6);
-      if (hub(n) || n.kind === "entity" || n.kind === "cluster") a = Math.max(a, 0.85);
+      // No names from afar; they fade in on the way closer, and on the point pointed at.
+      // A picture of a few dozen groups is read by their names, so those stay.
+      let a = n.kind !== "memory" && G.nodes.length <= 60 ? 0.9 : ramp((view.k - (n.kind === "memory" ? 2.2 : 1.6)) / 0.6);
       if (focus) a = n === focus ? 1 : near.has(n.id) ? Math.max(a, view.k > 1 ? 0.9 : 0) : a * 0.25;
       if (a < 0.02) continue;
       ctx.globalAlpha = a;
-      ctx.fillStyle = n === focus ? css("--text") : grey;
+      ctx.fillStyle = n === focus ? (dark ? "#e8e8e8" : "#222") : grey;
       ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.name, n.x, n.y + radius(n) + 4 / view.k);
     }
     ctx.globalAlpha = 1;

@@ -201,6 +201,16 @@
   .g-near { color: var(--faint); font-size: 12px; margin-bottom: 10px; }
   .g-card .actions { margin: 0; }
   .g-hint { position: absolute; left: 16px; bottom: 16px; color: var(--faint); font-size: 12px; }
+  /* Prototype: the calm look (look=calm). */
+  .calm .g-top { position: absolute; top: 14px; left: 16px; right: 96px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .calm .g-top h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  .calm .g-top .crumbs, .calm .g-top .seg { margin: 0; }
+  .calm .g-gear { position: absolute; top: 12px; right: 16px; border: 1px solid var(--line); background: var(--raised); color: var(--muted); border-radius: 6px; padding: 4px 10px; font-size: 13px; cursor: pointer; }
+  .calm .g-gear[aria-expanded="true"] { color: var(--text); }
+  .calm .g-set { top: 48px; right: 16px; width: min(320px, calc(100% - 32px)); display: none; }
+  .calm .g-set.open { display: block; }
+  .calm .g-set .lead { font-size: 13px; margin: 0 0 10px; color: var(--muted); }
+  .calm .g-hint { opacity: 0.7; }
   .l-part { stroke: currentColor; stroke-opacity: .5; stroke-width: 1.2; }
   .l-co { stroke: var(--accent); stroke-opacity: .5; stroke-width: 2; }
   .l-near { stroke: url(#lg-near); }
