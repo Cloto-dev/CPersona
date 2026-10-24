@@ -187,7 +187,7 @@
   .layer .n { color: var(--faint); font-variant-numeric: tabular-nums; }
   .layer svg { display: block; }
   .l-declared { stroke: var(--accent); stroke-width: 2.4; }
-  .l-similar { stroke: url(#lg); stroke-opacity: .7; stroke-width: 1.2; }
+  .l-similar { stroke: url(#lg-similar); stroke-opacity: .7; stroke-width: 1.2; }
   .l-structure { stroke: currentColor; stroke-opacity: .35; stroke-width: 1; }
   .s-a { stop-color: #6f9af2; }
   .s-b { stop-color: #f0915e; }
@@ -201,3 +201,9 @@
   .g-near { color: var(--faint); font-size: 12px; margin-bottom: 10px; }
   .g-card .actions { margin: 0; }
   .g-hint { position: absolute; left: 16px; bottom: 16px; color: var(--faint); font-size: 12px; }
+  .l-part { stroke: currentColor; stroke-opacity: .5; stroke-width: 1.2; }
+  .l-co { stroke: var(--accent); stroke-opacity: .5; stroke-width: 2; }
+  .l-near { stroke: url(#lg-near); }
+  .seg.lens { margin: 8px 0 4px; }
+  .g-title { font-weight: 600; overflow-wrap: anywhere; }
+  .g-empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 420px; color: var(--muted); text-align: center; }
