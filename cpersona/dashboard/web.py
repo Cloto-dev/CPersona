@@ -20,6 +20,7 @@ import hmac
 import json
 import secrets
 import sqlite3
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
@@ -52,12 +53,20 @@ def _static(name: str) -> bytes:
 
 
 def make_handler(
-    db_path: str, token: str, port_ref: list[int]
+    db_path: str,
+    token: str,
+    port_ref: list[int],
+    health: Callable[[], dict] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """A request handler bound to one database and one token.
 
     ``port_ref`` holds the listening port, filled in once the socket is bound
     (the port may be chosen by the OS), so the Host check knows it.
+
+    ``health`` reports the store's health. Only the running server can judge it
+    (whether a long record should have nodes depends on the embedding server's
+    token counts, and whether a missing vector is wrong depends on its settings),
+    so the dashboard started from a terminal has none and ``/api/health`` says so.
     """
     name = Path(db_path).name
 
@@ -109,6 +118,20 @@ def make_handler(
                 return self._json(
                     401, {"error": "Open the dashboard from the address it printed."}
                 )
+            if url.path == "/api/health":
+                if health is None:
+                    return self._json(
+                        404,
+                        {
+                            "error": "Store health is shown when an agent opens the dashboard."
+                        },
+                    )
+                try:
+                    return self._json(200, health())
+                except Exception as e:  # noqa: BLE001 - reported to the page, not raised
+                    return self._json(
+                        502, {"error": f"The health check did not finish: {e}"}
+                    )
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             try:
                 path = json.loads(q.get("path") or "[]")
@@ -159,12 +182,17 @@ def make_handler(
 
 
 def make_server(
-    db_path: str, port: int = 0, token: str | None = None
+    db_path: str,
+    port: int = 0,
+    token: str | None = None,
+    health: Callable[[], dict] | None = None,
 ) -> tuple[ThreadingHTTPServer, str]:
     """Bind the dashboard; returns the server and the address to open (with its token)."""
     token = token or secrets.token_urlsafe(32)
     port_ref = [port]
-    server = ThreadingHTTPServer((HOST, port), make_handler(db_path, token, port_ref))
+    server = ThreadingHTTPServer(
+        (HOST, port), make_handler(db_path, token, port_ref, health)
+    )
     server.daemon_threads = True
     port_ref[0] = server.server_address[1]
     return server, f"http://{HOST}:{port_ref[0]}/#t={token}"

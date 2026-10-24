@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/tools.md@blob:2f7afc7d3cbd323f5011c8b1af3b5dd19db7e0cf -->
+<!-- i18n-source: docs/tools.md@blob:818f2091ccd7864cf34423ecade7685b516dcd6b -->
 
 # ツール一覧
 
@@ -43,6 +43,7 @@
 | `list_memories` | 直近の記憶を新しい順に返します。検索もスコアリングもしません |
 | `list_episodes` | アーカイブ済みのエピソードを新しい順に返します |
 | `get_queue_status` | バックグラウンドのタスクキューの深さと再試行の状態を返します |
+| `open_dashboard` | stdio のトランスポートで、`CPERSONA_DASHBOARD` が on (既定) の時だけ登録されます。この記録先の読み取り専用の[ダッシュボード](operations.md#the-dashboard)を 127.0.0.1 で開き、人に渡すアドレスを返します。ページには、このサーバー自身の検査によるデータベースの状態も出ます |
 
 ## 保護と削除 { #protection-and-deletion }
 

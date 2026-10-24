@@ -93,6 +93,10 @@
   .bars .track { height: 8px; background: var(--recessed); border-radius: 2px; }
   .bars .fill { height: 100%; background: var(--bar); border-radius: 2px; }
   .bars .num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ok { color: var(--muted); }
+  .issue { display: flex; gap: 10px; padding: 10px 12px; background: var(--warn-soft); border-radius: 6px; margin-top: 8px; }
+  .issue > b { color: var(--warn); flex: none; }
+  .issue code { font: inherit; font-weight: 600; }
 
   /* Memory list */
   .toolbar { display: flex; gap: 8px; margin-bottom: 16px; }

@@ -40,6 +40,7 @@ matters when you tighten `limit`.
 | `list_memories` | Recent memories, newest first — no search, no scoring |
 | `list_episodes` | Archived episodes, newest first |
 | `get_queue_status` | Depth and retry state of the background task queue |
+| `open_dashboard` | Registered only under the stdio transport, with `CPERSONA_DASHBOARD` on (the default). Opens the read-only [dashboard](operations.md#the-dashboard) for this store on 127.0.0.1 and returns its address for the person; the page adds the store's health from this server's own checks |
 
 ## Protection and deletion
 

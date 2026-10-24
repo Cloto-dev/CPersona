@@ -27,6 +27,7 @@ import ipaddress
 import logging
 import os
 import sys
+import webbrowser
 from collections.abc import Callable
 from typing import NamedTuple
 from urllib.parse import urlparse
@@ -42,6 +43,8 @@ from cpersona import block_index
 from cpersona import blocks
 from cpersona import excerpts
 from cpersona import folders as folders_module
+from cpersona.dashboard import embedded as dashboard_embedded
+from cpersona.dashboard import store as dashboard_store
 from cpersona import tokens as tokens_module
 from cpersona import generation
 from cpersona._vendored_mcp_common import no_persist
@@ -2972,7 +2975,7 @@ async def do_organize_folders_boundary(
 # Tools registered only under a setting. The structural gates read the source, so
 # they see these tools whatever the setting is; this is how they know a tool is
 # absent by design rather than missing a row, and which setting brings it.
-SETTING_GATED_TOOLS = {"organize_folders": "CPERSONA_DECLARED_FOLDERS"}
+SETTING_GATED_TOOLS = {"organize_folders": "CPERSONA_DECLARED_FOLDERS", "open_dashboard": "CPERSONA_DASHBOARD"}
 
 
 def _enable_declared_folders(registry) -> None:
@@ -3130,6 +3133,73 @@ def _enable_declared_folders(registry) -> None:
 
 if config.DECLARED_FOLDERS:
     _enable_declared_folders(registry)
+
+
+_OPEN_DASHBOARD_DESCRIPTION = (
+    "Open the read-only dashboard of this memory store and return its address, for "
+    "the person to view in a browser: what is stored and when, the logical directory, "
+    "each memory in full with how it is split, and the store's health. It runs on "
+    "127.0.0.1 behind a per-start token and writes nothing. Give the returned url to "
+    "the person; open_browser=true also opens it on this machine."
+)
+
+
+def _dashboard_health(loop: asyncio.AbstractEventLoop):
+    """The dashboard's health report: check_health without repairs, on the server's
+    loop (the page runs in another thread), cut to what the page shows."""
+
+    def report() -> dict:
+        result = asyncio.run_coroutine_threadsafe(do_check_health(), loop).result(timeout=120)
+        return {
+            "status": result.get("status"),
+            "severity_summary": result.get("severity_summary"),
+            "issues": [
+                {k: issue.get(k) for k in ("check", "type", "severity", "count", "hint")}
+                for issue in result.get("issues", [])
+            ],
+        }
+
+    return report
+
+
+async def do_open_dashboard(open_browser: bool = False) -> dict:
+    try:
+        url = dashboard_embedded.open_for(config.DB_PATH, _dashboard_health(asyncio.get_running_loop()))
+    except dashboard_store.StoreError as e:
+        return error_response(str(e))
+    opened = bool(open_browser) and webbrowser.open(url)
+    return {
+        "ok": True,
+        "url": url,
+        "read_only": True,
+        "opened": opened,
+        "hint": "Give this address to the person. It opens only on this machine and stops when the server stops.",
+    }
+
+
+def _enable_dashboard(registry) -> None:
+    registry.auto_tool(
+        "open_dashboard",
+        _OPEN_DASHBOARD_DESCRIPTION,
+        {
+            "type": "object",
+            "properties": {
+                "open_browser": {
+                    "type": "boolean",
+                    "description": "Also open the address in this machine's browser. Default false.",
+                },
+            },
+        },
+        do_open_dashboard,
+        [("open_browser", bool, False)],
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+    )
+
+
+# Only where the server runs on the person's machine: over HTTP the page would open
+# on the server's loopback, which the person cannot reach.
+if config.DASHBOARD and config.transport() == "stdio":
+    _enable_dashboard(registry)
 
 
 # Below the last registration and above the capability guard, so a call is
