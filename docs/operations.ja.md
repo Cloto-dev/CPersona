@@ -458,7 +458,7 @@ python -m cpersona.block_index --db /path/to/cpersona.db status
 
 ## ダッシュボード { #the-dashboard }
 
-`cpersona dashboard` は、記録先を読み取り専用のページとしてブラウザで開きます。何が入っていていつ書かれたかの概要、論理ディレクトリの木 (エージェント・プロジェクト・チャンネル・年・月)、フォルダ・月・本文で絞れる一覧、各記憶の全文とノード・ブロックへの分け方を見られます。
+`cpersona dashboard` は、記憶のデータベースを読み取り専用のページとしてブラウザで開きます。ページには、保存されている記憶の件数と時期の概要、論理ディレクトリの木 (エージェント・プロジェクト・チャンネル・年・月)、フォルダ・月・本文で絞り込める一覧、各記憶の全文とノード・ブロックへの分割を表示します。
 
 ```bash
 cpersona dashboard --db ~/.claude/cpersona.db      # または: uvx cpersona dashboard --db …
