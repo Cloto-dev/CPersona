@@ -4466,7 +4466,16 @@ async def main():
 
 def run():
     """Synchronous entry point for the ``cpersona`` console script and
-    ``python -m cpersona``."""
+    ``python -m cpersona``.
+
+    ``cpersona dashboard [...]`` opens the read-only dashboard instead of starting
+    the server. Every other invocation starts the server as before; the server
+    takes no arguments, so no existing client configuration means anything else.
+    """
+    if sys.argv[1:2] == ["dashboard"]:
+        from cpersona.dashboard.__main__ import main as dashboard_main
+
+        sys.exit(dashboard_main(sys.argv[2:]))
     asyncio.run(main())
 
 
