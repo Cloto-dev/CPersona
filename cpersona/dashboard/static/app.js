@@ -171,7 +171,7 @@ for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
 if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
-if (H0.get("look") === "calm") state.look = "calm"; // prototype: the calm look, for comparison
+if (["calm", "star"].includes(H0.get("look"))) state.look = H0.get("look"); // prototype looks, for comparison
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
 try { state.lang = localStorage.getItem("cp.lang") || (navigator.language || "").startsWith("ja") && "ja" || "en"; } catch {}
 if (H0.get("lang")) state.lang = H0.get("lang");
@@ -570,7 +570,7 @@ async function renderGraph() {
   const note = t("layerNote")[lens];
   // Prototype (look=calm): the picture takes the whole pane; what to show sits behind
   // a button at the top right, as in a notes app's graph view.
-  const calmLook = state.look === "calm";
+  const calmLook = !!state.look;
   page.innerHTML = calmLook ? `<div class="graph calm" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-top">${head}</div>
     <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet">${t("display")}</button>
@@ -623,7 +623,7 @@ function startGraph(G, lens) {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const pal = PALETTE[dark ? "dark" : "light"];
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !(state.look === "calm" && k === "structure")])),
+  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !(state.look && k === "structure")])),
     heat: 0, panV: null, hover: null, sel: null, drag: null, panning: null, W: 0, H: 0, DPR: 1 };
   const byId = new Map(G.nodes.map(n => [n.id, n]));
   const adj = new Map(G.nodes.map(n => [n.id, new Set()]));
@@ -642,8 +642,8 @@ function startGraph(G, lens) {
     else n.name = n.label;
   }
   // The calm look draws small, nearly even dots, a little larger the more they hold.
-  const calmR = n => hub(n) ? 4.5 : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
-  const radius = n => state.look === "calm" ? calmR(n) : n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
+  const calmR = n => hub(n) ? (state.look === "star" ? 9 : 4.5) : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
+  const radius = n => state.look ? calmR(n) : n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
     : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
   const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
   // A point seen before starts where it was left. A new one starts beside the seen
@@ -674,7 +674,7 @@ function startGraph(G, lens) {
   // distance cut-off), springs that yield at the busier end, collision, and a pull to
   // the centre, so the graph settles into one round body. A first view starts on a
   // sunflower spiral and is shown blooming out of it.
-  const calm = state.look === "calm";
+  const calm = !!state.look, star = state.look === "star";
   if (calm && !kept) G.nodes.forEach((n, i) => {
     const r = 10 * Math.sqrt(0.5 + i), a = i * Math.PI * (3 - Math.sqrt(5));
     n.x = r * Math.cos(a); n.y = r * Math.sin(a);
@@ -860,14 +860,72 @@ function startGraph(G, lens) {
 
   // The calm look: grey points and hairlines; colour marks only what is pointed at
   // (or each agent, when asked for). Names fade in as the view comes closer.
+  // Prototype (look=star): a night sky. Agents are four-pointed crystal stars, each
+  // facet its own tint from rose to sky blue; memories are small stars with a halo;
+  // lines are a constellation's. The sky's faint stars are placed by hash, so they
+  // do not change between loads.
+  const SKY = (() => {
+    let a = 0x9e3779b9; // mulberry32: consecutive seeds of a string hash fall into streaks
+    const next = () => { a = a + 0x6d2b79f5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    return Array.from({ length: 220 }, () => [next(), next(), next()]);
+  })();
+  function drawSky() {
+    const g = ctx.createRadialGradient(s.W * 0.55, s.H * 0.45, 0, s.W * 0.55, s.H * 0.45, Math.max(s.W, s.H) * 0.75);
+    g.addColorStop(0, "#151b33"); g.addColorStop(1, "#06080f");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, s.W, s.H);
+    ctx.fillStyle = "#dfe8ff";
+    for (const [x, y, z] of SKY) { ctx.globalAlpha = 0.08 + z * 0.3; ctx.fillRect(x * s.W, y * s.H, z > 0.85 ? 1.6 : 1, z > 0.85 ? 1.6 : 1); }
+    ctx.globalAlpha = 1;
+  }
+  const FACETS = ["#f4b9d9", "#fff1f8", "#eaf5ff", "#a3d2fb", "#5fa9ef", "#8fc7f9", "#d3e9ff", "#bba9f3"];
+  const crystals = new Map();
+  // One sprite per size and tint, drawn once: eight facets between the centre, the four
+  // points and the four waists, outlined in white with a pale glow.
+  function crystal(R, tintHex) {
+    const key = `${R}|${tintHex || ""}`;
+    if (crystals.has(key)) return crystals.get(key);
+    const pad = R * 0.9, size = Math.ceil((R + pad) * 2), c = document.createElement("canvas");
+    c.width = c.height = size * 2;
+    const x = c.getContext("2d");
+    x.scale(2, 2); x.translate(size / 2, size / 2);
+    const w = R * 0.26, O = [[0, -R], [R * 0.86, 0], [0, R], [-R * 0.86, 0]], I = [[w, -w], [w, w], [-w, w], [-w, -w]];
+    const tri = (a, b, col) => { x.beginPath(); x.moveTo(0, 0); x.lineTo(...a); x.lineTo(...b); x.closePath(); x.fillStyle = col; x.fill(); };
+    x.shadowColor = tintHex || "#9ccfff"; x.shadowBlur = R * 0.9;
+    x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath(); x.fillStyle = "#cfe6ff"; x.fill();
+    x.shadowBlur = 0;
+    for (let i = 0; i < 4; i++) { tri(I[(i + 3) % 4], O[i], FACETS[i * 2]); tri(O[i], I[i], FACETS[i * 2 + 1]); }
+    if (tintHex) { x.globalCompositeOperation = "color"; x.globalAlpha = 0.55; x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath(); x.fillStyle = tintHex; x.fill(); x.globalCompositeOperation = "source-over"; x.globalAlpha = 1; }
+    x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath();
+    x.strokeStyle = "rgba(255,255,255,0.95)"; x.lineWidth = Math.max(0.8, R * 0.07); x.lineJoin = "round"; x.stroke();
+    const hl = x.createRadialGradient(0, 0, 0, 0, 0, R * 0.35); hl.addColorStop(0, "rgba(255,255,255,0.9)"); hl.addColorStop(1, "rgba(255,255,255,0)");
+    x.fillStyle = hl; x.fillRect(-R, -R, R * 2, R * 2);
+    const out = { c, size };
+    crystals.set(key, out);
+    return out;
+  }
+  function drawStar(n, r, on) {
+    const k = s.view.k;
+    if (hub(n)) {
+      const R = Math.round(r * 2 * k * 2) / 2, sp = crystal(R, s.byAgent ? tint(n) : null), d = sp.size / k;
+      ctx.drawImage(sp.c, n.x - d / 2, n.y - d / 2, d, d);
+      return;
+    }
+    const col = s.byAgent ? tint(n) : "#cfe0ff";
+    const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 2.6);
+    halo.addColorStop(0, on ? "rgba(255,225,240,0.55)" : "rgba(160,195,255,0.35)"); halo.addColorStop(1, "rgba(160,195,255,0)");
+    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(n.x, n.y, r * 2.6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = on ? "#fff4fa" : col; ctx.beginPath(); ctx.arc(n.x, n.y, r * 0.75, 0, Math.PI * 2); ctx.fill();
+    if (n === s.sel || n.hop === 0) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1 / k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); }
+  }
+
   function drawCalm() {
     const { view } = s;
     ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
-    ctx.fillStyle = dark ? "#1e1e1e" : "#ffffff"; ctx.fillRect(0, 0, s.W, s.H);
+    if (star) drawSky(); else { ctx.fillStyle = dark ? "#1e1e1e" : "#ffffff"; ctx.fillRect(0, 0, s.W, s.H); }
     ctx.setTransform(s.DPR * view.k, 0, 0, s.DPR * view.k, s.DPR * view.x, s.DPR * view.y);
     const focus = s.hover || s.sel, near = focus ? adj.get(focus.id) : null;
     const lit = n => !focus || n === focus || near.has(n.id);
-    const ink = dark ? "255,255,255" : "0,0,0", accent = css("--accent"), grey = dark ? "#bdbdbd" : "#8a8a8a";
+    const ink = star ? "170,200,255" : dark ? "255,255,255" : "0,0,0", accent = star ? "#ffd9ef" : css("--accent"), grey = star ? "#c9dcff" : dark ? "#bdbdbd" : "#8a8a8a";
     ctx.lineWidth = 0.9 / view.k;
     for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
       if (!s.show[kind]) continue;
@@ -885,6 +943,7 @@ function startGraph(G, lens) {
       const r = radius(n);
       ctx.globalAlpha = lit(n) ? 1 : 0.18;
       ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      if (star) { drawStar(n, r, n === focus); continue; }
       if (n.kind === "entity") { ctx.fillStyle = css("--base"); ctx.fill(); ctx.lineWidth = 1.6 / view.k; ctx.strokeStyle = n === focus ? accent : grey; ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
       else { ctx.fillStyle = n === focus ? accent : s.byAgent ? tint(n) : grey; ctx.fill(); }
       if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
@@ -897,10 +956,11 @@ function startGraph(G, lens) {
       // A picture of a few dozen groups is read by their names, so those stay.
       let a = n.kind !== "memory" && G.nodes.length <= 60 ? 0.9 : ramp((view.k - (n.kind === "memory" ? 2.2 : 1.6)) / 0.6);
       if (focus) a = n === focus ? 1 : near.has(n.id) ? Math.max(a, view.k > 1 ? 0.9 : 0) : a * 0.25;
+      if (star && hub(n)) a = Math.max(a, focus && !lit(n) ? 0.3 : 0.95);
       if (a < 0.02) continue;
       ctx.globalAlpha = a;
-      ctx.fillStyle = n === focus ? (dark ? "#e8e8e8" : "#222") : grey;
-      ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.name, n.x, n.y + radius(n) + 4 / view.k);
+      ctx.fillStyle = n === focus || star && hub(n) ? (dark || star ? "#eef3ff" : "#222") : grey;
+      ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.name, n.x, n.y + radius(n) * (star && hub(n) ? 1.9 : 1) + 4 / view.k);
     }
     ctx.globalAlpha = 1;
   }
