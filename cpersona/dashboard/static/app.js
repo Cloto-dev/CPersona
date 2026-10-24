@@ -130,11 +130,13 @@ async function api(path, params = {}) {
   return body;
 }
 
-// Apply data-h / data-w / data-flex sizes (percent or flex weight) inside a subtree.
+// Apply data-h / data-w / data-left sizes (percent) inside a subtree. A part of a
+// split bar also carries data-part: its width leaves a 1px gap to the next part.
 function sizes(root) {
   for (const el of root.querySelectorAll("[data-h]")) el.style.height = el.dataset.h + "%";
-  for (const el of root.querySelectorAll("[data-w]")) el.style.width = el.dataset.w + "%";
-  for (const el of root.querySelectorAll("[data-flex]")) el.style.flex = el.dataset.flex;
+  for (const el of root.querySelectorAll("[data-w]"))
+    el.style.width = el.hasAttribute("data-part") ? `max(1px, calc(${el.dataset.w}% - 1px))` : el.dataset.w + "%";
+  for (const el of root.querySelectorAll("[data-left]")) el.style.left = el.dataset.left + "%";
 }
 
 function saveHash() {
@@ -290,8 +292,11 @@ function renderOther(kind) {
 }
 
 // ---- Detail drawer
+// Each part sits where its characters are in the text, so the bar never grows past
+// its width however many parts there are.
 function spans(parts, total, kind) {
-  return parts.map(p => `<button class="part ${kind}" data-kind="${kind}" data-i="${p.i}" data-flex="${Math.max(p.end - p.start, 1) / total}"
+  return parts.map(p => `<button class="part ${kind}" data-part data-kind="${kind}" data-i="${p.i}"
+    data-left="${(100 * p.start) / total}" data-w="${(100 * Math.max(p.end - p.start, 1)) / total}"
     aria-label="${esc(t(kind))} ${p.i + 1}"></button>`).join("");
 }
 

@@ -133,20 +133,20 @@
   .drawer .x { border: 0; background: none; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
   .facts-list { display: grid; grid-template-columns: 156px 1fr; gap: 6px 12px; margin: 14px 0; font-size: 13px; }
   .facts-list dt { color: var(--faint); }
-  .facts-list dd { margin: 0; overflow-wrap: anywhere; }
+  .facts-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   .actions { display: flex; gap: 8px; margin: 4px 0 14px; }
   .content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.7; border-top: 1px solid var(--line); padding-top: 14px; }
   .content .lit.is-node { background: var(--node-soft); box-shadow: inset 0 -2px 0 var(--node); }
   .content .lit.is-block { background: var(--block-soft); box-shadow: inset 0 -2px 0 var(--block); }
   details.tech { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
   details.tech summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  .split-row { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 10px; margin: 6px 0; }
+  .split-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 10px; margin: 6px 0; }
   .split-name { white-space: nowrap; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .split-name::before { content: ""; width: 8px; height: 8px; border-radius: 2px; flex: none; }
   .split-name.is-node::before { background: var(--node); }
   .split-name.is-block::before { background: var(--block); }
-  .parts { display: flex; gap: 2px; }
-  .part { height: 10px; border: 0; padding: 0; border-radius: 2px; cursor: pointer; min-width: 2px; opacity: .55; }
+  .parts { position: relative; height: 10px; min-width: 0; }
+  .part { position: absolute; top: 0; height: 100%; border: 0; padding: 0; border-radius: 2px; cursor: pointer; opacity: .55; }
   .part.nodes { background: var(--node); }
   .part.blocks { background: var(--block); }
   .part:hover, .part:focus-visible, .part.on { opacity: 1; }
