@@ -211,6 +211,14 @@
   .calm .g-set.open { display: block; }
   .calm .g-set .lead { font-size: 13px; margin: 0 0 10px; color: var(--muted); }
   .calm .g-hint { opacity: 0.7; }
+  .g-hint { display: flex; flex-wrap: wrap; gap: 4px 16px; right: 16px; }
+  .g-key { position: absolute; left: 16px; bottom: 44px; max-width: min(380px, calc(100% - 32px)); font-size: 12px; color: var(--muted); display: grid; gap: 4px; }
+  .g-key p { margin: 2px 0 0; color: var(--faint); }
+  .k-row { display: flex; align-items: center; gap: 8px; }
+  .k-row line { stroke-width: 1.5; }
+  .k-similar, .k-near { stroke: #9fb6e6; }
+  .k-structure, .k-part { stroke: var(--faint); }
+  .k-declared, .k-co { stroke: var(--accent); }
   .l-part { stroke: currentColor; stroke-opacity: .5; stroke-width: 1.2; }
   .l-co { stroke: var(--accent); stroke-opacity: .5; stroke-width: 2; }
   .l-near { stroke: url(#lg-near); }

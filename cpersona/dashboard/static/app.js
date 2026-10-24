@@ -577,22 +577,26 @@ async function renderGraph() {
   // Prototype (look=calm): the picture takes the whole pane; what to show sits behind
   // a button at the top right, as in a notes app's graph view.
   const calmLook = !!state.look;
+  // What the lines mean stays on screen, beside the picture, in every look.
+  const keyRows = G.nodes ? LAYERS[lens].filter(k => count(k)).map(k =>
+    `<div class="k-row"><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" class="k-${k}"/></svg><span>${t("layer")[k]}</span></div>`).join("") : "";
+  const hint = t("graphHint").split(" · ").map(h => `<span>${h}</span>`).join("");
   page.innerHTML = calmLook ? `<div class="graph calm" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-top">${head}</div>
     <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet">${t("display")}</button>
     <div class="g-panel g-set" id="gSet">
       ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), state.look !== "calm" || k !== "structure")).join("") : ""}
       ${G.nodes ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
-      ${note ? `<div class="g-note">${note}</div>` : ""}
     </div>
     <div class="g-panel g-card" id="gcard"></div>
-    <div class="g-hint">${t("graphHint")}</div></div>` : `<div class="graph" id="graphWrap"><canvas id="gc"></canvas>
+    ${keyRows ? `<div class="g-key">${keyRows}${note ? `<p>${note}</p>` : ""}</div>` : ""}
+    <div class="g-hint">${hint}</div></div>` : `<div class="graph" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-panel g-legend">${head}
       ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k))).join("") : ""}
       ${note ? `<div class="g-note">${note}</div>` : ""}
     </div>
     <div class="g-panel g-card" id="gcard"></div>
-    <div class="g-hint">${t("graphHint")}</div></div>`;
+    <div class="g-hint">${hint}</div></div>`;
   if (calmLook) {
     const lead = page.querySelector(".g-top .lead");
     if (lead) $("gSet").prepend(lead);
@@ -648,7 +652,7 @@ function startGraph(G, lens) {
     else n.name = n.label;
   }
   // The calm look draws small, nearly even dots, a little larger the more they hold.
-  const calmR = n => hub(n) ? (state.look === "star" ? 7.5 : 4.5) : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
+  const calmR = n => hub(n) ? (state.look === "star" ? 5.5 : 4.5) : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
   const radius = n => state.look ? calmR(n) : n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
     : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
   const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
@@ -868,130 +872,70 @@ function startGraph(G, lens) {
 
   // The calm look: grey points and hairlines; colour marks only what is pointed at
   // (or each agent, when asked for). Names fade in as the view comes closer.
-  // Prototype (look=star): a night sky. Agents are four-pointed crystal stars, each
-  // facet its own tint from rose to sky blue; memories are small stars with a halo;
-  // lines are a constellation's. The sky's faint stars are placed by hash, so they
-  // do not change between loads.
-  const SKY = (() => {
-    let a = 0x9e3779b9; // mulberry32: consecutive seeds of a string hash fall into streaks
-    const next = () => { a = a + 0x6d2b79f5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
-    return Array.from({ length: 220 }, () => [next(), next(), next()]);
-  })();
-  function drawSky() {
-    const g = ctx.createRadialGradient(s.W * 0.55, s.H * 0.45, 0, s.W * 0.55, s.H * 0.45, Math.max(s.W, s.H) * 0.75);
-    g.addColorStop(0, "#151b33"); g.addColorStop(1, "#06080f");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, s.W, s.H);
-    ctx.fillStyle = "#dfe8ff";
-    for (const [x, y, z] of SKY) { ctx.globalAlpha = 0.08 + z * 0.3; ctx.fillRect(x * s.W, y * s.H, z > 0.85 ? 1.6 : 1, z > 0.85 ? 1.6 : 1); }
-    ctx.globalAlpha = 1;
-  }
-  // Each agent's star has its own two-colour gradient and one of five materials, both
-  // derived from the agent's id, so an agent keeps its look on every load.
-  const MATERIALS = ["crystal", "pearl", "frost", "metal", "ember"];
-  // Ids that differ in one character hash to nearby values, so the look mixes the hash
+  // Prototype (look=star): a constellation on a flat night colour. An agent is a
+  // glowing dot with a gradient; memories are plain small stars; only the agents and
+  // the point pointed at glow.
+  const NIGHT = "#0f131c";
+  // The page's own stack: its Japanese faces draw "…" as centred dots.
+  const FONT = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif';
+  const hsl = (h, sat, l, a = 1) => `hsla(${((h % 360) + 360) % 360},${sat}%,${l}%,${a})`;
+  // Ids that differ in one character hash to nearby values, so a colour mixes the hash
   // once more (murmur3's finaliser) before using it.
   const mix01 = str => {
     let h = Math.floor(hash01(str) * 4294967296);
     h = Math.imul(h ^ h >>> 16, 0x85ebca6b); h = Math.imul(h ^ h >>> 13, 0xc2b2ae35); h ^= h >>> 16;
     return (h >>> 0) / 4294967296;
   };
-  const hsl = (h, sat, l, a = 1) => `hsla(${((h % 360) + 360) % 360},${sat}%,${l}%,${a})`;
-  // Uncoloured, every star takes the memories' blue-white hue (218°) and keeps only its
-  // material; coloured by agent, each takes its own two hues.
+  // Uncoloured, every agent shares the memories' blue-white (218°); coloured by agent,
+  // each takes two hues of its own, derived from its id so they hold across loads.
   function lookOf(agent, uniform = false) {
-    const h1 = mix01(`${agent}:h`) * 360, h2 = h1 + 50 + mix01(`${agent}:g`) * 110;
-    const sat = 62 + mix01(`${agent}:s`) * 26;
-    const material = MATERIALS[Math.floor(mix01(`${agent}:m`) * MATERIALS.length)];
-    return uniform ? { h1: 218, h2: 218, sat: 90, material, dl: 8 } : { h1, h2, sat, material, dl: 0 };
+    if (uniform) return { h1: 218, h2: 250, sat: 85 };
+    const h1 = mix01(`${agent}:h`) * 360;
+    return { h1, h2: h1 + 50 + mix01(`${agent}:g`) * 110, sat: 62 + mix01(`${agent}:s`) * 26 };
   }
-  const crystals = new Map();
-  // One sprite per size and agent, drawn once: the star's outline is four points and
-  // four waists; the material decides how its inside catches the light.
-  function crystal(R, agent, uniform) {
-    const key = `${R}|${agent}|${uniform ? 1 : 0}`;
-    if (crystals.has(key)) return crystals.get(key);
-    const L = lookOf(agent, uniform), m = L.material;
-    const pad = R * (m === "ember" ? 1.4 : 0.9), size = Math.ceil((R + pad) * 2), c = document.createElement("canvas");
+  const dots = new Map();
+  // One sprite per size and colour: a white core, the first hue, the second at the rim,
+  // and a soft glow in the second hue.
+  function agentDot(R, agent, uniform) {
+    const key = `${R}|${uniform ? "" : agent}`;
+    if (dots.has(key)) return dots.get(key);
+    const L = lookOf(agent, uniform), size = Math.ceil(R * 6), c = document.createElement("canvas");
     c.width = c.height = size * 2;
     const x = c.getContext("2d");
     x.scale(2, 2); x.translate(size / 2, size / 2);
-    const w = R * 0.26, O = [[0, -R], [R * 0.86, 0], [0, R], [-R * 0.86, 0]], I = [[w, -w], [w, w], [-w, w], [-w, -w]];
-    const shape = () => { x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath(); };
-    const tri = (a, b, col) => { x.beginPath(); x.moveTo(0, 0); x.lineTo(...a); x.lineTo(...b); x.closePath(); x.fillStyle = col; x.fill(); };
-    // The colour of a facet runs from the first hue at the top left to the second at the
-    // bottom right; the two halves of each point differ in lightness, as cut faces do.
-    const facet = (i, half, dl = 0) => {
-      const t = [0.15, 0.35, 0.55, 0.75, 0.95, 0.75, 0.45, 0.25][i * 2 + half];
-      return hsl(L.h1 + (L.h2 - L.h1) * t, L.sat, (half ? 64 : 80) + dl + L.dl);
-    };
-    x.shadowColor = hsl(m === "ember" ? L.h1 : L.h2, L.sat, 65); x.shadowBlur = R * (m === "ember" ? 1.7 : 0.9);
-    shape(); x.fillStyle = hsl(L.h2, L.sat, 70, m === "ember" ? 0.5 : 1); x.fill();
-    x.shadowBlur = 0;
-    x.save(); shape(); x.clip();
-    if (m === "crystal" || m === "frost") {
-      for (let i = 0; i < 4; i++) { tri(I[(i + 3) % 4], O[i], facet(i, 0, m === "frost" ? -4 : 0)); tri(O[i], I[i], facet(i, 1, m === "frost" ? 8 : 0)); }
-      if (m === "frost") {
-        // Fine grains, placed by a seeded generator so they stay put.
-        let a = Math.floor(mix01(`${agent}:f`) * 4294967296);
-        const next = () => { a = a + 0x6d2b79f5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
-        x.fillStyle = "#ffffff";
-        for (let i = 0; i < 90; i++) { x.globalAlpha = 0.15 + next() * 0.4; x.fillRect((next() - 0.5) * 2 * R, (next() - 0.5) * 2 * R, R * 0.05, R * 0.05); }
-        x.globalAlpha = 0.18; x.fillRect(-R, -R, 2 * R, 2 * R); x.globalAlpha = 1;
-      }
-    } else if (m === "pearl") {
-      const g = x.createRadialGradient(-R * 0.2, -R * 0.25, 0, 0, 0, R);
-      g.addColorStop(0, hsl(L.h1, L.sat * 0.6, 94)); g.addColorStop(0.55, hsl(L.h1 + 25, L.sat, 78)); g.addColorStop(1, hsl(L.h2, L.sat, 62));
-      x.fillStyle = g; x.fillRect(-R, -R, 2 * R, 2 * R);
-      const iri = x.createConicGradient(mix01(`${agent}:c`) * Math.PI * 2, 0, 0);
-      [0, 60, 120, 180, 240, 300, 360].forEach((h, i) => iri.addColorStop(i / 6, hsl(h, 90, 70)));
-      x.globalAlpha = 0.22; x.fillStyle = iri; x.fillRect(-R, -R, 2 * R, 2 * R);
-      const sheen = x.createLinearGradient(-R, -R, R, R);
-      sheen.addColorStop(0.3, "rgba(255,255,255,0)"); sheen.addColorStop(0.42, "rgba(255,255,255,0.75)"); sheen.addColorStop(0.5, "rgba(255,255,255,0)");
-      x.globalAlpha = 1; x.fillStyle = sheen; x.fillRect(-R, -R, 2 * R, 2 * R);
-    } else if (m === "metal") {
-      const g = x.createLinearGradient(0, -R, 0, R);
-      [[0, 88], [0.22, 52], [0.42, 92], [0.5, 40], [0.62, 76], [0.82, 46], [1, 82]].forEach(([t, l]) => g.addColorStop(t, hsl(L.h1 + (L.h2 - L.h1) * t, L.sat * 0.7, l)));
-      x.fillStyle = g; x.fillRect(-R, -R, 2 * R, 2 * R);
-      x.strokeStyle = "rgba(255,255,255,0.35)"; x.lineWidth = R * 0.03;
-      for (let i = 0; i < 4; i++) { x.beginPath(); x.moveTo(0, 0); x.lineTo(...O[i]); x.stroke(); }
-    } else {
-      const g = x.createRadialGradient(0, 0, 0, 0, 0, R);
-      g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.25, hsl(L.h1, L.sat + 10, 78)); g.addColorStop(0.7, hsl(L.h2, L.sat + 10, 58, 0.75)); g.addColorStop(1, hsl(L.h2, L.sat, 50, 0.15));
-      x.fillStyle = g; x.fillRect(-R, -R, 2 * R, 2 * R);
-    }
-    x.restore();
-    shape(); x.lineJoin = "round"; x.lineWidth = Math.max(0.8, R * 0.07);
-    x.strokeStyle = m === "ember" ? hsl(L.h1, L.sat, 82, 0.8) : m === "metal" ? hsl(L.h1, 40, 92) : "rgba(255,255,255,0.95)"; x.stroke();
-    if (m !== "metal") {
-      const hl = x.createRadialGradient(0, 0, 0, 0, 0, R * (m === "ember" ? 0.5 : 0.35));
-      hl.addColorStop(0, "rgba(255,255,255,0.9)"); hl.addColorStop(1, "rgba(255,255,255,0)");
-      x.fillStyle = hl; x.fillRect(-R, -R, R * 2, R * 2);
-    }
+    const glow = x.createRadialGradient(0, 0, R * 0.8, 0, 0, size / 2);
+    glow.addColorStop(0, hsl(L.h2, L.sat, 70, 0.45)); glow.addColorStop(1, hsl(L.h2, L.sat, 70, 0));
+    x.fillStyle = glow; x.fillRect(-size / 2, -size / 2, size, size);
+    const body = x.createRadialGradient(-R * 0.3, -R * 0.3, 0, 0, 0, R);
+    body.addColorStop(0, "#ffffff"); body.addColorStop(0.45, hsl(L.h1, L.sat, 84)); body.addColorStop(1, hsl(L.h2, L.sat, 66));
+    x.fillStyle = body; x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fill();
     const out = { c, size };
-    crystals.set(key, out);
+    dots.set(key, out);
     return out;
   }
   function drawStar(n, r, on) {
     const k = s.view.k;
     if (hub(n)) {
-      const R = Math.round(r * 2 * k * 2) / 2, sp = crystal(R, n.agent, !s.byAgent), d = sp.size / k;
+      const R = Math.max(2, Math.round(r * k * 2) / 2), sp = agentDot(R, n.agent, !s.byAgent), d = sp.size / k;
       ctx.drawImage(sp.c, n.x - d / 2, n.y - d / 2, d, d);
-      return;
+    } else {
+      // Coloured by agent, a memory takes its agent's first hue.
+      const L = s.byAgent && n.agent ? lookOf(n.agent) : null;
+      if (on) {
+        const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3);
+        halo.addColorStop(0, "rgba(200,220,255,0.5)"); halo.addColorStop(1, "rgba(200,220,255,0)");
+        ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(n.x, n.y, r * 3, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = on ? "#ffffff" : L ? hsl(L.h1, L.sat, 80) : "#c7d6f2";
+      ctx.beginPath(); ctx.arc(n.x, n.y, r * 0.7, 0, Math.PI * 2); ctx.fill();
     }
-    // Coloured by agent, a memory glows in its agent's first hue.
-    const L = s.byAgent && n.agent ? lookOf(n.agent) : null;
-    const col = L ? hsl(L.h1, L.sat, 82) : "#cfe0ff";
-    const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 2.6);
-    halo.addColorStop(0, on ? "rgba(255,225,240,0.55)" : L ? hsl(L.h1, L.sat, 70, 0.4) : "rgba(160,195,255,0.35)"); halo.addColorStop(1, "rgba(160,195,255,0)");
-    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(n.x, n.y, r * 2.6, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = on ? "#fff4fa" : col; ctx.beginPath(); ctx.arc(n.x, n.y, r * 0.75, 0, Math.PI * 2); ctx.fill();
     if (n === s.sel || n.hop === 0) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1 / k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); }
   }
 
   function drawCalm() {
     const { view } = s;
     ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
-    if (star) drawSky(); else { ctx.fillStyle = dark ? "#1e1e1e" : "#ffffff"; ctx.fillRect(0, 0, s.W, s.H); }
+    if (star) { ctx.fillStyle = NIGHT; ctx.fillRect(0, 0, s.W, s.H); } else { ctx.fillStyle = dark ? "#1e1e1e" : "#ffffff"; ctx.fillRect(0, 0, s.W, s.H); }
     ctx.setTransform(s.DPR * view.k, 0, 0, s.DPR * view.k, s.DPR * view.x, s.DPR * view.y);
     const focus = s.hover || s.sel, near = focus ? adj.get(focus.id) : null;
     const lit = n => !focus || n === focus || near.has(n.id);
@@ -1002,7 +946,9 @@ function startGraph(G, lens) {
       for (const l of G.links) {
         if (l.kind !== kind) continue;
         const on = focus && (l.a === focus || l.b === focus);
-        let alpha = kind === "structure" ? 0.1 : kind === "declared" ? 0.5 : 0.22;
+        // How similar two memories are shows as how strong their line is.
+        let alpha = kind === "structure" ? 0.08 : kind === "declared" ? 0.55
+          : kind === "similar" || kind === "near" ? 0.04 + 0.3 * Math.max(0, Math.min(1, (l.w - 0.55) / 0.35)) : 0.22;
         if (on) alpha = 0.9; else if (focus) alpha *= 0.35;
         ctx.globalAlpha = alpha;
         ctx.strokeStyle = on || kind === "declared" ? accent : `rgb(${ink})`;
@@ -1019,7 +965,9 @@ function startGraph(G, lens) {
       if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
     }
     ctx.textAlign = "center"; ctx.textBaseline = "top";
-    ctx.font = `400 ${11.5 / view.k}px system-ui, sans-serif`;
+    ctx.font = `400 ${11.5 / view.k}px ${star ? FONT : "system-ui, sans-serif"}`;
+    // A rim in the background colour keeps lines from running through the names.
+    ctx.lineJoin = "round"; ctx.lineWidth = 3 / view.k; ctx.strokeStyle = star ? NIGHT : dark ? "#1e1e1e" : "#ffffff";
     const ramp = v => Math.max(0, Math.min(1, v));
     for (const n of G.nodes) {
       // No names from afar; they fade in on the way closer, and on the point pointed at.
@@ -1030,7 +978,8 @@ function startGraph(G, lens) {
       if (a < 0.02) continue;
       ctx.globalAlpha = a;
       ctx.fillStyle = n === focus || star && hub(n) ? (dark || star ? "#eef3ff" : "#222") : grey;
-      ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.name, n.x, n.y + radius(n) * (star && hub(n) ? 1.9 : 1) + 4 / view.k);
+      const label = n.kind === "memory" ? day(n.timestamp) : n.name, ly = n.y + radius(n) * (star && hub(n) ? 1.4 : 1) + 4 / view.k;
+      ctx.strokeText(label, n.x, ly); ctx.fillText(label, n.x, ly);
     }
     ctx.globalAlpha = 1;
   }
