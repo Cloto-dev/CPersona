@@ -894,20 +894,19 @@ function startGraph(G, lens) {
     return { h1, h2: h1 + 50 + mix01(`${agent}:g`) * 110, sat: 62 + mix01(`${agent}:s`) * 26 };
   }
   const dots = new Map();
-  // One sprite per size and colour: a white core, the first hue, the second at the rim,
-  // and a soft glow in the second hue.
+  // One sprite per size and colour. The dot is a light seen face on, not a lit ball:
+  // white at the centre, the colour arriving only towards the edge and staying bright,
+  // and nothing drawn outside the dot.
   function agentDot(R, agent, uniform) {
     const key = `${R}|${uniform ? "" : agent}`;
     if (dots.has(key)) return dots.get(key);
-    const L = lookOf(agent, uniform), size = Math.ceil(R * 6), c = document.createElement("canvas");
+    const L = lookOf(agent, uniform), size = Math.ceil(R * 2 + 2), c = document.createElement("canvas");
     c.width = c.height = size * 2;
     const x = c.getContext("2d");
     x.scale(2, 2); x.translate(size / 2, size / 2);
-    const glow = x.createRadialGradient(0, 0, R * 0.8, 0, 0, size / 2);
-    glow.addColorStop(0, hsl(L.h2, L.sat, 70, 0.45)); glow.addColorStop(1, hsl(L.h2, L.sat, 70, 0));
-    x.fillStyle = glow; x.fillRect(-size / 2, -size / 2, size, size);
-    const body = x.createRadialGradient(-R * 0.3, -R * 0.3, 0, 0, 0, R);
-    body.addColorStop(0, "#ffffff"); body.addColorStop(0.45, hsl(L.h1, L.sat, 84)); body.addColorStop(1, hsl(L.h2, L.sat, 66));
+    const body = x.createRadialGradient(0, 0, 0, 0, 0, R);
+    body.addColorStop(0, "#ffffff"); body.addColorStop(0.4, "#ffffff");
+    body.addColorStop(0.75, hsl(L.h1, L.sat, 88)); body.addColorStop(1, hsl(L.h2, L.sat, 78));
     x.fillStyle = body; x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fill();
     const out = { c, size };
     dots.set(key, out);
@@ -921,13 +920,8 @@ function startGraph(G, lens) {
     } else {
       // Coloured by agent, a memory takes its agent's first hue.
       const L = s.byAgent && n.agent ? lookOf(n.agent) : null;
-      if (on) {
-        const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 3);
-        halo.addColorStop(0, "rgba(200,220,255,0.5)"); halo.addColorStop(1, "rgba(200,220,255,0)");
-        ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(n.x, n.y, r * 3, 0, Math.PI * 2); ctx.fill();
-      }
       ctx.fillStyle = on ? "#ffffff" : L ? hsl(L.h1, L.sat, 80) : "#c7d6f2";
-      ctx.beginPath(); ctx.arc(n.x, n.y, r * 0.7, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(n.x, n.y, r * (on ? 0.95 : 0.7), 0, Math.PI * 2); ctx.fill();
     }
     if (n === s.sel || n.hop === 0) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1 / k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); }
   }
