@@ -50,12 +50,30 @@ const T = {
     aroundTitle: id => `Around mem:${id}`,
     aroundLead: (k, hops) => `From the memory you chose, its ${k} most similar memories, and theirs, ${hops} steps out.`,
     aroundNoVector: "This memory has no search vector, so similar memories cannot be found from it.",
-    backToFolder: "Back to the folder",
-    layerDeclared: "Declared relations", layerSimilar: "Similar content (computed)", layerStructure: "Grouped by agent",
+    backToMap: "Back to the whole picture",
+    layer: { declared: "Declared relations", similar: "Similar content (computed)", structure: "Grouped by agent",
+      part: "Folder and subfolder", co: "Mentioned in the same memory", near: "Groups with close centres (computed)" },
     linesN: n => `${n}`,
-    similarNote: "Similar lines are computed from the stored embeddings. No agent declared them.",
+    layerNote: {
+      memories: "Similar lines are computed from the stored embeddings. No agent declared them.",
+      entities: "Entities are names agents declared. A “mentioned in the same memory” line joins two entities one memory mentions; the thicker it is, the more such memories.",
+      clusters: "Groups are computed from the stored embeddings. No agent made them, and they can change as memories are added.",
+    },
+    lens: { tree: "Folders", entities: "Entities", clusters: "Similar groups" },
+    lensLead: {
+      tree: "Each point is a folder: agent, project, channel and month. Its size is the number of memories in it.",
+      entities: "Each point is an entity an agent declared. Its size is the number of memories that mention it.",
+      clusters: "Each point is a group of memories with similar content. It is named by quoting the start of the memory nearest its centre.",
+    },
+    treeNoMonths: n => `Months (${n}) are left out: there are too many points.`,
+    clusterCount: (g, n) => `${n.toLocaleString()} memories in ${g} groups`,
+    notGrouped: n => `${n.toLocaleString()} with vectors of another width are not grouped.`,
+    tooMany: (n, max) => `${n.toLocaleString()} memories have vectors, more than can be grouped (${max.toLocaleString()}). Larger stores will be grouped once the time it takes has been measured.`,
+    clusterTitle: "Similar group", entityTitle: name => `Memories that mention ${name}`, memoriesN: n => `${n.toLocaleString()} memories`,
+    openGroup: "Open this folder's network", openCluster: "See this group's memories", openEntity: "See the memories that mention it",
+    clusterQuoteHint: "Named by the memory nearest the group's centre.",
     graphHint: "Drag the background to move · Scroll to zoom · Drag a point to move it · Click a point to see it",
-    similarN: n => `Similar memories: ${n}`, mentionsN: n => `Mentioned in ${n} memories shown here`,
+    similarN: n => `Similar memories: ${n}`, mentionsN: n => `Mentioned in ${n} memories`,
     openMemory: "Open", centerHere: "Center on this memory", showAround: "See it in the network",
   },
   ja: {
@@ -106,12 +124,30 @@ const T = {
     aroundTitle: id => `mem:${id} の周り`,
     aroundLead: (k, hops) => `選んだ記憶から ${hops} 段先まで、それぞれ似ている記憶を ${k} 件ずつたどっています。`,
     aroundNoVector: "この記憶には検索用のベクトルがないので、似ている記憶をたどれません。",
-    backToFolder: "フォルダの図に戻る",
-    layerDeclared: "宣言した関係", layerSimilar: "内容が似ている (自動)", layerStructure: "エージェントごとのまとまり",
+    backToMap: "全体の図に戻る",
+    layer: { declared: "宣言した関係", similar: "内容が似ている (自動)", structure: "エージェントごとのまとまり",
+      part: "フォルダの親子", co: "同じ記憶で言及", near: "中心が近いまとまり (自動)" },
     linesN: n => `${n} 本`,
-    similarNote: "「内容が似ている」線は、保存された埋め込みから計算したつながりです。エージェントが宣言した関係ではありません。",
+    layerNote: {
+      memories: "「内容が似ている」線は、保存された埋め込みから計算したつながりです。エージェントが宣言した関係ではありません。",
+      entities: "実体は、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
+      clusters: "まとまりは、保存された埋め込みから計算したものです。エージェントが分けたものではありません。記憶が増えると、分け方が変わることがあります。",
+    },
+    lens: { tree: "分け方", entities: "実体", clusters: "内容の近いまとまり" },
+    lensLead: {
+      tree: "記憶の分け方 (エージェント・プロジェクト・チャンネル・月) を点にしています。点の大きさは記憶の件数です。",
+      entities: "エージェントが宣言した実体を点にしています。点の大きさは、その実体に言及している記憶の件数です。",
+      clusters: "内容の近い記憶をまとめて点にしています。点の名前は、まとまりの中心にいちばん近い記憶の冒頭の引用です。",
+    },
+    treeNoMonths: n => `点が多いので、月 (${n} 件) は省いています。`,
+    clusterCount: (g, n) => `${n.toLocaleString()} 件の記憶を ${g} のまとまりに分けています`,
+    notGrouped: n => `幅の違うベクトルを持つ ${n.toLocaleString()} 件は、まとめていません。`,
+    tooMany: (n, max) => `ベクトルを持つ記憶が ${n.toLocaleString()} 件あり、まとめられる上限 (${max.toLocaleString()} 件) を超えています。この規模での計算時間を測ってから対応します。`,
+    clusterTitle: "内容の近いまとまり", entityTitle: name => `${name} に言及している記憶`, memoriesN: n => `${n.toLocaleString()} 件の記憶`,
+    openGroup: "このフォルダの図を開く", openCluster: "このまとまりの記憶を図で見る", openEntity: "言及している記憶を図で見る",
+    clusterQuoteHint: "名前は、中心にいちばん近い記憶の冒頭です。",
     graphHint: "背景をドラッグで移動 · ホイールで拡大縮小 · 点をつまんで動かす · 点をクリックで内容",
-    similarN: n => `内容が似ている記憶: ${n} 件`, mentionsN: n => `この図の記憶 ${n} 件で言及されています`,
+    similarN: n => `内容が似ている記憶: ${n} 件`, mentionsN: n => `${n} 件の記憶で言及されています`,
     openMemory: "詳細を開く", centerHere: "この記憶を中心にする", showAround: "記憶ネットワークで見る",
   },
 };
@@ -128,10 +164,11 @@ try {
   else token = sessionStorage.getItem("cp.token") || "";
 } catch {}
 
-const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, lang: "en" };
+const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lens: "tree", lang: "en" };
 for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
-if (H0.get("around")) state.around = Number(H0.get("around")) || 0;
+for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
+if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
 try { state.lang = localStorage.getItem("cp.lang") || (navigator.language || "").startsWith("ja") && "ja" || "en"; } catch {}
 if (H0.get("lang")) state.lang = H0.get("lang");
@@ -178,7 +215,8 @@ function saveHash() {
   if (state.q) h.set("q", state.q);
   if (state.month) h.set("month", state.month);
   if (state.id) h.set("id", state.id);
-  if (state.around) h.set("around", state.around);
+  for (const k of ["around", "cluster", "entity"]) if (state[k]) h.set(k, state[k]);
+  if (state.lens !== "tree") h.set("lens", state.lens);
   history.replaceState(null, "", "#" + h);
 }
 
@@ -218,7 +256,7 @@ async function growTree(container, path, depth) {
     const p = [...path, k.key];
     const leaf = p.length >= LEVELS.length;
     const open = !leaf && state.path.length > depth && JSON.stringify(state.path.slice(0, depth + 1)) === JSON.stringify(p);
-    const on = (state.view === "memories" || state.view === "graph" && !state.around) && JSON.stringify(state.path) === JSON.stringify(p);
+    const on = (state.view === "memories" || state.view === "graph" && !state.around && !state.cluster && !state.entity) && JSON.stringify(state.path) === JSON.stringify(p);
     const node = document.createElement("div");
     node.className = "node";
     const label = k.key ? k.label : levelLabel(k.level, k.key);
@@ -438,13 +476,20 @@ function closeDetail() {
 // ---- Memory network
 // Laid out by a small force simulation drawn on a canvas, so nothing is loaded from
 // elsewhere. The simulation keeps running while the graph is touched and cools back
-// to stillness: memories keep some momentum (friction 0.86), while an agent hub,
-// pulled by every one of its memories, is damped to 0.4 so it does not overshoot.
+// to stillness: points keep some momentum (friction 0.86), while a hub, pulled by
+// everything tied to it, is damped to 0.4 so it does not overshoot.
 const PALETTE = {
   light: ["#3f6fd8", "#d9733f", "#2f9e7a", "#b8509c", "#8a6bd1", "#c49a2c", "#3a9fb5", "#d0545a", "#6b8f3a", "#7d7f86"],
   dark: ["#6f9af2", "#f0915e", "#4cc39b", "#d978bd", "#a990ee", "#e2bb52", "#5cc2d8", "#ef7a7f", "#93b85d", "#a3a6ad"],
 };
 const FRICTION = 0.86, HUB_FRICTION = 0.4;
+// The lines each kind of picture can show, in the order the legend lists them.
+const LAYERS = {
+  memories: ["declared", "similar", "structure"],
+  tree: ["part"],
+  entities: ["declared", "co"],
+  clusters: ["near"],
+};
 let gs = null; // the graph on screen, or null
 
 function stopGraph() {
@@ -452,84 +497,136 @@ function stopGraph() {
   gs = null;
 }
 
+function layerRow(kind, n) {
+  const swatch = kind === "similar" || kind === "near"
+    ? `<defs><linearGradient id="lg-${kind}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="34" y2="0"><stop offset="0" class="s-a"/><stop offset="1" class="s-b"/></linearGradient></defs><line x1="0" y1="5" x2="34" y2="5" class="l-similar l-${kind}"/>`
+    : `<line x1="0" y1="5" x2="34" y2="5" class="l-${kind}"/>`;
+  return `<label class="layer"><input type="checkbox" data-layer="${kind}" checked>
+    <svg width="34" height="10" aria-hidden="true">${swatch}</svg>
+    <span>${t("layer")[kind]}</span><span class="n">${esc(t("linesN")(n))}</span></label>`;
+}
+
 async function renderGraph() {
   const page = $("page");
   if (!overviewData.counts.memories) return renderEmptyMemories();
-  const params = state.around ? { around: state.around } : { path: JSON.stringify(state.path), month: state.month };
-  const G = await api("/api/graph", params);
-  const head = state.around
-    ? `<h1>${esc(t("aroundTitle")(G.center))}</h1>
-       <p class="lead">${G.has_vector ? esc(t("aroundLead")(G.k, G.hops)) : esc(t("aroundNoVector"))}</p>
-       <div class="crumbs"><button id="backBtn">${t("backToFolder")}</button></div>`
-    : `<h1>${t("graph")}</h1>
-       <p class="lead">${t("graphLead")}<br><span class="hint">${esc(t("nGraph")(G.shown, G.total))}${G.without_vector ? "<br>" + esc(t("noVectorN")(G.without_vector)) : ""}</span></p>`;
-  const count = k => G.links.filter(l => l.kind === k).length;
+  const memoryView = state.around || state.cluster || state.entity || state.path.length || state.month;
+  const G = state.around ? await api("/api/graph", { around: state.around })
+    : state.cluster ? await api("/api/graph", { cluster_of: state.cluster })
+    : state.entity ? await api("/api/graph", { entity: state.entity })
+    : memoryView ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month })
+    : await api("/api/map", { lens: state.lens });
+  const lens = memoryView ? "memories" : G.lens;
+  const back = `<div class="crumbs"><button id="backBtn">${t("backToMap")}</button></div>`;
+  const shown = G.shown != null ? `<span class="hint">${esc(t("nGraph")(G.shown, G.total))}${G.without_vector ? "<br>" + esc(t("noVectorN")(G.without_vector)) : ""}</span>` : "";
+  let head;
+  if (state.around) head = `<h1>${esc(t("aroundTitle")(G.center))}</h1>
+       <p class="lead">${G.has_vector ? esc(t("aroundLead")(G.k, G.hops)) : esc(t("aroundNoVector"))}</p>${back}`;
+  else if (state.cluster) head = `<h1>${t("clusterTitle")}</h1><p class="lead">“${esc(G.label)}”<br>${shown}</p>${back}`;
+  else if (state.entity) head = `<h1>${esc(t("entityTitle")(G.label))}</h1><p class="lead">${shown}</p>${back}`;
+  else if (memoryView) head = `<h1>${t("graph")}</h1><p class="lead">${t("graphLead")}<br>${shown}</p>${back}`;
+  else {
+    const seg = ["tree", "entities", "clusters"].map(l =>
+      `<button data-lens="${l}" aria-pressed="${l === lens}">${t("lens")[l]}</button>`).join("");
+    let lead = t("lensLead")[lens];
+    if (lens === "tree" && !G.months_shown) lead += " " + t("treeNoMonths")(G.months);
+    if (lens === "clusters" && G.groups != null) lead += `<br><span class="hint">${esc(t("clusterCount")(G.groups, G.grouped))}${G.not_grouped ? "<br>" + esc(t("notGrouped")(G.not_grouped)) : ""}</span>`;
+    head = `<h1>${t("graph")}</h1><div class="seg lens" role="group" aria-label="${t("graph")}">${seg}</div><p class="lead">${lead}</p>`;
+  }
+  const count = k => G.links ? G.links.filter(l => l.kind === k).length : 0;
+  const note = t("layerNote")[lens];
   page.innerHTML = `<div class="graph" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-panel g-legend">${head}
-      <label class="layer"><input type="checkbox" data-layer="declared" checked>
-        <svg width="34" height="10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" class="l-declared"/></svg>
-        <span>${t("layerDeclared")}</span><span class="n">${esc(t("linesN")(count("declared")))}</span></label>
-      <label class="layer"><input type="checkbox" data-layer="similar" checked>
-        <svg width="34" height="10" aria-hidden="true"><defs><linearGradient id="lg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="34" y2="0">
-          <stop offset="0" class="s-a"/><stop offset="1" class="s-b"/></linearGradient></defs><line x1="0" y1="5" x2="34" y2="5" class="l-similar"/></svg>
-        <span>${t("layerSimilar")}</span><span class="n">${esc(t("linesN")(count("similar")))}</span></label>
-      <label class="layer"><input type="checkbox" data-layer="structure" checked>
-        <svg width="34" height="10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" class="l-structure"/></svg>
-        <span>${t("layerStructure")}</span><span class="n">${esc(t("linesN")(count("structure")))}</span></label>
-      <div class="g-note">${t("similarNote")}</div>
+      ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k))).join("") : ""}
+      ${note ? `<div class="g-note">${note}</div>` : ""}
     </div>
     <div class="g-panel g-card" id="gcard"></div>
     <div class="g-hint">${t("graphHint")}</div></div>`;
-  $("backBtn")?.addEventListener("click", () => go({ view: "graph" }));
-  startGraph(G);
+  $("backBtn")?.addEventListener("click", () => go({ view: "graph", path: [], month: "" }));
+  for (const b of page.querySelectorAll("[data-lens]")) b.addEventListener("click", () => go({ view: "graph", path: [], month: "", lens: b.dataset.lens }));
+  // A lens with nothing to draw says why, instead of an empty canvas.
+  const empty = G.too_many ? t("tooMany")(G.too_many, G.max_rows)
+    : lens === "entities" && !G.nodes.length ? `${t("emptyEntitiesP")} ${t("tryAsk")} ${t("askEntities")}`
+    : G.nodes && !G.nodes.length ? t("noMemories") : "";
+  if (empty) { $("gc").remove(); page.querySelector(".g-hint").remove(); $("graphWrap").insertAdjacentHTML("beforeend", `<div class="g-empty"><p>${esc(empty)}</p></div>`); return; }
+  startGraph(G, lens);
 }
 
-function startGraph(G) {
+function groupLabel(n) {
+  if (n.level === "agent") return n.label || n.key;
+  if (n.level === "project") return n.key || t("global");
+  if (n.level === "channel") return n.key || t("noChannel");
+  return n.key;
+}
+
+// "agent / project / channel / 2026-10", each part as the sidebar names it.
+function groupPath(n) {
+  const p = n.path, parts = [p[0]];
+  if (p.length > 1) parts.push(levelLabel("project", p[1]));
+  if (p.length > 2) parts.push(levelLabel("channel", p[2]));
+  if (p.length > 4) parts.push(`${p[3]}-${p[4]}`);
+  return parts.join(" / ");
+}
+
+function startGraph(G, lens) {
   const wrap = $("graphWrap"), cv = $("gc"), ctx = cv.getContext("2d");
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const pal = PALETTE[dark ? "dark" : "light"];
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: { declared: true, similar: true, structure: true },
+  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, true])),
     heat: 0, panV: null, hover: null, sel: null, drag: null, panning: null, W: 0, H: 0, DPR: 1 };
   const byId = new Map(G.nodes.map(n => [n.id, n]));
   const adj = new Map(G.nodes.map(n => [n.id, new Set()]));
   G.links = G.links.filter(l => byId.has(l.s) && byId.has(l.t));
   for (const l of G.links) { l.a = byId.get(l.s); l.b = byId.get(l.t); adj.get(l.s).add(l.t); adj.get(l.t).add(l.s); }
-  const agents = [...new Set(G.nodes.filter(n => n.kind === "agent").map(n => n.agent))];
+  const agents = [...new Set(G.nodes.map(n => n.agent).filter(Boolean))].sort();
   const color = {};
   agents.forEach((a, i) => { color[a] = pal[i % pal.length]; });
   const tint = n => n.kind === "entity" ? css("--accent") : color[n.agent] || css("--faint");
-  for (const n of G.nodes) n.deg = G.links.filter(l => l.kind === "similar" && (l.a === n || l.b === n)).length;
-  // Start each agent's memories near its own angle (or, around a memory, by step),
+  const counted = G.nodes.filter(n => n.count != null);
+  const maxCount = Math.max(1, ...counted.map(n => n.count));
+  for (const n of G.nodes) {
+    n.deg = G.links.filter(l => l.kind === "similar" && (l.a === n || l.b === n)).length;
+    if (n.kind === "group") n.name = groupLabel(n);
+    else if (n.kind === "cluster") n.name = n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label;
+    else n.name = n.label;
+  }
+  const radius = n => n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
+    : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
+  const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
+  // Start each agent's points near its own angle (or, around a memory, by step),
   // so the layout settles in a few hundred steps.
   for (const n of G.nodes) {
     const i = Math.max(0, agents.indexOf(n.agent)), ang = (i / Math.max(1, agents.length)) * Math.PI * 2;
-    const r = state.around && n.kind === "memory" ? n.hop * 90 : n.kind === "agent" ? 220 : 220 + (Math.random() - 0.5) * 160;
-    const spin = state.around && n.kind === "memory" ? Math.random() * Math.PI * 2 : ang;
+    const depth = n.kind === "group" ? n.path.length : 0;
+    const r = state.around && n.kind === "memory" ? n.hop * 90 : hub(n) ? 220 : 220 + depth * 30 + (Math.random() - 0.5) * 160;
+    const spin = state.around && n.kind === "memory" || lens === "clusters" || lens === "entities" ? Math.random() * Math.PI * 2 : ang;
     n.x = Math.cos(spin) * r + (Math.random() - 0.5) * 60; n.y = Math.sin(spin) * r + (Math.random() - 0.5) * 60; n.vx = n.vy = 0;
   }
-  const radius = n => n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
+  const SPRING = { structure: [46, 0.03], part: [36, 0.06], near: [70, 0.03], co: [60, 0.05], declared: [34, 0.08] };
 
   function tick(alpha, friction = 0.6) {
     const N = G.nodes;
     for (let i = 0; i < N.length; i++) {
-      const a = N[i];
+      const a = N[i], ra = radius(a);
       for (let j = i + 1; j < N.length; j++) {
         const b = N[j], dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy + 0.01;
         if (d2 > 90000) continue;
-        const f = (a.kind === "agent" && b.kind === "agent" ? 2400 : 240) / d2 * alpha;
+        // Larger points push harder, so a big group keeps room around it.
+        const base = hub(a) && hub(b) ? 2400 : 240;
+        const f = base * (0.6 + ra / 8) * (0.6 + radius(b) / 8) / d2 * alpha;
         a.vx -= dx * f; a.vy -= dy * f; b.vx += dx * f; b.vy += dy * f;
       }
     }
     for (const l of G.links) {
-      const len = l.kind === "structure" ? 46 : 34, str = l.kind === "structure" ? 0.03 : l.kind === "similar" ? 0.05 + 0.1 * (l.w - 0.5) : 0.08;
+      const [len0, str0] = SPRING[l.kind] || [34, 0.05 + 0.1 * (l.w - 0.5)];
+      const len = len0 + radius(l.a) + radius(l.b), str = str0;
       const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, d = Math.hypot(dx, dy) || 1, f = (d - len) / d * str * alpha;
       l.a.vx += dx * f; l.a.vy += dy * f; l.b.vx -= dx * f; l.b.vy -= dy * f;
     }
     for (const n of N) {
       n.vx -= n.x * 0.002 * alpha; n.vy -= n.y * 0.002 * alpha;
       if (n === s.drag) continue;
-      const fr = n.kind === "agent" ? Math.min(friction, HUB_FRICTION) : friction;
+      const fr = hub(n) ? Math.min(friction, HUB_FRICTION) : friction;
       n.vx *= fr; n.vy *= fr; n.x += n.vx; n.y += n.vy;
     }
   }
@@ -558,21 +655,21 @@ function startGraph(G) {
     const ink = dark ? "255,255,255" : "20,24,30";
     // Lines are context, not the subject: thin and faint, tinted with their ends'
     // colours. Declared relations are drawn last, thicker, in the accent colour.
-    for (const kind of ["structure", "similar", "declared"]) {
+    for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
       if (!s.show[kind]) continue;
       for (const l of G.links) {
         if (l.kind !== kind) continue;
         const on = !focus || l.a === focus || l.b === focus;
-        let alpha = kind === "structure" ? 0.1 : kind === "similar" ? 0.16 + 0.3 * (l.w - 0.5) : 0.9;
-        let width = kind === "declared" ? 1.8 : kind === "similar" ? 0.9 : 0.6;
-        if (focus && on) { alpha = kind === "structure" ? 0.45 : 0.85; width *= 1.4; } else if (focus) alpha *= 0.25;
-        if (kind === "declared") ctx.strokeStyle = css("--accent");
-        else if (kind === "similar") {
+        let alpha = kind === "structure" || kind === "part" ? 0.12 : kind === "similar" || kind === "near" ? 0.16 + 0.3 * (l.w - 0.5) : kind === "co" ? 0.45 : 0.9;
+        let width = kind === "declared" ? 1.8 : kind === "co" ? 0.8 + Math.min(l.w, 6) * 0.3 : kind === "part" ? 0.9 : kind === "structure" ? 0.6 : 0.9;
+        if (focus && on) { alpha = kind === "structure" || kind === "part" ? 0.45 : 0.85; width *= 1.4; } else if (focus) alpha *= 0.25;
+        if (kind === "declared" || kind === "co") ctx.strokeStyle = css("--accent");
+        else if (kind === "similar" || kind === "near") {
           const g = ctx.createLinearGradient(l.a.x, l.a.y, l.b.x, l.b.y);
           g.addColorStop(0, tint(l.a)); g.addColorStop(1, tint(l.b));
           ctx.strokeStyle = g;
         } else ctx.strokeStyle = `rgb(${ink})`;
-        ctx.globalAlpha = alpha;
+        ctx.globalAlpha = Math.max(0.04, Math.min(1, alpha));
         ctx.lineWidth = width / Math.sqrt(view.k);
         ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
       }
@@ -580,21 +677,22 @@ function startGraph(G) {
     for (const n of G.nodes) {
       const r = radius(n), col = tint(n);
       ctx.globalAlpha = lit(n) ? 1 : 0.15;
-      ctx.shadowColor = col; ctx.shadowBlur = (n === focus ? 18 : n.kind === "agent" ? 14 : dark ? 5 : 0) * view.k;
+      ctx.shadowColor = col; ctx.shadowBlur = (n === focus ? 18 : hub(n) ? 14 : dark ? 5 : 0) * view.k;
       ctx.beginPath(); ctx.arc(n.x, n.y, n === focus ? r + 1.5 : r, 0, Math.PI * 2);
       if (n.kind === "entity") { ctx.fillStyle = css("--raised"); ctx.fill(); ctx.lineWidth = 2 / view.k; ctx.strokeStyle = col; ctx.stroke(); }
-      else { ctx.fillStyle = col; ctx.fill(); }
+      else { ctx.globalAlpha *= n.count != null && !hub(n) ? 0.85 : 1; ctx.fillStyle = col; ctx.fill(); }
       ctx.shadowBlur = 0;
-      if (n === s.sel || n.hop === 0) { ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2); ctx.stroke(); }
+      if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2); ctx.stroke(); }
     }
     ctx.textAlign = "center"; ctx.textBaseline = "top";
     for (const n of G.nodes) {
-      const named = n.kind !== "memory" || n === focus || (focus && near.has(n.id) && view.k > 1.4) || view.k > 2.6;
+      const big = n.count != null && radius(n) * view.k > 9;
+      const named = hub(n) || n.kind === "entity" || big || n === focus || (focus && near.has(n.id) && view.k > 1.4) || view.k > 2.6;
       if (!named) continue;
       ctx.globalAlpha = lit(n) ? 1 : 0.2;
-      ctx.font = `${n.kind === "memory" ? 400 : 600} ${(n.kind === "memory" ? 10.5 : 12) / view.k}px system-ui, sans-serif`;
-      ctx.fillStyle = n.kind === "memory" ? css("--muted") : css("--text");
-      ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.label, n.x, n.y + radius(n) + 4 / view.k);
+      ctx.font = `${hub(n) || n.kind === "entity" ? 600 : 400} ${(n.kind === "memory" ? 10.5 : 12) / view.k}px system-ui, sans-serif`;
+      ctx.fillStyle = hub(n) || n.kind === "entity" ? css("--text") : css("--muted");
+      ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.name, n.x, n.y + radius(n) + 4 / view.k);
     }
     ctx.globalAlpha = 1;
   }
@@ -612,23 +710,40 @@ function startGraph(G) {
     requestAnimationFrame(loop);
   }
 
+  function card(html, buttons) {
+    const el = $("gcard");
+    el.innerHTML = html + (buttons.length ? `<div class="actions">${buttons.map(([id, label]) => `<button class="btn" id="${id}">${label}</button>`).join("")}</div>` : "");
+    el.classList.add("open");
+  }
+
   function select(n) {
     s.sel = n;
-    const card = $("gcard");
-    if (!n || n.kind === "agent") { card.classList.remove("open"); draw(); return; }
-    if (n.kind === "entity") {
-      card.innerHTML = `<div class="g-head"><span>${esc(n.label)}</span></div>
-        <div class="g-near">${esc(t("mentionsN")([...adj.get(n.id)].filter(id => byId.get(id).kind === "memory").length))}</div>`;
+    const el = $("gcard");
+    if (!n || n.kind === "agent") { el.classList.remove("open"); draw(); return; }
+    if (n.kind === "group") {
+      card(`<div class="g-head"><span>${esc(t("lvl")[n.level === "month" ? "month" : n.level])}</span><span>${esc(t("memoriesN")(n.count))}</span></div>
+        <p class="g-title">${esc(groupPath(n))}</p>`, [["gGo", t("openGroup")]]);
+      $("gGo").addEventListener("click", () => go({ view: "graph", path: n.path, month: "" }));
+    } else if (n.kind === "cluster") {
+      const mix = Object.entries(n.agents).map(([a, c]) => `${esc(a)} ${c}`).join(", ");
+      card(`<div class="g-head"><span class="g-agent"><span class="g-dot"></span>${esc(t("memoriesN")(n.count))}</span><span>mem:${n.mem}</span></div>
+        <p>“${esc(n.quote)}”</p><div class="g-near">${esc(t("clusterQuoteHint"))}<br>${mix}</div>`, [["gGo", t("openCluster")], ["gOpen", t("openMemory")]]);
+      el.querySelector(".g-dot").style.background = tint(n);
+      $("gGo").addEventListener("click", () => go({ view: "graph", cluster: n.mem }));
+      $("gOpen").addEventListener("click", () => openDetail(n.mem).catch(fail));
+    } else if (n.kind === "entity") {
+      const mentions = n.count != null ? n.count : [...adj.get(n.id)].filter(id => byId.get(id).kind === "memory").length;
+      card(`<div class="g-head"><span>${esc(t("entities"))}</span></div><p class="g-title">${esc(n.label)}</p>
+        <div class="g-near">${esc(t("mentionsN")(mentions))}</div>`, mentions && n.entity ? [["gGo", t("openEntity")]] : []);
+      $("gGo")?.addEventListener("click", () => go({ view: "graph", entity: n.entity }));
     } else {
-      card.innerHTML = `<div class="g-head"><span class="g-agent"><span class="g-dot"></span>${esc(n.agent)}</span><span>${esc(day(n.timestamp))} · mem:${n.mem}</span></div>
-        <p>${esc(n.snippet)}</p><div class="g-near">${esc(t("similarN")(n.deg))}</div>
-        <div class="actions"><button class="btn" id="gOpen">${t("openMemory")}</button>
-        ${n.hop === 0 ? "" : `<button class="btn" id="gCenter">${t("centerHere")}</button>`}</div>`;
-      card.querySelector(".g-dot").style.background = tint(n);
+      card(`<div class="g-head"><span class="g-agent"><span class="g-dot"></span>${esc(n.agent)}</span><span>${esc(day(n.timestamp))} · mem:${n.mem}</span></div>
+        <p>${esc(n.snippet)}</p><div class="g-near">${esc(t("similarN")(n.deg))}</div>`,
+        n.hop === 0 ? [["gOpen", t("openMemory")]] : [["gOpen", t("openMemory")], ["gCenter", t("centerHere")]]);
+      el.querySelector(".g-dot").style.background = tint(n);
       $("gOpen").addEventListener("click", () => openDetail(n.mem).catch(fail));
       $("gCenter")?.addEventListener("click", () => go({ view: "graph", around: n.mem }));
     }
-    card.classList.add("open");
     draw();
   }
 
@@ -724,8 +839,8 @@ function setLang(l) {
   applyLang();
   route().catch(fail);
 }
-// A move that does not name a memory to center on leaves the "around" view.
-function go(next) { Object.assign(state, { around: 0 }, next); closeDetail(); return route().catch(fail); }
+// A move that does not name what to center on leaves the "around", group and entity views.
+function go(next) { Object.assign(state, { around: 0, cluster: 0, entity: 0 }, next); closeDetail(); return route().catch(fail); }
 async function route() {
   for (const b of document.querySelectorAll(".nav")) {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
