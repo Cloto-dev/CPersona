@@ -877,28 +877,85 @@ function startGraph(G, lens) {
     for (const [x, y, z] of SKY) { ctx.globalAlpha = 0.08 + z * 0.3; ctx.fillRect(x * s.W, y * s.H, z > 0.85 ? 1.6 : 1, z > 0.85 ? 1.6 : 1); }
     ctx.globalAlpha = 1;
   }
-  const FACETS = ["#f4b9d9", "#fff1f8", "#eaf5ff", "#a3d2fb", "#5fa9ef", "#8fc7f9", "#d3e9ff", "#bba9f3"];
+  // Each agent's star has its own two-colour gradient and one of five materials, both
+  // derived from the agent's id, so an agent keeps its look on every load.
+  const MATERIALS = ["crystal", "pearl", "frost", "metal", "ember"];
+  // Ids that differ in one character hash to nearby values, so the look mixes the hash
+  // once more (murmur3's finaliser) before using it.
+  const mix01 = str => {
+    let h = Math.floor(hash01(str) * 4294967296);
+    h = Math.imul(h ^ h >>> 16, 0x85ebca6b); h = Math.imul(h ^ h >>> 13, 0xc2b2ae35); h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  };
+  const hsl = (h, sat, l, a = 1) => `hsla(${((h % 360) + 360) % 360},${sat}%,${l}%,${a})`;
+  function lookOf(agent) {
+    const h1 = mix01(`${agent}:h`) * 360, h2 = h1 + 50 + mix01(`${agent}:g`) * 110;
+    const sat = 62 + mix01(`${agent}:s`) * 26;
+    return { h1, h2, sat, material: MATERIALS[Math.floor(mix01(`${agent}:m`) * MATERIALS.length)] };
+  }
   const crystals = new Map();
-  // One sprite per size and tint, drawn once: eight facets between the centre, the four
-  // points and the four waists, outlined in white with a pale glow.
-  function crystal(R, tintHex) {
-    const key = `${R}|${tintHex || ""}`;
+  // One sprite per size and agent, drawn once: the star's outline is four points and
+  // four waists; the material decides how its inside catches the light.
+  function crystal(R, agent) {
+    const key = `${R}|${agent}`;
     if (crystals.has(key)) return crystals.get(key);
-    const pad = R * 0.9, size = Math.ceil((R + pad) * 2), c = document.createElement("canvas");
+    const L = lookOf(agent), m = L.material;
+    const pad = R * (m === "ember" ? 1.4 : 0.9), size = Math.ceil((R + pad) * 2), c = document.createElement("canvas");
     c.width = c.height = size * 2;
     const x = c.getContext("2d");
     x.scale(2, 2); x.translate(size / 2, size / 2);
     const w = R * 0.26, O = [[0, -R], [R * 0.86, 0], [0, R], [-R * 0.86, 0]], I = [[w, -w], [w, w], [-w, w], [-w, -w]];
+    const shape = () => { x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath(); };
     const tri = (a, b, col) => { x.beginPath(); x.moveTo(0, 0); x.lineTo(...a); x.lineTo(...b); x.closePath(); x.fillStyle = col; x.fill(); };
-    x.shadowColor = tintHex || "#9ccfff"; x.shadowBlur = R * 0.9;
-    x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath(); x.fillStyle = "#cfe6ff"; x.fill();
+    // The colour of a facet runs from the first hue at the top left to the second at the
+    // bottom right; the two halves of each point differ in lightness, as cut faces do.
+    const facet = (i, half, dl = 0) => {
+      const t = [0.15, 0.35, 0.55, 0.75, 0.95, 0.75, 0.45, 0.25][i * 2 + half];
+      return hsl(L.h1 + (L.h2 - L.h1) * t, L.sat, (half ? 64 : 80) + dl);
+    };
+    x.shadowColor = hsl(m === "ember" ? L.h1 : L.h2, L.sat, 65); x.shadowBlur = R * (m === "ember" ? 1.7 : 0.9);
+    shape(); x.fillStyle = hsl(L.h2, L.sat, 70, m === "ember" ? 0.5 : 1); x.fill();
     x.shadowBlur = 0;
-    for (let i = 0; i < 4; i++) { tri(I[(i + 3) % 4], O[i], FACETS[i * 2]); tri(O[i], I[i], FACETS[i * 2 + 1]); }
-    if (tintHex) { x.globalCompositeOperation = "color"; x.globalAlpha = 0.55; x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath(); x.fillStyle = tintHex; x.fill(); x.globalCompositeOperation = "source-over"; x.globalAlpha = 1; }
-    x.beginPath(); O.forEach((o, i) => { x.lineTo(...o); x.lineTo(...I[i]); }); x.closePath();
-    x.strokeStyle = "rgba(255,255,255,0.95)"; x.lineWidth = Math.max(0.8, R * 0.07); x.lineJoin = "round"; x.stroke();
-    const hl = x.createRadialGradient(0, 0, 0, 0, 0, R * 0.35); hl.addColorStop(0, "rgba(255,255,255,0.9)"); hl.addColorStop(1, "rgba(255,255,255,0)");
-    x.fillStyle = hl; x.fillRect(-R, -R, R * 2, R * 2);
+    x.save(); shape(); x.clip();
+    if (m === "crystal" || m === "frost") {
+      for (let i = 0; i < 4; i++) { tri(I[(i + 3) % 4], O[i], facet(i, 0, m === "frost" ? -4 : 0)); tri(O[i], I[i], facet(i, 1, m === "frost" ? 8 : 0)); }
+      if (m === "frost") {
+        // Fine grains, placed by a seeded generator so they stay put.
+        let a = Math.floor(mix01(`${agent}:f`) * 4294967296);
+        const next = () => { a = a + 0x6d2b79f5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+        x.fillStyle = "#ffffff";
+        for (let i = 0; i < 90; i++) { x.globalAlpha = 0.15 + next() * 0.4; x.fillRect((next() - 0.5) * 2 * R, (next() - 0.5) * 2 * R, R * 0.05, R * 0.05); }
+        x.globalAlpha = 0.18; x.fillRect(-R, -R, 2 * R, 2 * R); x.globalAlpha = 1;
+      }
+    } else if (m === "pearl") {
+      const g = x.createRadialGradient(-R * 0.2, -R * 0.25, 0, 0, 0, R);
+      g.addColorStop(0, hsl(L.h1, L.sat * 0.6, 94)); g.addColorStop(0.55, hsl(L.h1 + 25, L.sat, 78)); g.addColorStop(1, hsl(L.h2, L.sat, 62));
+      x.fillStyle = g; x.fillRect(-R, -R, 2 * R, 2 * R);
+      const iri = x.createConicGradient(mix01(`${agent}:c`) * Math.PI * 2, 0, 0);
+      [0, 60, 120, 180, 240, 300, 360].forEach((h, i) => iri.addColorStop(i / 6, hsl(h, 90, 70)));
+      x.globalAlpha = 0.22; x.fillStyle = iri; x.fillRect(-R, -R, 2 * R, 2 * R);
+      const sheen = x.createLinearGradient(-R, -R, R, R);
+      sheen.addColorStop(0.3, "rgba(255,255,255,0)"); sheen.addColorStop(0.42, "rgba(255,255,255,0.75)"); sheen.addColorStop(0.5, "rgba(255,255,255,0)");
+      x.globalAlpha = 1; x.fillStyle = sheen; x.fillRect(-R, -R, 2 * R, 2 * R);
+    } else if (m === "metal") {
+      const g = x.createLinearGradient(0, -R, 0, R);
+      [[0, 88], [0.22, 52], [0.42, 92], [0.5, 40], [0.62, 76], [0.82, 46], [1, 82]].forEach(([t, l]) => g.addColorStop(t, hsl(L.h1 + (L.h2 - L.h1) * t, L.sat * 0.7, l)));
+      x.fillStyle = g; x.fillRect(-R, -R, 2 * R, 2 * R);
+      x.strokeStyle = "rgba(255,255,255,0.35)"; x.lineWidth = R * 0.03;
+      for (let i = 0; i < 4; i++) { x.beginPath(); x.moveTo(0, 0); x.lineTo(...O[i]); x.stroke(); }
+    } else {
+      const g = x.createRadialGradient(0, 0, 0, 0, 0, R);
+      g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.25, hsl(L.h1, L.sat + 10, 78)); g.addColorStop(0.7, hsl(L.h2, L.sat + 10, 58, 0.75)); g.addColorStop(1, hsl(L.h2, L.sat, 50, 0.15));
+      x.fillStyle = g; x.fillRect(-R, -R, 2 * R, 2 * R);
+    }
+    x.restore();
+    shape(); x.lineJoin = "round"; x.lineWidth = Math.max(0.8, R * 0.07);
+    x.strokeStyle = m === "ember" ? hsl(L.h1, L.sat, 82, 0.8) : m === "metal" ? hsl(L.h1, 40, 92) : "rgba(255,255,255,0.95)"; x.stroke();
+    if (m !== "metal") {
+      const hl = x.createRadialGradient(0, 0, 0, 0, 0, R * (m === "ember" ? 0.5 : 0.35));
+      hl.addColorStop(0, "rgba(255,255,255,0.9)"); hl.addColorStop(1, "rgba(255,255,255,0)");
+      x.fillStyle = hl; x.fillRect(-R, -R, R * 2, R * 2);
+    }
     const out = { c, size };
     crystals.set(key, out);
     return out;
@@ -906,13 +963,15 @@ function startGraph(G, lens) {
   function drawStar(n, r, on) {
     const k = s.view.k;
     if (hub(n)) {
-      const R = Math.round(r * 2 * k * 2) / 2, sp = crystal(R, s.byAgent ? tint(n) : null), d = sp.size / k;
+      const R = Math.round(r * 2 * k * 2) / 2, sp = crystal(R, n.agent), d = sp.size / k;
       ctx.drawImage(sp.c, n.x - d / 2, n.y - d / 2, d, d);
       return;
     }
-    const col = s.byAgent ? tint(n) : "#cfe0ff";
+    // Coloured by agent, a memory glows in its agent's first hue.
+    const L = s.byAgent && n.agent ? lookOf(n.agent) : null;
+    const col = L ? hsl(L.h1, L.sat, 82) : "#cfe0ff";
     const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 2.6);
-    halo.addColorStop(0, on ? "rgba(255,225,240,0.55)" : "rgba(160,195,255,0.35)"); halo.addColorStop(1, "rgba(160,195,255,0)");
+    halo.addColorStop(0, on ? "rgba(255,225,240,0.55)" : L ? hsl(L.h1, L.sat, 70, 0.4) : "rgba(160,195,255,0.35)"); halo.addColorStop(1, "rgba(160,195,255,0)");
     ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(n.x, n.y, r * 2.6, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = on ? "#fff4fa" : col; ctx.beginPath(); ctx.arc(n.x, n.y, r * 0.75, 0, Math.PI * 2); ctx.fill();
     if (n === s.sel || n.hop === 0) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1 / k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); }
