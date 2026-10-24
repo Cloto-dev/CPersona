@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:ff0d6effcdbc6cce184f18ffd45880a91c8c90c5 -->
+<!-- i18n-source: docs/operations.md@blob:9869c1caa4512c83c6d90fc49c8c94570048759f -->
 
 # 運用 Runbook
 
@@ -455,6 +455,20 @@ python -m cpersona.block_index --db /path/to/cpersona.db status
 `block_log_without_index` だけで、(たとえばコマンドラインから作ったために) 変更記録が動いたままになり、
 読む者のいない行を Block の書き込みごとに足している状態です。`check_health(checks=["block_index"], fix=true)`
 で止まり、設定を off にしてサーバーを起動しても止まります。
+
+## ダッシュボード { #the-dashboard }
+
+`cpersona dashboard` は、記録先を読み取り専用のページとしてブラウザで開きます。何が入っていていつ書かれたかの概要、論理ディレクトリの木 (エージェント・プロジェクト・チャンネル・年・月)、フォルダ・月・本文で絞れる一覧、各記憶の全文とノード・ブロックへの分け方を見られます。
+
+```bash
+cpersona dashboard --db ~/.claude/cpersona.db      # または: uvx cpersona dashboard --db …
+python -m cpersona.dashboard --db ~/.claude/cpersona.db
+```
+
+- **どのデータベースか**: `--db` で指定したもの、なければ `CPERSONA_DB_PATH`。サーバーの相対パスの既定値には落ちません。端末のフォルダから解決されて、別のファイルを開いてしまうためです。CPersona を MCP クライアントから使っている時は、そのクライアントのサーバー設定にある `CPERSONA_DB_PATH` がそのパスです。
+- **何も書きません。** ファイルは SQLite の `mode=ro` で開くので、書き込みは SQLite 自身が拒みます。動いているサーバーの横で開いたままにでき、ページを読み込むたびに最後に確定した状態を読みます。このリリースが知らないスキーマのデータベース (新しいもの、またはスキーマ 19 より古いもの) は、読まずにその旨を出します。
+- **誰が見られるか**: 127.0.0.1 だけで、空いているポートで待ち受けます (`--port` で指定できます)。表示されるアドレスには、起動ごとに作るトークンが `#` の後ろに付いています。この部分はブラウザが要求に載せません。データは、このトークンを持ち、Host ヘッダがループバックのアドレスを指す GET の要求にだけ返します。同じ機械の別の利用者は、ポートには届いてもデータは読めません。`--no-browser` は、ブラウザを開かずにアドレスだけを表示します。
+- エピソード・実体・想起の trace はまだ表示しません。ページから編集することもできません。
 
 ## メンテナンスの頻度 { #maintenance-cadence }
 
