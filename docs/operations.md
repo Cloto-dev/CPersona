@@ -525,6 +525,19 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   requests carrying it, only for a Host header naming the loopback address, and
   only to GET. Another user of the same machine can reach the port but not the
   data. `--no-browser` prints the address without opening it.
+- **The whole picture** is what the network opens on. A store of thousands of
+  memories cannot be drawn a point per memory, so it draws groups, through one of
+  three lenses. *Folders* (the default) makes each agent, project, channel and
+  month a point as large as the memories it holds; past 1,500 points the months
+  are left out. *Entities* makes each declared entity a point as large as the
+  memories that mention it, joined by declared relations and by being mentioned
+  in the same memory. *Similar groups* sorts the memories by their stored vectors
+  with seeded spherical k-means (about √(n/2) groups, the best of four starts,
+  so the same store groups the same way) and names each group by quoting the
+  start of the memory nearest its centre; no model is called. Groups are joined
+  to the three whose centres are nearest. Only vectors of the most common width
+  are grouped, and a store with more than 20,000 of them is not grouped yet.
+  Selecting a point draws its own memories, the newest 800.
 - **The network** draws memories as points joined by three kinds of line, each
   of which can be hidden: relations an agent declared (entities a memory
   mentions, and relations between entities and memories); similar content, each

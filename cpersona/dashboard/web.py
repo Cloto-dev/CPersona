@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from cpersona.dashboard import graph, store
+from cpersona.dashboard import graph, overall, store
 
 HOST = "127.0.0.1"
 
@@ -170,8 +170,30 @@ def make_handler(
                         )
                         if out is None:
                             return self._json(404, {"error": "No memory with that id."})
+                    elif url.path == "/api/graph" and q.get("cluster_of"):
+                        out = overall.cluster_of(conn, db_path, int(q["cluster_of"]))
+                        if out is None:
+                            return self._json(
+                                404, {"error": "That memory is in no group."}
+                            )
+                    elif url.path == "/api/graph" and q.get("entity"):
+                        out = graph.mentioning(conn, int(q["entity"]))
+                        if out is None:
+                            return self._json(404, {"error": "No entity with that id."})
                     elif url.path == "/api/graph":
                         out = graph.folder(conn, path, q.get("month", ""))
+                    elif url.path == "/api/map":
+                        lens = q.get("lens", "tree")
+                        if lens == "tree":
+                            out = overall.tree(conn)
+                        elif lens == "entities":
+                            out = overall.entities(conn)
+                        elif lens == "clusters":
+                            out = overall.clusters(conn, db_path)
+                        else:
+                            raise ValueError(
+                                f"lens is one of {', '.join(overall.LENSES)}"
+                            )
                     else:
                         return self._json(404, {"error": "not found"})
             except ValueError as e:

@@ -208,7 +208,7 @@ def _declared(conn, mem_ids: set[int]) -> tuple[list[dict], list[dict]]:
                 }
             )
     nodes = [
-        {"id": f"e:{e[0]}", "kind": "entity", "label": e[1], "agent": e[2]}
+        {"id": f"e:{e[0]}", "kind": "entity", "entity": e[0], "label": e[1], "agent": e[2]}
         for e in entities
     ]
     return nodes, links
@@ -259,21 +259,68 @@ def folder(conn, path: list[str] | None = None, month: str = "") -> dict:
         f"{clause} ORDER BY timestamp DESC, id DESC LIMIT ?",
         [*args, MAX_NODES],
     ).fetchall()
+    return _drawn(conn, rows, total, "folder")
+
+
+def _drawn(conn, rows, total: int, view: str, **extra) -> dict:
+    """A set of memory rows drawn with the similar lines among them."""
     similar: dict[tuple[int, int], float] = {}
     groups = _group((r["id"], r["embedding"]) for r in rows)
     for ids, vecs in groups.values():
         similar.update(_nearest_within(ids, vecs))
     compared = sum(len(ids) for ids, _ in groups.values())
     return {
-        "view": "folder",
+        "view": view,
         "total": total,
         "shown": len(rows),
         "without_vector": len(rows) - compared,
         "max_nodes": MAX_NODES,
         "k": K,
         "floor": FLOOR,
+        **extra,
         **_points(conn, rows, similar),
     }
+
+
+#: Ids asked for at a time, under SQLite's oldest limit on bound parameters.
+_ID_BATCH = 900
+
+
+def members(conn, ids: list[int], view: str, **extra) -> dict:
+    """The newest MAX_NODES of these memories, drawn as a folder is."""
+    dated = []
+    for at in range(0, len(ids), _ID_BATCH):
+        part = ids[at : at + _ID_BATCH]
+        dated += conn.execute(
+            f"SELECT id, timestamp FROM memories WHERE id IN ({','.join('?' * len(part))})",
+            part,
+        ).fetchall()
+    dated.sort(key=lambda r: (r[1], r[0]), reverse=True)
+    keep = [r[0] for r in dated[:MAX_NODES]]
+    rows = conn.execute(
+        "SELECT id, agent_id, timestamp, content, embedding FROM memories "
+        f"WHERE id IN ({','.join('?' * len(keep))}) ORDER BY timestamp DESC, id DESC",
+        keep,
+    ).fetchall()
+    return _drawn(conn, rows, len(dated), view, **extra)
+
+
+def mentioning(conn, entity_id: int) -> dict | None:
+    """The memories that mention one entity, with the entity among them."""
+    entity = conn.execute(
+        "SELECT id, name FROM entities WHERE id = ?", (entity_id,)
+    ).fetchone()
+    if entity is None:
+        return None
+    ids = [
+        int(r[0][4:])
+        for r in conn.execute(
+            "SELECT ref FROM entity_mentions WHERE entity_id = ? AND ref LIKE 'mem:%'",
+            (entity_id,),
+        )
+        if r[0][4:].isdigit()
+    ]
+    return members(conn, ids, "entity", entity=entity_id, label=entity["name"])
 
 
 def around(conn, db_path: str, memory_id: int, hops: int = DEFAULT_HOPS) -> dict | None:
