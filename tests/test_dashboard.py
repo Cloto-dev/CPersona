@@ -346,3 +346,117 @@ def test_config_db_path_is_not_used_as_a_fallback(monkeypatch, capsys):
     monkeypatch.delenv("CPERSONA_DB_PATH", raising=False)
     monkeypatch.setattr(config, "DB_PATH", _path())
     assert dashboard_main(["--no-browser"]) == 2
+
+
+# ---- the open_dashboard tool (opened by an agent, inside the server)
+
+
+@pytest.fixture
+def embedded_dashboards():
+    from cpersona.dashboard import embedded
+
+    yield embedded
+    embedded.stop_all()
+
+
+def _tools_under(env_extra: dict) -> set[str]:
+    import os
+    import subprocess
+
+    env = {**os.environ, "CPERSONA_DB_PATH": _path(), **env_extra}
+    if "CPERSONA_TRANSPORT" not in env_extra:
+        env.pop("CPERSONA_TRANSPORT", None)
+    code = "import json; from cpersona import server, acl; print(json.dumps([sorted(t.name for t in server.registry._tools), 'open_dashboard' in acl.ACL_CLASSIFICATION]))"
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    names, classified = json.loads(out.stdout.strip().splitlines()[-1])
+    assert (
+        "open_dashboard" in names
+    ) == classified  # the ACL row exists exactly when the tool does
+    return set(names)
+
+
+def test_the_tool_is_registered_under_stdio_by_default():
+    assert "open_dashboard" in _tools_under({})
+
+
+def test_the_setting_off_removes_the_tool():
+    assert "open_dashboard" not in _tools_under({"CPERSONA_DASHBOARD": "false"})
+
+
+def test_over_http_the_tool_is_not_registered():
+    assert "open_dashboard" not in _tools_under(
+        {"CPERSONA_TRANSPORT": "streamable-http"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_tool_opens_the_servers_own_database_once(
+    db, monkeypatch, embedded_dashboards
+):
+    from cpersona import server
+
+    monkeypatch.setattr(config, "DB_PATH", _path())
+    monkeypatch.setattr(
+        server.webbrowser, "open", lambda url: pytest.fail("opened a browser unasked")
+    )
+    await _add(db, "a", "visible through the tool", "2026-10-01T00:00:00+00:00")
+    first = await server.do_open_dashboard()
+    again = await server.do_open_dashboard()
+    assert first["ok"] and first["read_only"] and first["opened"] is False
+    assert first["url"] == again["url"] and first["url"].startswith("http://127.0.0.1:")
+    port = int(first["url"].split(":")[2].split("/")[0])
+    token = first["url"].split("#t=")[1]
+
+    def get(path):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=150)
+        conn.request(
+            "GET",
+            path,
+            headers={"Host": f"127.0.0.1:{port}", "Authorization": f"Bearer {token}"},
+        )
+        r = conn.getresponse()
+        out = (r.status, json.loads(r.read()))
+        conn.close()
+        return out
+
+    import asyncio
+
+    status, overview = await asyncio.to_thread(get, "/api/overview")
+    assert status == 200 and overview["counts"]["memories"] == 1
+    # The health report runs check_health on the server's loop, so the loop must stay free.
+    status, health = await asyncio.to_thread(get, "/api/health")
+    assert status == 200
+    assert health["status"] in ("healthy", "degraded", "critical")
+    assert isinstance(health["issues"], list) and "severity_summary" in health
+
+
+@pytest.mark.asyncio
+async def test_the_tool_reports_a_database_it_cannot_read(
+    monkeypatch, tmp_path, embedded_dashboards
+):
+    from cpersona import server
+
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "none.db"))
+    result = await server.do_open_dashboard()
+    assert result.get("ok") is not True and "No database" in json.dumps(result)
+
+
+def test_a_terminal_dashboard_has_no_health(served):
+    status, _, body = _get(served, "/api/health")
+    assert status == 404 and "agent" in json.loads(body)["error"]
+
+
+def test_the_plugin_offers_a_dashboard_command():
+    from pathlib import Path
+
+    command = (
+        Path(__file__).resolve().parents[1] / "plugin" / "commands" / "dashboard.md"
+    )
+    text = command.read_text(encoding="utf-8")
+    assert text.startswith("---\ndescription:") and "`open_dashboard`" in text

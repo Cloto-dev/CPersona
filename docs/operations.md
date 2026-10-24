@@ -503,6 +503,13 @@ cpersona dashboard --db ~/.claude/cpersona.db      # or: uvx cpersona dashboard 
 python -m cpersona.dashboard --db ~/.claude/cpersona.db
 ```
 
+- **From your agent**: ask it to open the dashboard. Under the stdio transport the
+  server registers `open_dashboard`, which opens the page for the database the
+  server already uses and returns the address, so nobody has to look the path up.
+  Opened this way the overview also shows the store's health, from the same
+  checks as `check_health` without repairs. The page runs until the server stops.
+  `CPERSONA_DASHBOARD=false` removes the tool; over HTTP it is not registered.
+
 - **Which database**: the one `--db` names, else `CPERSONA_DB_PATH`. There is
   no fallback to the server's relative default, which would resolve against the
   terminal's directory. If CPersona runs from an MCP client, the path is the
@@ -519,7 +526,8 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   only to GET. Another user of the same machine can reach the port but not the
   data. `--no-browser` prints the address without opening it.
 - Episodes, entities and recall traces are not shown yet, and nothing is edited
-  from the page.
+  from the page. Store health appears only when an agent opened the page: started
+  from a terminal, the dashboard cannot judge it from the file alone.
 
 ## Maintenance cadence
 

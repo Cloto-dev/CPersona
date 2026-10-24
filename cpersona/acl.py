@@ -631,11 +631,24 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
     "check_update": _update_demands,
 }
 
-# Registered only with declared folders on (config.DECLARED_FOLDERS), so the row
-# exists only then: the exhaustiveness test compares this table with the tools.
-CONDITIONAL_CLASSIFICATION: dict[str, Demands] = {"organize_folders": _scoped(PERM_WRITE)}
-if config.DECLARED_FOLDERS:
-    ACL_CLASSIFICATION.update(CONDITIONAL_CLASSIFICATION)
+# Tools registered only under a setting, so each row exists only when its tool
+# does: the exhaustiveness test compares this table with the tools.
+# - organize_folders: with declared folders on (config.DECLARED_FOLDERS).
+# - open_dashboard: with the dashboard on and the stdio transport. The page shows
+#   every agent of the store, so it demands read on all of them.
+CONDITIONAL_CLASSIFICATION: dict[str, Demands] = {
+    "organize_folders": _scoped(PERM_WRITE),
+    "open_dashboard": _process_wide(
+        "the dashboard shows every agent of the store and takes no argument that "
+        "narrows it to one",
+        required=PERM_READ,
+    ),
+}
+_REGISTERED_UNDER = {
+    "organize_folders": config.DECLARED_FOLDERS,
+    "open_dashboard": config.DASHBOARD and config.transport() == "stdio",
+}
+ACL_CLASSIFICATION.update({tool: demands for tool, demands in CONDITIONAL_CLASSIFICATION.items() if _REGISTERED_UNDER[tool]})
 
 
 # ---------------------------------------------------------------------------

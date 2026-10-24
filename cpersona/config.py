@@ -721,6 +721,13 @@ LOGICAL_DIRECTORY = _parse_bool("CPERSONA_LOGICAL_DIRECTORY", False)
 # the tables exist either way (schema 21) and stay empty.
 DECLARED_FOLDERS = _parse_bool("CPERSONA_DECLARED_FOLDERS", False)
 
+# The open_dashboard tool (2.6.15, on by default): an agent opens the read-only
+# dashboard for the database this process serves and hands its address to the
+# person. Registered only under the stdio transport, where the server runs on the
+# person's own machine; over HTTP the page would open on the server's loopback,
+# out of the person's reach. Off removes the tool definition.
+DASHBOARD = _parse_bool("CPERSONA_DASHBOARD", True)
+
 # How deep a folder may sit below its project (the project itself is depth 0).
 # Lowering it leaves deeper folders readable; it refuses new folders and filings
 # below the limit, and check_health names the folders past it.

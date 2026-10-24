@@ -11,6 +11,8 @@ const T = {
     spanOf: (a, b) => `from ${a} to ${b}`,
     byMonth: "Memories by month", byMonthHint: "Select a bar to list the memories stored that month.",
     byAgent: "By agent", byAgentHint: "Memories are kept per agent. Select a name to list that agent's memories.",
+    health: "Store health", healthChecking: "Checking…", healthOk: "No problems found.",
+    healthInfo: n => `${n} note${n === 1 ? "" : "s"} for information`, sev: { critical: "Critical", warn: "Warning", info: "Note" },
     allMemories: "All memories", searchPh: "Search memory text", shown: (a, b) => `${a} of ${b}`, loadMore: "Show more",
     noMatch: "No memory contains that text.", noMatchHint: "Shorten the word, or clear the folder filter.",
     noMemories: "No memories yet",
@@ -51,6 +53,8 @@ const T = {
     spanOf: (a, b) => `${a} から ${b} まで`,
     byMonth: "月間記憶グラフ", byMonthHint: "棒を選ぶと、その月に保存された記憶の一覧を開きます。",
     byAgent: "エージェントごと", byAgentHint: "記憶はエージェントごとに分かれています。名前を選ぶと、そのエージェントの記憶の一覧を開きます。",
+    health: "データベースの状態", healthChecking: "確認しています…", healthOk: "問題は見つかりませんでした。",
+    healthInfo: n => `お知らせ ${n} 件`, sev: { critical: "重大", warn: "注意", info: "お知らせ" },
     allMemories: "すべての記憶", searchPh: "記憶の本文を検索", shown: (a, b) => `${b} 件中 ${a} 件`, loadMore: "さらに表示",
     noMatch: "その語を含む記憶はありません。", noMatchHint: "語を短くするか、フォルダでの絞り込みを外してください。",
     noMemories: "記憶はまだありません",
@@ -211,6 +215,7 @@ function renderOverview() {
       <div class="fact"><div class="v">${o.counts.entities.toLocaleString()}</div><div class="k">${t("nEntities")}</div></div>
       <div class="fact"><div class="v">${o.agents.length}</div><div class="k">${t("nAgents")}</div></div>
     </div>
+    <div class="block" id="healthBlock" hidden><h2>${t("health")}</h2><div id="health" class="hint">${t("healthChecking")}</div></div>
     <div class="block"><h2>${t("byMonth")}</h2><div class="hint">${t("byMonthHint")}</div>
       <div class="hist">${o.months.map(m => `<button data-h="${Math.max(2, 100 * m.count / max)}" title="${m.month}: ${m.count}" aria-label="${m.month}: ${m.count}" data-month="${esc(m.month)}"></button>`).join("")}</div>
       <div class="hist-axis"><span>${esc(o.months[0]?.month ?? "")}</span><span>${esc(o.months.at(-1)?.month ?? "")}</span></div>
@@ -222,6 +227,31 @@ function renderOverview() {
   sizes(page);
   for (const b of page.querySelectorAll("[data-month]")) b.addEventListener("click", () => go({ view: "memories", path: [], q: "", month: b.dataset.month }));
   for (const b of page.querySelectorAll("[data-agent]")) b.addEventListener("click", () => go({ view: "memories", path: [b.dataset.agent], q: "", month: "" }));
+  renderHealth();
+}
+
+// Store health comes from the running server's own checks, so it exists only when an
+// agent opened the dashboard; started from a terminal, the block stays hidden.
+// The check runs once per page load (it can take seconds); going back to the
+// overview shows the same answer.
+let health = null;
+async function renderHealth() {
+  if (!health) {
+    const r = await fetch("/api/health", { headers: { Authorization: `Bearer ${token}` } });
+    health = { status: r.status, ok: r.ok, body: await r.json().catch(() => ({})) };
+  }
+  const block = $("healthBlock"), el = $("health");
+  if (health.status === 404 || !block || !el) return;
+  block.hidden = false;
+  if (!health.ok) { el.textContent = health.body.error || String(health.status); return; }
+  const issues = health.body.issues || [];
+  const serious = issues.filter(i => i.severity === "critical" || i.severity === "warn");
+  const notes = issues.length - serious.length;
+  el.className = "";
+  el.innerHTML = (serious.length
+    ? serious.map(i => `<div class="issue"><b>${esc(t("sev")[i.severity] || i.severity)}</b>
+        <span><code>${esc(i.type || i.check)}</code>${i.count != null ? ` · ${esc(i.count)}` : ""}${i.hint ? `<br><span class="hint">${esc(i.hint)}</span>` : ""}</span></div>`).join("")
+    : `<div class="ok">${t("healthOk")}</div>`) + (notes ? `<div class="hint">${t("healthInfo")(notes)}</div>` : "");
 }
 
 function renderEmptyMemories() {
