@@ -54,6 +54,7 @@ const T = {
     layer: { declared: "Declared relations", similar: "Similar content (computed)", structure: "Grouped by agent",
       part: "Folder and subfolder", co: "Mentioned in the same memory", near: "Groups with close centres (computed)" },
     linesN: n => `${n}`,
+    colourByAgent: "Colour by agent",
     layerNote: {
       memories: "Similar lines are computed from the stored embeddings. No agent declared them.",
       entities: "Entities are names agents declared. A “mentioned in the same memory” line joins two entities one memory mentions; the thicker it is, the more such memories.",
@@ -128,6 +129,7 @@ const T = {
     layer: { declared: "宣言した関係", similar: "内容が似ている (自動)", structure: "エージェントごとのまとまり",
       part: "フォルダの親子", co: "同じ記憶で言及", near: "中心が近いまとまり (自動)" },
     linesN: n => `${n} 本`,
+    colourByAgent: "エージェントで色分け",
     layerNote: {
       memories: "「内容が似ている」線は、保存された埋め込みから計算したつながりです。エージェントが宣言した関係ではありません。",
       entities: "実体は、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
@@ -164,11 +166,12 @@ try {
   else token = sessionStorage.getItem("cp.token") || "";
 } catch {}
 
-const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lens: "tree", lang: "en" };
+const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lens: "tree", lang: "en", look: "" };
 for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
 if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
+if (H0.get("look") === "calm") state.look = "calm"; // prototype: the calm look, for comparison
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
 try { state.lang = localStorage.getItem("cp.lang") || (navigator.language || "").startsWith("ja") && "ja" || "en"; } catch {}
 if (H0.get("lang")) state.lang = H0.get("lang");
@@ -217,6 +220,7 @@ function saveHash() {
   if (state.id) h.set("id", state.id);
   for (const k of ["around", "cluster", "entity"]) if (state[k]) h.set(k, state[k]);
   if (state.lens !== "tree") h.set("lens", state.lens);
+  if (state.look) h.set("look", state.look);
   history.replaceState(null, "", "#" + h);
 }
 
@@ -508,7 +512,7 @@ function layoutKey() {
   const where = state.around ? `a:${state.around}` : state.cluster ? `c:${state.cluster}`
     : state.entity ? `e:${state.entity}` : state.path.length || state.month ? `f:${JSON.stringify(state.path)}:${state.month}`
     : `map:${state.lens}`;
-  return `${overviewData.db}|${where}`;
+  return `${overviewData.db}|${where}${state.look ? "|" + state.look : ""}`;
 }
 function loadLayout(key) {
   try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")[key]?.pos || null; } catch { return null; }
@@ -567,6 +571,7 @@ async function renderGraph() {
   page.innerHTML = `<div class="graph" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-panel g-legend">${head}
       ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k))).join("") : ""}
+      ${G.nodes && state.look === "calm" ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
       ${note ? `<div class="g-note">${note}</div>` : ""}
     </div>
     <div class="g-panel g-card" id="gcard"></div>
@@ -620,8 +625,8 @@ function startGraph(G, lens) {
     else if (n.kind === "cluster") n.name = n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label;
     else n.name = n.label;
   }
-  const radius = n => n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
-    : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
+  const radius = n => n.count != null ? (state.look === "calm" ? 3 + 10 * Math.sqrt(n.count / maxCount) : 4 + 16 * Math.sqrt(n.count / maxCount))
+    : n.kind === "agent" ? 7 : state.look === "calm" && n.kind === "memory" ? 2.2 + Math.sqrt(n.deg) * 1.1 + (n.hop === 0 ? 1.5 : 0) : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
   const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
   // A point seen before starts where it was left. A new one starts beside the seen
   // points it is tied to, or else near its agent's angle (around a memory, by step),
@@ -645,6 +650,97 @@ function startGraph(G, lens) {
     n.y = seen.reduce((a, m) => a + m.y, 0) / seen.length + (rnd(n, "y") - 0.5) * 40;
   }
   const kept = G.nodes.filter(n => n.kept).length;
+
+  // ---- Prototype: the calm look (look=calm), for comparison with the default.
+  // Forces in the manner of d3-force: many-body repulsion by Barnes–Hut (θ = 0.9, no
+  // distance cut-off), springs that yield at the busier end, collision, and a pull to
+  // the centre, so the graph settles into one round body. A first view starts on a
+  // sunflower spiral and is shown blooming out of it.
+  const calm = state.look === "calm";
+  if (calm && !kept) G.nodes.forEach((n, i) => {
+    const r = 10 * Math.sqrt(0.5 + i), a = i * Math.PI * (3 - Math.sqrt(5));
+    n.x = r * Math.cos(a); n.y = r * Math.sin(a);
+  });
+  const deg = new Map(G.nodes.map(n => [n.id, Math.max(1, adj.get(n.id).size)]));
+  const charge = n => -30 * Math.max(1, radius(n) / 4);
+  const LINK_LEN = { structure: 60, part: 34, near: 120, co: 70, declared: 40, similar: 45 };
+  function quadTree(N) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of N) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); }
+    const root = { x0, y0, s: Math.max(x1 - x0, y1 - y0, 1) + 1, kids: null, pts: [] };
+    const insert = (q, n, depth) => {
+      if (!q.kids) {
+        if (!q.pts.length || depth > 32) { q.pts.push(n); return; }
+        const old = q.pts; q.pts = []; q.kids = [null, null, null, null];
+        for (const o of old) put(q, o, depth);
+      }
+      put(q, n, depth);
+    };
+    const put = (q, n, depth) => {
+      const h = q.s / 2, i = (n.x >= q.x0 + h ? 1 : 0) + (n.y >= q.y0 + h ? 2 : 0);
+      q.kids[i] ||= { x0: q.x0 + (i & 1) * h, y0: q.y0 + (i >> 1) * h, s: h, kids: null, pts: [] };
+      insert(q.kids[i], n, depth + 1);
+    };
+    const sum = q => {
+      let m = 0, cx = 0, cy = 0;
+      if (q.kids) for (const k of q.kids) { if (!k) continue; sum(k); m += k.m; cx += k.cx * k.m; cy += k.cy * k.m; }
+      else for (const n of q.pts) { const c = charge(n); m += c; cx += n.x * c; cy += n.y * c; }
+      q.m = m; q.cx = m ? cx / m : q.x0; q.cy = m ? cy / m : q.y0;
+    };
+    for (const n of N) insert(root, n, 0);
+    sum(root);
+    return root;
+  }
+  function repel(q, n, alpha) {
+    if (!q || !q.m) return;
+    const dx = q.cx - n.x, dy = q.cy - n.y;
+    let l = dx * dx + dy * dy;
+    if (q.kids) {
+      if (q.s * q.s / 0.81 >= l) { for (const k of q.kids) repel(k, n, alpha); return; }
+    } else {
+      for (const o of q.pts) {
+        if (o === n) continue;
+        const ex = o.x - n.x, ey = o.y - n.y, e = Math.max(1, ex * ex + ey * ey), c = charge(o);
+        n.vx += ex * c * alpha / e; n.vy += ey * c * alpha / e;
+      }
+      return;
+    }
+    if (l < 1) l = 1;
+    n.vx += dx * q.m * alpha / l; n.vy += dy * q.m * alpha / l;
+  }
+  function calmTick(alpha, pin = false) {
+    const N = G.nodes, tree = quadTree(N);
+    for (const n of N) repel(tree, n, alpha);
+    for (const l of G.links) {
+      const a = l.a, b = l.b, ca = deg.get(a.id), cb = deg.get(b.id);
+      const dist = (LINK_LEN[l.kind] ?? 30) + radius(a) + radius(b), bias = ca / (ca + cb);
+      let dx = b.x + b.vx - a.x - a.vx, dy = b.y + b.vy - a.y - a.vy;
+      const d = Math.hypot(dx, dy) || 1e-6, k = (d - dist) / d * alpha / Math.min(ca, cb);
+      dx *= k; dy *= k;
+      b.vx -= dx * bias; b.vy -= dy * bias; a.vx += dx * (1 - bias); a.vy += dy * (1 - bias);
+    }
+    // Collision on a grid of cells as wide as the largest pair can reach.
+    const maxR = Math.max(...N.map(radius)) + 2, cell = maxR * 2, grid = new Map();
+    N.forEach((n, i) => { const key = `${Math.floor(n.x / cell)},${Math.floor(n.y / cell)}`; (grid.get(key) || grid.set(key, []).get(key)).push(i); });
+    N.forEach((a, i) => {
+      const gx = Math.floor(a.x / cell), gy = Math.floor(a.y / cell), ra = radius(a);
+      for (let u = -1; u <= 1; u++) for (let v = -1; v <= 1; v++) for (const j of grid.get(`${gx + u},${gy + v}`) || []) {
+        if (j <= i) continue;
+        const b = N[j], rb = radius(b), R = ra + rb + 2;
+        let dx = b.x + b.vx - a.x - a.vx, dy = b.y + b.vy - a.y - a.vy, d = Math.hypot(dx, dy);
+        if (d >= R) continue;
+        if (!d) { dx = 0.01 * (hash01(a.id + b.id) - 0.5); dy = 0.01; d = Math.hypot(dx, dy); }
+        const k = (R - d) / d * 0.7, wa = rb * rb / (ra * ra + rb * rb);
+        a.vx -= dx * k * wa; a.vy -= dy * k * wa; b.vx += dx * k * (1 - wa); b.vy += dy * k * (1 - wa);
+      }
+    });
+    for (const n of N) {
+      n.vx -= n.x * 0.08 * alpha; n.vy -= n.y * 0.08 * alpha;
+      if (n === s.drag || pin && n.kept) { n.vx = n.vy = 0; continue; }
+      n.vx *= 0.6; n.vy *= 0.6; n.x += n.vx; n.y += n.vy;
+    }
+  }
+  s.alpha = 0; s.alphaTarget = 0; s.autoFit = false; s.byAgent = false;
   const SPRING = { structure: [46, 0.03], part: [36, 0.06], near: [70, 0.03], co: [60, 0.05], declared: [34, 0.08] };
 
   // pin: points seen before hold still, so only the new ones find their place.
@@ -683,14 +779,16 @@ function startGraph(G, lens) {
     cv.style.width = s.W + "px"; cv.style.height = s.H + "px";
   }
 
-  function fit() {
+  function fitView() {
     const xs = G.nodes.map(n => n.x), ys = G.nodes.map(n => n.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    s.view.k = Math.min(2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
-    s.view.x = s.W / 2 - (minX + maxX) / 2 * s.view.k; s.view.y = s.H / 2 - (minY + maxY) / 2 * s.view.k;
+    const k = Math.min(2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
+    return { k, x: s.W / 2 - (minX + maxX) / 2 * k, y: s.H / 2 - (minY + maxY) / 2 * k };
   }
+  function fit() { Object.assign(s.view, fitView()); }
 
   function draw() {
+    if (calm) return drawCalm();
     const { view } = s;
     ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
     ctx.fillStyle = css("--base"); ctx.fillRect(0, 0, s.W, s.H);
@@ -742,9 +840,62 @@ function startGraph(G, lens) {
     ctx.globalAlpha = 1;
   }
 
+  // The calm look: grey points and hairlines; colour marks only what is pointed at
+  // (or each agent, when asked for). Names fade in as the view comes closer.
+  function drawCalm() {
+    const { view } = s;
+    ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
+    ctx.fillStyle = css("--base"); ctx.fillRect(0, 0, s.W, s.H);
+    ctx.setTransform(s.DPR * view.k, 0, 0, s.DPR * view.k, s.DPR * view.x, s.DPR * view.y);
+    const focus = s.hover || s.sel, near = focus ? adj.get(focus.id) : null;
+    const lit = n => !focus || n === focus || near.has(n.id);
+    const ink = dark ? "220,224,230" : "40,44,52", accent = css("--accent"), grey = css("--muted");
+    ctx.lineWidth = 0.9 / view.k;
+    for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
+      if (!s.show[kind]) continue;
+      for (const l of G.links) {
+        if (l.kind !== kind) continue;
+        const on = focus && (l.a === focus || l.b === focus);
+        let alpha = kind === "structure" || kind === "part" ? 0.13 : kind === "declared" ? 0.5 : 0.2;
+        if (on) alpha = 0.9; else if (focus) alpha *= 0.35;
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = on || kind === "declared" ? accent : `rgb(${ink})`;
+        ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+      }
+    }
+    for (const n of G.nodes) {
+      const r = radius(n);
+      ctx.globalAlpha = lit(n) ? 1 : 0.18;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      if (n.kind === "entity") { ctx.fillStyle = css("--base"); ctx.fill(); ctx.lineWidth = 1.6 / view.k; ctx.strokeStyle = n === focus ? accent : grey; ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
+      else { ctx.fillStyle = n === focus ? accent : s.byAgent ? tint(n) : grey; ctx.fill(); }
+      if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
+    }
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.font = `400 ${11.5 / view.k}px system-ui, sans-serif`;
+    const ramp = v => Math.max(0, Math.min(1, v));
+    for (const n of G.nodes) {
+      // Only the agents are named from afar; other names fade in on the way closer.
+      let a = n.kind === "memory" ? ramp((view.k - 3) / 1) : ramp((view.k - 1.6) / 0.6);
+      if (hub(n) || n.kind === "entity" || n.kind === "cluster") a = Math.max(a, 0.85);
+      if (focus) a = n === focus ? 1 : near.has(n.id) ? Math.max(a, view.k > 1 ? 0.9 : 0) : a * 0.25;
+      if (a < 0.02) continue;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = n === focus ? css("--text") : grey;
+      ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.name, n.x, n.y + radius(n) + 4 / view.k);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function loop() {
     if (!s.alive) return;
     let moved = false;
+    if (calm && (s.alpha > 0.001 || s.alphaTarget)) {
+      for (let i = G.nodes.length > 600 ? 1 : 2; i > 0; i--) { s.alpha += (s.alphaTarget - s.alpha) * 0.0228; calmTick(s.alpha); }
+      moved = true;
+      if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.12; s.view.x += (v.x - s.view.x) * 0.12; s.view.y += (v.y - s.view.y) * 0.12; }
+      if (s.alpha <= 0.001 && !s.alphaTarget) { s.autoFit = false; saveLayout(key, G.nodes); }
+    }
     if (s.heat > 0.004) {
       tick(s.heat, FRICTION); s.heat *= 0.985; moved = true;
       if (s.heat <= 0.004) saveLayout(key, G.nodes); // still again: remember where it settled
@@ -805,7 +956,7 @@ function startGraph(G, lens) {
   }
   cv.addEventListener("pointermove", e => {
     const [x, y] = at(e);
-    if (s.drag) { [s.drag.x, s.drag.y] = world(x, y); s.drag.vx = s.drag.vy = 0; s.drag.moved = true; s.heat = Math.max(s.heat, 0.3); return; }
+    if (s.drag) { [s.drag.x, s.drag.y] = world(x, y); s.drag.vx = s.drag.vy = 0; s.drag.moved = true; if (calm) { s.alphaTarget = 0.3; s.alpha = Math.max(s.alpha, 0.1); } else s.heat = Math.max(s.heat, 0.3); return; }
     if (s.panning) {
       const nx = x - s.panning.x, ny = y - s.panning.y;
       s.panning.v = { x: nx - s.view.x, y: ny - s.view.y }; s.view.x = nx; s.view.y = ny; draw(); return;
@@ -817,12 +968,12 @@ function startGraph(G, lens) {
     const [x, y] = at(e), n = pick(x, y);
     cv.setPointerCapture(e.pointerId);
     if (n) { s.drag = n; n.moved = false; s.heat = Math.max(s.heat, 0.2); }
-    else { s.panV = null; s.panning = { x: x - s.view.x, y: y - s.view.y, sx: x, sy: y }; cv.classList.add("dragging"); }
+    else { s.autoFit = false; s.panV = null; s.panning = { x: x - s.view.x, y: y - s.view.y, sx: x, sy: y }; cv.classList.add("dragging"); }
   });
   cv.addEventListener("pointerup", e => {
     const [x, y] = at(e);
     // Let go of a point and it stays where it was put: no velocity is carried over.
-    if (s.drag) { const n = s.drag; s.drag = null; n.vx = n.vy = 0; if (!n.moved) select(n === s.sel ? null : n); }
+    if (s.drag) { const n = s.drag; s.drag = null; n.vx = n.vy = 0; s.alphaTarget = 0; if (!n.moved) select(n === s.sel ? null : n); }
     else if (s.panning) {
       if (Math.hypot(x - s.panning.sx, y - s.panning.sy) < 3) select(null);
       else if (s.panning.v) s.panV = { ...s.panning.v };
@@ -831,21 +982,27 @@ function startGraph(G, lens) {
   });
   cv.addEventListener("wheel", e => {
     e.preventDefault();
+    s.autoFit = false;
     const [x, y] = at(e), f = Math.exp(-e.deltaY * 0.0015), [wx, wy] = world(x, y);
     s.view.k = Math.max(0.2, Math.min(8, s.view.k * f)); s.view.x = x - wx * s.view.k; s.view.y = y - wy * s.view.k; draw();
   }, { passive: false });
   for (const box of wrap.querySelectorAll("[data-layer]")) box.addEventListener("change", () => { s.show[box.dataset.layer] = box.checked; draw(); });
+  $("byAgent")?.addEventListener("change", e => { s.byAgent = e.target.checked; draw(); });
   s.observer = new ResizeObserver(() => { if (s.alive) { resize(); draw(); } });
   s.observer.observe(wrap);
 
   resize();
   // Fewer warm-up steps for a large graph: each step compares every pair of points.
   // A picture whose every point was seen before is drawn as it was left.
-  if (kept < G.nodes.length) {
+  // A first view settles its first steps unseen, so it opens near its final size,
+  // and is shown finding its place from there.
+  if (calm && !kept) { s.alpha = 1; for (let i = 0; i < 40; i++) { s.alpha -= s.alpha * 0.0228; calmTick(s.alpha); } s.autoFit = true; }
+  else if (calm && kept < G.nodes.length) for (let i = 0; i < 200; i++) calmTick(0.5 * (1 - i / 200), true);
+  else if (kept < G.nodes.length) {
     const warm = Math.max(60, Math.min(400, Math.round(120000 / Math.max(1, G.nodes.length))));
     for (let i = 0; i < warm; i++) tick(1 - i / warm, 0.6, kept > 0);
   }
-  saveLayout(key, G.nodes); // also marks this picture as recently opened
+  if (!s.autoFit) saveLayout(key, G.nodes); // also marks this picture as recently opened
   fit();
   draw();
   requestAnimationFrame(loop);
