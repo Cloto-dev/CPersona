@@ -550,6 +550,12 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   the process serving the dashboard for up to five minutes while the store keeps the same
   rows, and are never sent to the page. A store whose vectors exceed 128 MB is
   read in chunks on each step instead of being held.
+- **Points stay where they were left.** A point's first place is derived from
+  its id, so the same data is laid out the same way on every load. Where the
+  points settled is then kept in the browser, for the 20 pictures opened most
+  recently: on the next load they start there, a point added since starts beside
+  the points it is tied to, and only the new points move while they settle. The
+  positions are kept per database file name and picture, in that browser only.
 - Episodes, entities and recall traces are not shown yet, and nothing is edited
   from the page. Store health appears only when an agent opened the page: started
   from a terminal, the dashboard cannot judge it from the file alone.
