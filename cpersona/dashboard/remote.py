@@ -4,10 +4,10 @@ Off unless ``CPERSONA_DASHBOARD_REMOTE`` is set. Who can read it:
 
 - A browser carries no bearer token, so the page is opened from a link the
   ``open_dashboard`` tool returns to an authenticated MCP caller. The link carries a
-  code, not a credential: it works once, for ``LINK_SECONDS``, and opening it swaps
-  it for a session cookie (HttpOnly, Secure, SameSite=Strict, scoped to the
-  dashboard's path, ``SESSION_SECONDS`` long). A link copied from a history or a log
-  later is therefore dead.
+  code after the "#", which a browser never sends in a request line, so it is in no
+  access log and no Referer. The page sends it once, in a header, and gets a session
+  cookie for it (HttpOnly, Secure, SameSite=Strict, scoped to the dashboard's path,
+  ``SESSION_SECONDS`` long). The code works once, within ``LINK_SECONDS``.
 - The session holds the caller's grants, and every request reads through a
   connection narrowed to the agents those grants let them read (``scope``).
 - Only GET and HEAD are answered, and the page loads nothing from anywhere else.
@@ -127,17 +127,13 @@ def make_app(db_path: str, health: Callable[[asyncio.AbstractEventLoop], Callabl
             return await as_json(send, 405, {"error": "This dashboard only reads."})
         if path == "":
             return await respond(send, 308, b"", "text/plain", [(b"location", f"{PREFIX}/".encode())])
-        if path == "/open":
-            q = {k: v[0] for k, v in parse_qs(scope.get("query_string", b"").decode("latin-1")).items()}
-            sid = redeem(q.get("c", ""))
+        if path == "/api/session":
+            code = dict(scope.get("headers", [])).get(b"x-dashboard-code", b"").decode("latin-1")
+            sid = redeem(code)
             if sid is None:
-                return await respond(
-                    send, 410, b"This link has been used or has expired. Ask your agent to open the dashboard again.",
-                    "text/plain; charset=utf-8",
-                )
+                return await as_json(send, 410, {"error": "This link has been used or has expired."})
             cookie = f"{COOKIE}={sid}; Path={PREFIX}/; Max-Age={SESSION_SECONDS}; HttpOnly; Secure; SameSite=Strict"
-            # 303 to the page, so the code leaves the address bar at once.
-            return await respond(send, 303, b"", "text/plain", [(b"location", f"{PREFIX}/".encode()), (b"set-cookie", cookie.encode())])
+            return await respond(send, 204, b"", "text/plain", [(b"set-cookie", cookie.encode())])
         if path in web._STATIC:
             file, ctype = web._STATIC[path]
             return await respond(send, 200, web._static(file), ctype)

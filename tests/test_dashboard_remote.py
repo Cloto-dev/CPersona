@@ -189,16 +189,17 @@ async def test_a_link_becomes_a_session_cookie_that_reads_the_viewers_agents(db,
     ids, _ = await _two_agents(db)
     app, reached = _app(monkeypatch)
     code = remote.issue_link(Scope({"a": acl.PERM_READ}))
-    status, headers, _ = await _get(app, "/dashboard/open", f"c={code}".encode())
-    assert status == 303 and headers["location"] == "/dashboard/"
+    status, headers, _ = await _get(app, "/dashboard/api/session", headers=[("x-dashboard-code", code)])
+    assert status == 204
     cookie = headers["set-cookie"]
     for flag in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/dashboard/"):
         assert flag in cookie
     sid = cookie.split(";")[0]
     status, _, body = await _get(app, "/dashboard/api/overview", headers=[("cookie", sid)])
     assert status == 200 and json.loads(body)["counts"]["memories"] == 1
-    # The same link again is refused.
-    assert (await _get(app, "/dashboard/open", f"c={code}".encode()))[0] == 410
+    # The same code again is refused, and so is none at all.
+    assert (await _get(app, "/dashboard/api/session", headers=[("x-dashboard-code", code)]))[0] == 410
+    assert (await _get(app, "/dashboard/api/session"))[0] == 410
     assert reached == []
 
 
@@ -245,8 +246,9 @@ async def test_the_tool_needs_a_public_address_and_returns_a_one_time_link(db, m
     assert "CPERSONA_DASHBOARD_PUBLIC_URL" in json.dumps(out)
     monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "https://memory.example.com")
     out = await server.do_open_dashboard()
-    assert out["ok"] and out["url"].startswith("https://memory.example.com/dashboard/open?c=")
-    code = out["url"].split("c=", 1)[1]
+    # The code is after the "#", so no request line (and no access log) carries it.
+    assert out["ok"] and out["url"].startswith("https://memory.example.com/dashboard/#c=")
+    code = out["url"].split("#c=", 1)[1]
     assert remote.redeem(code) is not None
 
 

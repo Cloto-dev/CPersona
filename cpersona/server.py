@@ -3195,7 +3195,7 @@ def _open_remote_dashboard() -> dict:
     code = dashboard_remote.issue_link(viewer)
     return {
         "ok": True,
-        "url": f"{config.DASHBOARD_PUBLIC_URL}{dashboard_remote.PREFIX}/open?c={code}",
+        "url": f"{config.DASHBOARD_PUBLIC_URL}{dashboard_remote.PREFIX}/#c={code}",
         "read_only": True,
         "expires_in_seconds": dashboard_remote.LINK_SECONDS,
         "hint": (

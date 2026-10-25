@@ -52,6 +52,7 @@ const T = {
     palettePh: "Search memories, or type a command", cmdGo: v => `Go to ${v}`, cmdLang: "Switch to 日本語", cmd: "Command",
     today: "Today", yesterday: "Yesterday", readOnly: "read-only",
     noToken: "Open the dashboard again from the address it printed, or ask your agent for a new link.",
+    linkUsed: "This link has been used or has expired. Ask your agent to open the dashboard again.",
     graph: "Network",
     graphLead: "The memories of this folder, joined by what they have in common.",
     nGraph: (shown, total) => shown < total ? `The newest ${shown.toLocaleString()} of ${total.toLocaleString()} memories` : `${total.toLocaleString()} memories`,
@@ -137,6 +138,7 @@ const T = {
     palettePh: "記憶を検索、またはコマンドを入力", cmdGo: v => `${v} へ移動`, cmdLang: "Switch to English", cmd: "コマンド",
     today: "今日", yesterday: "昨日", readOnly: "読み取り専用",
     noToken: "表示されたアドレスから開き直すか、エージェントに新しいリンクを頼んでください。",
+    linkUsed: "このリンクは使用済みか、期限が切れています。エージェントに、ダッシュボードを開き直すよう頼んでください。",
     graph: "記憶ネットワーク",
     graphLead: "このフォルダの記憶を、共通点の線で結んで表示します。",
     nGraph: (shown, total) => shown < total ? `${total.toLocaleString()} 件のうち、新しい ${shown.toLocaleString()} 件を表示しています` : `${total.toLocaleString()} 件の記憶`,
@@ -349,7 +351,7 @@ function renderOverview() {
 let health = null;
 async function renderHealth() {
   if (!health) {
-    const r = await fetch("/api/health", { headers: { Authorization: `Bearer ${token}` } });
+    const r = await fetch("api/health", token ? { headers: { Authorization: `Bearer ${token}` } } : {});
     health = { status: r.status, ok: r.ok, body: await r.json().catch(() => ({})) };
   }
   const block = $("healthBlock"), el = $("health");
@@ -1477,6 +1479,14 @@ function wire() {
   wire();
   applyLang();
   try {
+    // A remote link carries a one-time code after the "#": it is sent once, in a
+    // header (never in a URL a log or a Referer could keep), for a session cookie.
+    const code = H0.get("c");
+    if (code) {
+      history.replaceState(null, "", location.pathname);
+      const r = await fetch("api/session", { headers: { "X-Dashboard-Code": code } });
+      if (!r.ok) throw new Error(t("linkUsed"));
+    }
     overviewData = await api("/api/overview");
   } catch (e) {
     return fail(e);
