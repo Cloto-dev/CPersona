@@ -181,7 +181,11 @@ def make_handler(
                         if out is None:
                             return self._json(404, {"error": "No entity with that id."})
                     elif url.path == "/api/graph":
-                        out = graph.folder(conn, path, q.get("month", ""))
+                        out = graph.folder(
+                            conn, path, q.get("month", ""),
+                            # Prototype switches, for comparing the picture's shape.
+                            mutual=q.get("mutual") == "1", hubs=q.get("hubs") == "1",
+                        )
                     elif url.path == "/api/map":
                         lens = q.get("lens", "tree")
                         if lens == "tree":

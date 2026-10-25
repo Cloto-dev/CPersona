@@ -29,6 +29,7 @@ those three numbers, so it can be seen at most ``CACHE_SECONDS`` late. A store w
 vectors are larger than ``CACHE_MAX_BYTES`` is not held: each step reads it in chunks.
 """
 
+import json
 import os
 import threading
 import time
@@ -135,12 +136,16 @@ def _chunks(conn, db_path: str, width: int):
             yield got
 
 
-def _nearest_within(ids: np.ndarray, vecs: np.ndarray) -> dict[tuple[int, int], float]:
+def _nearest_within(
+    ids: np.ndarray, vecs: np.ndarray, mutual: bool = False
+) -> dict[tuple[int, int], float]:
     """Similar pairs inside one set: each row to its K nearest at or above FLOOR.
 
-    Equal similarities go to the earlier row, whatever the block size.
+    Equal similarities go to the earlier row, whatever the block size. ``mutual``
+    (prototype) keeps a pair only when each of the two chose the other.
     """
     pairs: dict[tuple[int, int], float] = {}
+    chose: dict[tuple[int, int], int] = {}
     n = len(ids)
     take = min(K, n - 1)
     if take <= 0:
@@ -160,6 +165,9 @@ def _nearest_within(ids: np.ndarray, vecs: np.ndarray) -> dict[tuple[int, int], 
                     break
                 a, b = sorted((int(ids[at + r]), int(ids[j])))
                 pairs[(a, b)] = max(pairs.get((a, b), -1.0), w)
+                chose[(a, b)] = chose.get((a, b), 0) + 1
+    if mutual:
+        return {k: w for k, w in pairs.items() if chose[k] == 2}
     return pairs
 
 
@@ -231,14 +239,33 @@ def _declared(conn, mem_ids: set[int]) -> tuple[list[dict], list[dict]]:
     return nodes, links
 
 
-def _points(conn, rows, similar: dict, hops: dict | None = None) -> dict:
-    """The page's nodes and links for these memory rows and their similar pairs."""
+def _points(conn, rows, similar: dict, hops: dict | None = None, hubs: bool = False) -> dict:
+    """The page's nodes and links for these memory rows and their similar pairs.
+
+    ``hubs`` (prototype) puts each agent's projects between the agent and its
+    memories, as a notes app's index notes gather the notes they link to.
+    """
     agents = sorted({r["agent_id"] for r in rows})
     labels = store.distinct_labels(agents)
     nodes = [
         {"id": f"a:{a}", "kind": "agent", "agent": a, "label": labels.get(a, a)}
         for a in agents
     ]
+    project_of = {}
+    if hubs:
+        got = conn.execute(
+            "SELECT id, project_id FROM memories WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps([r["id"] for r in rows]),),
+        ).fetchall()
+        project_of = {g[0]: g[1] for g in got}
+        counts: dict[tuple[str, str], int] = {}
+        for r in rows:
+            k = (r["agent_id"], project_of.get(r["id"], ""))
+            counts[k] = counts.get(k, 0) + 1
+        nodes += [
+            {"id": f"p:{a}/{p}", "kind": "project", "agent": a, "label": p, "count": n}
+            for (a, p), n in sorted(counts.items())
+        ]
     for r in rows:
         node = {
             "id": f"m:{r['id']}",
@@ -250,10 +277,19 @@ def _points(conn, rows, similar: dict, hops: dict | None = None) -> dict:
         if hops is not None:
             node["hop"] = hops[r["id"]]
         nodes.append(node)
-    links = [
-        {"s": f"a:{r['agent_id']}", "t": f"m:{r['id']}", "kind": "structure"}
-        for r in rows
-    ]
+    if hubs:
+        links = [
+            {"s": f"a:{a}", "t": f"p:{a}/{p}", "kind": "structure"}
+            for (a, p) in sorted({(r["agent_id"], project_of.get(r["id"], "")) for r in rows})
+        ] + [
+            {"s": f"p:{r['agent_id']}/{project_of.get(r['id'], '')}", "t": f"m:{r['id']}", "kind": "structure"}
+            for r in rows
+        ]
+    else:
+        links = [
+            {"s": f"a:{r['agent_id']}", "t": f"m:{r['id']}", "kind": "structure"}
+            for r in rows
+        ]
     links += [
         {"s": f"m:{a}", "t": f"m:{b}", "kind": "similar", "w": round(w, 3)}
         for (a, b), w in sorted(similar.items())
@@ -262,7 +298,7 @@ def _points(conn, rows, similar: dict, hops: dict | None = None) -> dict:
     return {"nodes": nodes + ent_nodes, "links": links + declared}
 
 
-def folder(conn, path: list[str] | None = None, month: str = "") -> dict:
+def folder(conn, path: list[str] | None = None, month: str = "", **proto) -> dict:
     """The memories of a folder and month (the newest MAX_NODES, when set), joined as above."""
     where, args = store._path_where(path or [])
     if month:
@@ -275,15 +311,15 @@ def folder(conn, path: list[str] | None = None, month: str = "") -> dict:
         f"{clause} ORDER BY timestamp DESC, id DESC LIMIT ?",
         [*args, -1 if MAX_NODES is None else MAX_NODES],
     ).fetchall()
-    return _drawn(conn, rows, total, "folder")
+    return _drawn(conn, rows, total, "folder", **proto)
 
 
-def _drawn(conn, rows, total: int, view: str, **extra) -> dict:
+def _drawn(conn, rows, total: int, view: str, mutual: bool = False, hubs: bool = False, **extra) -> dict:
     """A set of memory rows drawn with the similar lines among them."""
     similar: dict[tuple[int, int], float] = {}
     groups = _group((r["id"], r["embedding"]) for r in rows)
     for ids, vecs in groups.values():
-        similar.update(_nearest_within(ids, vecs))
+        similar.update(_nearest_within(ids, vecs, mutual))
     compared = sum(len(ids) for ids, _ in groups.values())
     return {
         "view": view,
@@ -294,7 +330,7 @@ def _drawn(conn, rows, total: int, view: str, **extra) -> dict:
         "k": K,
         "floor": FLOOR,
         **extra,
-        **_points(conn, rows, similar),
+        **_points(conn, rows, similar, hubs=hubs),
     }
 
 

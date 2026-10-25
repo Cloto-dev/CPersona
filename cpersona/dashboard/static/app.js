@@ -174,6 +174,9 @@ if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
 if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
 if (["calm", "star"].includes(H0.get("look"))) state.look = H0.get("look"); // prototype looks, for comparison
+// Prototype: exp=1 makes the points the subject of a large picture; exp=123 also puts
+// projects between agents and memories and keeps only mutual neighbours.
+state.exp = ["1", "123"].includes(H0.get("exp")) ? H0.get("exp") : "";
 // Prototype: every memory at once, as first drawn; the constellation look opens on it.
 if (state.look && H0.get("lens") === "memories" || state.look === "star" && !H0.get("lens")) state.lens = "memories";
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
@@ -225,6 +228,7 @@ function saveHash() {
   for (const k of ["around", "cluster", "entity"]) if (state[k]) h.set(k, state[k]);
   if (state.lens !== "tree" || state.look === "star") h.set("lens", state.lens);
   if (state.look) h.set("look", state.look);
+  if (state.exp) h.set("exp", state.exp);
   history.replaceState(null, "", "#" + h);
 }
 
@@ -516,7 +520,7 @@ function layoutKey() {
   const where = state.around ? `a:${state.around}` : state.cluster ? `c:${state.cluster}`
     : state.entity ? `e:${state.entity}` : state.path.length || state.month ? `f:${JSON.stringify(state.path)}:${state.month}`
     : `map:${state.lens}`;
-  return `${overviewData.db}|${where}${state.look ? "|" + state.look : ""}`;
+  return `${overviewData.db}|${where}${state.look ? "|" + state.look : ""}${state.exp ? "|x" + state.exp : ""}`;
 }
 function loadLayout(key) {
   try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")[key]?.pos || null; } catch { return null; }
@@ -561,7 +565,7 @@ async function renderGraph() {
   const G = state.around ? await api("/api/graph", { around: state.around })
     : state.cluster ? await api("/api/graph", { cluster_of: state.cluster })
     : state.entity ? await api("/api/graph", { entity: state.entity })
-    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month })
+    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month, ...(state.exp === "123" ? { hubs: "1", mutual: "1" } : {}) })
     : await api("/api/map", { lens: state.lens });
   const lens = memoryView || allMemories ? "memories" : G.lens;
   const back = `<div class="crumbs"><button id="backBtn">${t("backToMap")}</button></div>`;
@@ -658,6 +662,7 @@ function startGraph(G, lens) {
     n.deg = G.links.filter(l => l.kind === "similar" && (l.a === n || l.b === n)).length;
     if (n.kind === "group") n.name = groupLabel(n);
     else if (n.kind === "cluster") n.name = n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label;
+    else if (n.kind === "project") n.name = n.label || t("global");
     else n.name = n.label;
   }
   // The calm look draws small, nearly even dots, a little larger the more they hold.
@@ -805,7 +810,8 @@ function startGraph(G, lens) {
       }
     }
     for (const l of G.links) {
-      const [len0, str0] = SPRING[l.kind] || [34, 0.05 + 0.1 * (l.w - 0.5)];
+      // exp=123: a project holds its memories tightly, as an index note holds its notes.
+      const [len0, str0] = state.exp === "123" && l.kind === "structure" ? [20, 0.2] : SPRING[l.kind] || [34, 0.05 + 0.1 * (l.w - 0.5)];
       const len = len0 + radius(l.a) + radius(l.b), str = str0;
       const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, d = Math.hypot(dx, dy) || 1, f = (d - len) / d * str * alpha;
       // The busier end yields: a point tied to hundreds of others would otherwise take
@@ -819,7 +825,7 @@ function startGraph(G, lens) {
       n.vx -= n.x * 0.002 * alpha; n.vy -= n.y * 0.002 * alpha;
       if (n === s.drag) continue;
       if (pin && n.kept) { n.vx = n.vy = 0; continue; }
-      const fr = hub(n) ? Math.min(friction, HUB_FRICTION) : friction;
+      const fr = hub(n) || n.kind === "project" ? Math.min(friction, HUB_FRICTION) : friction;
       n.vx *= fr; n.vy *= fr; n.x += n.vx; n.y += n.vy;
     }
   }
@@ -974,6 +980,8 @@ function startGraph(G, lens) {
     // are drawn last, on their own.
     const hot = new Path2D();
     let anyHot = false;
+    // exp: in a large picture the points are the subject and the lines a faint web.
+    const bold = !!state.exp && G.nodes.length > 1000;
     for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
       if (!s.show[kind]) continue;
       const steps = new Map();
@@ -984,7 +992,8 @@ function startGraph(G, lens) {
         let alpha = kind === "structure" ? 0.08 : kind === "declared" ? 0.55
           : kind === "similar" || kind === "near" ? 0.04 + 0.3 * Math.max(0, Math.min(1, (l.w - 0.55) / 0.35)) : 0.22;
         if (focus) alpha *= 0.35;
-        const step = Math.round(alpha * 50) / 50;
+        if (bold) alpha *= 0.3;
+        const step = Math.round(alpha * 100) / 100;
         let path = steps.get(step);
         if (!path) steps.set(step, path = new Path2D());
         path.moveTo(l.a.x, l.a.y); path.lineTo(l.b.x, l.b.y);
@@ -999,7 +1008,8 @@ function startGraph(G, lens) {
     for (const n of G.nodes) {
       const r = radius(n);
       if (star && n.kind === "memory" && !s.byAgent && n !== focus && n !== s.sel && n.hop !== 0) {
-        const path = lit(n) ? plainLit : plainDim, rr = r * 0.7;
+        // Bold, a point keeps at least 1.3 px on screen however far the view is out.
+        const path = lit(n) ? plainLit : plainDim, rr = bold ? Math.max(r * 1.1, 1.3 / view.k) : r * 0.7;
         path.moveTo(n.x + rr, n.y); path.arc(n.x, n.y, rr, 0, Math.PI * 2);
         continue;
       }
@@ -1011,7 +1021,7 @@ function startGraph(G, lens) {
       if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
     }
     if (star) {
-      ctx.fillStyle = "#c7d6f2";
+      ctx.fillStyle = bold ? "#e6eeff" : "#c7d6f2";
       ctx.globalAlpha = 1; ctx.fill(plainLit);
       ctx.globalAlpha = 0.18; ctx.fill(plainDim);
     }
@@ -1026,6 +1036,7 @@ function startGraph(G, lens) {
       let a = n.kind !== "memory" && G.nodes.length <= 60 ? 0.9 : ramp((view.k - (n.kind === "memory" ? 2.2 : 1.6)) / 0.6);
       if (focus) a = n === focus ? 1 : near.has(n.id) ? Math.max(a, view.k > 1 ? 0.9 : 0) : a * 0.25;
       if (star && hub(n)) a = Math.max(a, focus && !lit(n) ? 0.3 : 0.95);
+      if (star && n.kind === "project" && n.count >= 50) a = Math.max(a, focus && !lit(n) ? 0.25 : 0.75);
       if (a < 0.02) continue;
       ctx.globalAlpha = a;
       ctx.fillStyle = n === focus || star && hub(n) ? (dark || star ? "#eef3ff" : "#222") : grey;
