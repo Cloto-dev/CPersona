@@ -219,8 +219,11 @@ async def test_without_a_session_the_dashboard_data_is_refused(db, monkeypatch):
 @pytest.mark.asyncio
 async def test_only_the_dashboard_prefix_skips_the_bearer_check(db, monkeypatch):
     app, reached = _app(monkeypatch)
-    for path in ("/mcp", "/", "/dashboardx", "/dashboard-api", "/mcp/dashboard"):
+    # The bare prefix too: Mount("/dashboard") does not match it, so a pass-through
+    # for it would hand an unauthenticated request to the MCP mount behind.
+    for path in ("/mcp", "/", "/dashboard", "/dashboardx", "/dashboard-api", "/mcp/dashboard"):
         assert (await _get(app, path, method="POST"))[0] == 401, path
+        assert (await _get(app, path))[0] == 401, path
     # A path that only starts like the dashboard is routed to it, never to MCP.
     assert (await _get(app, "/dashboard/../mcp", method="POST"))[0] == 405
     assert reached == []
@@ -303,3 +306,166 @@ async def test_two_viewers_whose_stores_look_alike_still_get_their_own_pictures(
     second = _answer("/api/map", Scope({"b": acl.PERM_READ, "c": acl.PERM_READ}), lens="clusters")[1]
     assert "alpha" in json.dumps(first)
     assert "alpha" not in json.dumps(second)
+
+
+# ---- Found by the security review before merge
+
+@pytest.mark.asyncio
+async def test_store_health_is_shown_only_to_a_viewer_who_reads_every_agent(db, monkeypatch):
+    await _two_agents(db)
+    monkeypatch.setattr(server, "_dashboard_health", lambda loop: lambda: {"status": "healthy"})
+    app, _ = _app(monkeypatch)
+
+    async def health_for(grants):
+        sid = remote.redeem(remote.issue_link(Scope(grants)))
+        return await _get(app, "/dashboard/api/health", headers=[("cookie", f"{remote.COOKIE}={sid}")])
+
+    status, _, body = await health_for(None)
+    assert status == 200 and json.loads(body)["status"] == "healthy"
+    assert (await health_for({"*": acl.PERM_READ}))[0] == 200
+    assert (await health_for({"a": acl.PERM_READ}))[0] == 404
+    assert (await health_for({"*": acl.PERM_READ, "b": acl.PERM_NONE}))[0] == 404
+
+
+@pytest.mark.asyncio
+async def test_episodes_blocks_and_aliases_are_narrowed_too(db):
+    ids, ent = await _two_agents(db)
+    await db.execute("INSERT INTO episodes (agent_id, summary) VALUES ('a', 'alpha day'), ('b', 'bravo day')")
+    await db.execute(
+        "INSERT INTO record_blocks (parent_kind, parent_id, block_index, agent_id, start_char, end_char) "
+        "VALUES ('mem', ?, 0, 'a', 0, 5), ('mem', ?, 0, 'b', 0, 5)",
+        (ids["a"], ids["b"]),
+    )
+    cur = await db.execute(
+        "INSERT INTO entities (agent_id, name, normalized, declared_by, created_at) VALUES ('b', 'Hidden', 'hidden', 'b', 'x')"
+    )
+    await db.execute(
+        "INSERT INTO entity_aliases (entity_id, alias, normalized) VALUES (?, 'Thingy', 'thingy'), (?, 'Secret', 'secret')",
+        (ent, cur.lastrowid),
+    )
+    await db.commit()
+    only_a = Scope({"a": acl.PERM_READ})
+    counts = _answer("/api/overview", only_a)[1]["counts"]
+    assert counts["episodes"] == 1
+    conn = store.open_store(database.DB_PATH)
+    only_a.apply(conn)
+    try:
+        assert [r[0] for r in conn.execute("SELECT summary FROM episodes")] == ["alpha day"]
+        assert [r[0] for r in conn.execute("SELECT parent_id FROM record_blocks")] == [ids["a"]]
+        assert [r[0] for r in conn.execute("SELECT alias FROM entity_aliases")] == ["Thingy"]
+        assert [r[0] for r in conn.execute("SELECT name FROM entities")] == ["Thing"]
+    finally:
+        conn.close()
+    assert _answer("/api/overview", Scope(None))[1]["counts"]["episodes"] == 2
+
+
+@pytest.mark.asyncio
+async def test_full_text_search_and_the_other_lenses_stay_in_reach(db):
+    ids, ent = await _two_agents(db)
+    only_a = Scope({"a": acl.PERM_READ})
+    # Three letters or more take the full-text index, which is not a narrowed view.
+    assert _answer("/api/memories", only_a, q="bravo")[1]["rows"] == []
+    assert [r["id"] for r in _answer("/api/memories", Scope(None), q="bravo")[1]["rows"]] == [ids["b"]]
+    for lens in ("tree", "entities", "clusters"):
+        code, out = _answer("/api/map", only_a, lens=lens)
+        assert code == 200, (lens, out)
+        assert "bravo" not in json.dumps(out) and f"m:{ids['b']}" not in json.dumps(out), lens
+    assert _answer("/api/graph", only_a, cluster_of=ids["b"])[0] == 404
+    assert _answer("/api/graph", only_a, cluster_of=ids["a"])[0] == 200
+
+
+@pytest.mark.asyncio
+async def test_without_a_known_caller_no_link_is_made(db):
+    acl.activate(acl.AclConfig(grants_by_client={"p": {"*": acl.PERM_READ}}, token_entries=(), per_subject_clients=frozenset()))
+    try:
+        with pytest.raises(PermissionError):
+            from cpersona.dashboard import scope as scope_module
+
+            scope_module.for_principal()
+    finally:
+        acl.activate(None)
+
+
+def test_one_client_asking_again_and_again_pushes_out_only_its_own_links():
+    victim = remote.issue_link(Scope({"a": acl.PERM_READ}), "victim")
+    first = remote.issue_link(Scope({"b": acl.PERM_READ}), "flood")
+    for _ in range(remote.MAX_PER_OWNER * 3):
+        last = remote.issue_link(Scope({"b": acl.PERM_READ}), "flood")
+    assert remote.redeem(victim) is not None
+    assert remote.redeem(first) is None  # the flooding client's oldest went first
+    assert remote.redeem(last) is not None
+    # Sessions likewise: the victim's session outlives the other client's many.
+    victim_sid = remote.redeem(remote.issue_link(Scope({"a": acl.PERM_READ}), "victim"))
+    for _ in range(remote.MAX_PER_OWNER * 3):
+        remote.redeem(remote.issue_link(Scope({"b": acl.PERM_READ}), "flood"))
+    assert remote.session(victim_sid) is not None
+
+
+@pytest.mark.asyncio
+async def test_two_session_cookies_are_not_guessed_between(db, monkeypatch):
+    await _two_agents(db)
+    app, _ = _app(monkeypatch)
+    sid = remote.redeem(remote.issue_link(Scope({"a": acl.PERM_READ})))
+    other = remote.redeem(remote.issue_link(Scope(None)))
+    ok = await _get(app, "/dashboard/api/overview", headers=[("cookie", f"{remote.COOKIE}={sid}")])
+    assert ok[0] == 200
+    both = f"{remote.COOKIE}={other}; {remote.COOKIE}={sid}"
+    assert (await _get(app, "/dashboard/api/overview", headers=[("cookie", both)]))[0] == 401
+
+
+@pytest.mark.asyncio
+async def test_a_head_request_neither_uses_a_code_up_nor_carries_a_body(db, monkeypatch):
+    app, _ = _app(monkeypatch)
+    code = remote.issue_link(Scope(None))
+    assert (await _get(app, "/dashboard/api/session", headers=[("x-dashboard-code", code)], method="HEAD"))[0] == 405
+    assert remote.redeem(code) is not None
+    status, headers, body = await _get(app, "/dashboard/", method="HEAD")
+    assert status == 200 and body == b"" and int(headers["content-length"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_the_tool_refuses_a_public_address_a_browser_would_drop_the_cookie_from(db, monkeypatch):
+    monkeypatch.setattr(config, "transport", lambda: "streamable-http")
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "http://memory.example.com")
+    out = await server.do_open_dashboard()
+    assert not out.get("ok") and "https://" in json.dumps(out)
+    monkeypatch.setattr(config, "DASHBOARD_PUBLIC_URL", "http://localhost:8402")
+    assert (await server.do_open_dashboard())["ok"]
+
+
+def test_a_remote_viewer_is_not_told_where_the_store_is(tmp_path):
+    missing = str(tmp_path / "no-such-store.db")
+    code, out = web.answer(missing, "/api/overview", {}, "t.db", Scope({"a": acl.PERM_READ}))
+    assert code == 409 and str(tmp_path) not in json.dumps(out)
+    # The loopback page, on the person's own machine, still names the file.
+    code, out = web.answer(missing, "/api/overview", {}, "t.db", None)
+    assert code == 409 and "no-such-store" in json.dumps(out)
+
+
+def _remote_registration(env_extra: dict) -> dict:
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "CPERSONA_DB_PATH": database.DB_PATH, "CPERSONA_DASHBOARD_REMOTE": "true", **env_extra}
+    if "CPERSONA_TRANSPORT" not in env_extra:
+        env.pop("CPERSONA_TRANSPORT", None)
+    code = (
+        "import json; from cpersona import server, acl\n"
+        "t = next(t for t in server.registry._tools if t.name == 'open_dashboard')\n"
+        "demands = acl.ACL_CLASSIFICATION['open_dashboard']({})\n"
+        "print(json.dumps({'authenticated_only': demands == list(acl._AUTHENTICATED_ONLY),"
+        " 'description': t.description, 'idempotent': t.annotations.idempotentHint}))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_over_http_any_authenticated_caller_may_ask_and_each_call_is_a_new_link():
+    http = _remote_registration({"CPERSONA_TRANSPORT": "streamable-http"})
+    assert http["authenticated_only"] and not http["idempotent"]
+    assert "only the agents this connection can read" in http["description"]
+    # Under stdio the page shows every agent, so the tool still demands read on all.
+    local = _remote_registration({})
+    assert not local["authenticated_only"] and local["idempotent"]
+    assert "127.0.0.1" in local["description"]

@@ -31,28 +31,36 @@ PREFIX = "/dashboard"
 LINK_SECONDS = 120
 SESSION_SECONDS = 8 * 3600
 COOKIE = "cp_dash"
-#: Codes and sessions held at most; the oldest go first past it.
-MAX_HELD = 1000
+#: Codes, and sessions, held at most for one client; past it that client's oldest
+#: goes first. Counted per client so that one client asking for links again and
+#: again pushes out only its own, never another viewer's. The clients are the ones
+#: the operator configured, so the whole is bounded too.
+MAX_PER_OWNER = 20
 
 _lock = threading.Lock()
-_links: dict[str, tuple[Scope, float]] = {}
-_sessions: dict[str, tuple[Scope, float]] = {}
+# code or session id -> (scope, expiry, owner)
+_links: dict[str, tuple[Scope, float, str]] = {}
+_sessions: dict[str, tuple[Scope, float, str]] = {}
 
 
-def _prune(table: dict, now: float) -> None:
-    for k in [k for k, (_, until) in table.items() if until <= now]:
+def _prune(table: dict, now: float, owner: str) -> None:
+    for k in [k for k, (_, until, _o) in table.items() if until <= now]:
         del table[k]
-    while len(table) >= MAX_HELD:
-        del table[next(iter(table))]
+    mine = [k for k, (_, _u, o) in table.items() if o == owner]
+    for k in mine[: max(0, len(mine) - MAX_PER_OWNER + 1)]:
+        del table[k]
 
 
-def issue_link(scope: Scope) -> str:
-    """A code that opens one session with ``scope``, once, within LINK_SECONDS."""
+def issue_link(scope: Scope, owner: str = "") -> str:
+    """A code that opens one session with ``scope``, once, within LINK_SECONDS.
+
+    ``owner`` names the client that asked for it (empty without an ACL).
+    """
     code = secrets.token_urlsafe(24)
     now = time.monotonic()
     with _lock:
-        _prune(_links, now)
-        _links[code] = (scope, now + LINK_SECONDS)
+        _prune(_links, now, owner)
+        _links[code] = (scope, now + LINK_SECONDS, owner)
     return code
 
 
@@ -63,9 +71,10 @@ def redeem(code: str) -> str | None:
         held = _links.pop(code, None)
         if held is None or held[1] <= now:
             return None
-        _prune(_sessions, now)
+        scope, _, owner = held
+        _prune(_sessions, now, owner)
         sid = secrets.token_urlsafe(32)
-        _sessions[sid] = (held[0], now + SESSION_SECONDS)
+        _sessions[sid] = (scope, now + SESSION_SECONDS, owner)
         return sid
 
 
@@ -89,13 +98,19 @@ def clear() -> None:
 
 
 def _cookie(headers: list) -> str:
+    """The session cookie's value, or "" when there is none or more than one.
+
+    Two cookies of this name mean one was set from elsewhere (a sibling host, a
+    narrower path), and which of them the browser sent first is not ours to trust.
+    """
+    found = []
     for name, value in headers:
         if name == b"cookie":
             for part in value.decode("latin-1").split(";"):
                 k, _, v = part.strip().partition("=")
                 if k == COOKIE:
-                    return v
-    return ""
+                    found.append(v)
+    return found[0] if len(found) == 1 else ""
 
 
 def make_app(db_path: str, health: Callable[[asyncio.AbstractEventLoop], Callable[[], dict]] | None = None):
@@ -106,28 +121,32 @@ def make_app(db_path: str, health: Callable[[asyncio.AbstractEventLoop], Callabl
     """
     name = db_path.rsplit("/", 1)[-1]
 
-    async def respond(send, code: int, body: bytes, ctype: str, extra: list | None = None) -> None:
-        headers = [(b"content-type", ctype.encode()), (b"content-length", str(len(body)).encode())]
-        headers += [(k.lower().encode(), v.encode()) for k, v in web._HEADERS.items()]
-        headers += extra or []
-        await send({"type": "http.response.start", "status": code, "headers": headers})
-        await send({"type": "http.response.body", "body": body})
-
-    async def as_json(send, code: int, value) -> None:
-        await respond(send, code, json.dumps(value).encode(), "application/json")
-
     async def app(scope, receive, send):
         if scope["type"] != "http":
             return
+        head = scope.get("method") == "HEAD"
+
+        async def respond(send, code: int, body: bytes, ctype: str, extra: list | None = None) -> None:
+            headers = [(b"content-type", ctype.encode()), (b"content-length", str(len(body)).encode())]
+            headers += [(k.lower().encode(), v.encode()) for k, v in web._HEADERS.items()]
+            headers += extra or []
+            await send({"type": "http.response.start", "status": code, "headers": headers})
+            # A HEAD answer states the length of the body it leaves out.
+            await send({"type": "http.response.body", "body": b"" if head else body})
+
+        async def as_json(send, code: int, value) -> None:
+            await respond(send, code, json.dumps(value).encode(), "application/json")
+
         path = scope.get("path", "")
         # Whether the router strips the mount point or not, read the path below it.
         if path.startswith(PREFIX):
             path = path[len(PREFIX):]
         if scope.get("method") not in ("GET", "HEAD"):
             return await as_json(send, 405, {"error": "This dashboard only reads."})
-        if path == "":
-            return await respond(send, 308, b"", "text/plain", [(b"location", f"{PREFIX}/".encode())])
         if path == "/api/session":
+            # Opening a session uses the code up, which a HEAD request must not do.
+            if head:
+                return await as_json(send, 405, {"error": "Open a session with GET."})
             code = dict(scope.get("headers", [])).get(b"x-dashboard-code", b"").decode("latin-1")
             sid = redeem(code)
             if sid is None:

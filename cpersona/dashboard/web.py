@@ -71,7 +71,8 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
             raise ValueError("path is a list")
         conn = store.open_store(db_path)
     except store.StoreError as e:
-        return _err(409, str(e))
+        # A remote viewer is told what happened, not where the file is on the server.
+        return _err(409, str(e) if scope is None else "The store cannot be read by this dashboard.")
     except ValueError as e:
         return _err(400, str(e))
     try:
@@ -128,7 +129,7 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
     except ValueError as e:
         return _err(400, str(e))
     except sqlite3.Error as e:
-        return _err(500, f"The database could not be read: {e}")
+        return _err(500, f"The database could not be read: {e}" if scope is None else "The database could not be read.")
     finally:
         conn.close()
     return 200, out

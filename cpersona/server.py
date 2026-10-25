@@ -3144,6 +3144,13 @@ _OPEN_DASHBOARD_DESCRIPTION = (
     "127.0.0.1 behind a per-start token and writes nothing. Give the returned url to "
     "the person; open_browser=true also opens it on this machine."
 )
+_OPEN_REMOTE_DASHBOARD_DESCRIPTION = (
+    "Make a link to the read-only dashboard of this memory store, for the person to "
+    "open in a browser: what is stored and when, the logical directory, and each "
+    "memory in full with how it is split. It shows only the agents this connection "
+    "can read, writes nothing, and opens once within two minutes; each call makes a "
+    "new link. Give the returned url to the person. open_browser is ignored here."
+)
 
 
 def _dashboard_health(loop: asyncio.AbstractEventLoop):
@@ -3188,11 +3195,19 @@ def _open_remote_dashboard() -> dict:
             "The remote dashboard needs CPERSONA_DASHBOARD_PUBLIC_URL: the address people "
             "reach this server at (for example https://memory.example.com)."
         )
+    if not _secure_origin(config.DASHBOARD_PUBLIC_URL):
+        # The session cookie is Secure, so a browser on plain http would drop it and
+        # every link would fail after using its code up.
+        return error_response(
+            "CPERSONA_DASHBOARD_PUBLIC_URL must start with https:// (plain http works only "
+            "for localhost), because the dashboard's session cookie is sent over https only."
+        )
     try:
         viewer = dashboard_scope.for_principal()
     except PermissionError as e:
         return error_response(str(e))
-    code = dashboard_remote.issue_link(viewer)
+    principal = acl.current_principal()
+    code = dashboard_remote.issue_link(viewer, principal.client_id if principal is not None else "")
     return {
         "ok": True,
         "url": f"{config.DASHBOARD_PUBLIC_URL}{dashboard_remote.PREFIX}/#c={code}",
@@ -3205,10 +3220,21 @@ def _open_remote_dashboard() -> dict:
     }
 
 
+def _secure_origin(url: str) -> bool:
+    """Whether a browser keeps a Secure cookie from ``url``: https, or http on localhost."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        return True
+    return parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1")
+
+
 def _enable_dashboard(registry) -> None:
+    remote = config.transport() != "stdio"
     registry.auto_tool(
         "open_dashboard",
-        _OPEN_DASHBOARD_DESCRIPTION,
+        _OPEN_REMOTE_DASHBOARD_DESCRIPTION if remote else _OPEN_DASHBOARD_DESCRIPTION,
         {
             "type": "object",
             "properties": {
@@ -3220,12 +3246,16 @@ def _enable_dashboard(registry) -> None:
         },
         do_open_dashboard,
         [("open_browser", bool, False)],
-        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        # Remotely each call makes a new link, so a repeated call is not the same call.
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=not remote, openWorldHint=False
+        ),
     )
 
 
-# Only where the server runs on the person's machine: over HTTP the page would open
-# on the server's loopback, which the person cannot reach.
+# Under stdio the page opens on the person's own machine. Over HTTP the server's
+# loopback is out of the person's reach, so the tool is there only with the remote
+# dashboard on, which serves the page from this server's own address.
 if config.DASHBOARD and (config.transport() == "stdio" or config.DASHBOARD_REMOTE):
     _enable_dashboard(registry)
 
@@ -3731,7 +3761,9 @@ class BearerTokenMiddleware:
         if not prefix:
             return False
         path = scope.get("path", "")
-        return path == prefix or path.startswith(prefix + "/")
+        # Only what is below the prefix: Mount(prefix) matches "prefix/..." and not the
+        # bare prefix, which would fall through to the MCP mount without a token.
+        return path.startswith(prefix + "/")
 
     def _is_public_metadata_request(self, scope) -> bool:
         """Is this the one unauthenticated request the server owes an answer?
