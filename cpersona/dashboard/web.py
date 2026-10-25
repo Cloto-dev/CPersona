@@ -157,6 +157,15 @@ def make_handler(
                             int(q.get("limit", 50)),
                             int(q.get("offset", 0)),
                         )
+                    elif url.path == "/api/search":
+                        out = store.search(
+                            conn,
+                            q.get("q", ""),
+                            q.get("case") == "1",
+                            q.get("sort", "new"),
+                            int(q.get("limit", 50)),
+                            int(q.get("offset", 0)),
+                        )
                     elif url.path == "/api/memory":
                         out = store.memory(conn, int(q.get("id", 0)))
                         if out is None:

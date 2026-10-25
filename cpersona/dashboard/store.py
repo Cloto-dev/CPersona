@@ -299,3 +299,153 @@ def memory(conn: sqlite3.Connection, memory_id: int) -> dict | None:
         )
     ]
     return out
+
+
+# ---- Search in the manner of a notes app's search panel
+# Words are all required, "quoted phrases" stay together and -word excludes. Operators
+# narrow by what a memory carries instead of a file: path: (agent/project/channel),
+# agent:, tag: (an entity it mentions), line: (all the words on one line), month:, and
+# [locked] / [recalled] / [vector] / [project:x] / [channel:x] for its properties.
+SEARCH_OPERATORS = ("path", "agent", "tag", "line", "month")
+SEARCH_PROPERTIES = ("locked", "recalled", "vector", "project", "channel")
+SEARCH_SORTS = ("new", "old", "recalled")
+#: Lines quoted for each result, and the characters kept of each.
+SEARCH_LINES = 3
+SEARCH_LINE_CHARS = 160
+_SEARCH_TOKEN = re.compile(r'(-)?(?:(\w+):)?(?:"([^"]*)"|\(([^)]*)\)|\[([^\]]*)\]|(\S+))')
+
+
+def parse_search(text: str) -> dict:
+    """The words, phrases, exclusions, operators and properties of a search."""
+    out: dict = {"terms": [], "exclude": [], "ops": [], "props": []}
+    for m in _SEARCH_TOKEN.finditer(text or ""):
+        neg, op, quoted, group, prop, word = m.groups()
+        if prop is not None:
+            name, _, value = prop.partition(":")
+            if name.strip().lower() in SEARCH_PROPERTIES:
+                out["props"].append((name.strip().lower(), value.strip()))
+            continue
+        value = quoted if quoted is not None else group if group is not None else word
+        if op and op.lower() in SEARCH_OPERATORS:
+            parts = value.split() if op.lower() == "line" else [value]
+            out["ops"].append((op.lower(), [p for p in parts if p]))
+            continue
+        if op:  # an unknown "x:" stays a word, as typed
+            value = f"{op}:{value}"
+        if not value:
+            continue
+        (out["exclude"] if neg else out["terms"]).append(value)
+    return out
+
+
+def search(
+    conn: sqlite3.Connection,
+    text: str,
+    case: bool = False,
+    sort: str = "new",
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Memories matching a search, with the lines that matched and how often."""
+    p = parse_search(text)
+    if sort not in SEARCH_SORTS:
+        raise ValueError(f"sort is one of {', '.join(SEARCH_SORTS)}")
+    has = (lambda col: f"instr({col}, ?) > 0") if case else (lambda col: f"instr(lower({col}), lower(?)) > 0")
+    where, args = [], []
+    words: list[str] = list(p["terms"])
+    for t in p["terms"]:
+        where.append(has("m.content"))
+        args.append(t)
+    for t in p["exclude"]:
+        where.append("NOT " + has("m.content"))
+        args.append(t)
+    lines: list[list[str]] = []
+    for op, vals in p["ops"]:
+        for v in vals if op != "line" else []:
+            if op == "path":
+                where.append("instr(lower(m.agent_id || '/' || m.project_id || '/' || m.channel), lower(?)) > 0")
+            elif op == "agent":
+                where.append("instr(lower(m.agent_id), lower(?)) > 0")
+            elif op == "month":
+                where.append("substr(m.timestamp, 1, length(?)) = ?")
+                args.append(v)
+            elif op == "tag":
+                if not _has_table(conn, "entity_mentions"):
+                    where.append("0")
+                    continue
+                where.append(
+                    "('mem:' || m.id) IN (SELECT em.ref FROM entity_mentions em JOIN entities e ON e.id = em.entity_id "
+                    "WHERE instr(lower(e.name), lower(?)) > 0 OR em.entity_id IN "
+                    "(SELECT entity_id FROM entity_aliases WHERE instr(lower(alias), lower(?)) > 0))"
+                )
+                args.append(v)
+            args.append(v)
+        if op == "line" and vals:
+            lines.append(vals)
+            words += vals
+            for v in vals:
+                where.append(has("m.content"))
+                args.append(v)
+    for name, value in p["props"]:
+        if name == "locked":
+            where.append("m.locked = 1")
+        elif name == "recalled":
+            where.append("m.recall_count > 0")
+        elif name == "vector":
+            where.append("m.embedding IS NOT NULL")
+        elif name in ("project", "channel"):
+            where.append(f"m.{name} = ?")
+            args.append(value)
+    order = {"new": "m.timestamp DESC, m.id DESC", "old": "m.timestamp, m.id", "recalled": "m.recall_count DESC, m.timestamp DESC, m.id DESC"}[sort]
+    sql = (
+        "SELECT m.id, m.agent_id, m.project_id, m.channel, m.timestamp, m.content, m.recall_count, m.locked FROM memories m"
+        + (" WHERE " + " AND ".join(where) if where else "")
+        + f" ORDER BY {order}"
+    )
+    fold = (lambda s: s) if case else (lambda s: s.lower())
+
+    def on_one_line(content: str) -> bool:
+        rows = [fold(x) for x in content.splitlines()]
+        return all(any(all(fold(w) in r for w in group) for r in rows) for group in lines)
+
+    if not where and not lines:
+        return {"total": 0, "rows": []}
+    found = conn.execute(sql, args).fetchall()
+    if lines:
+        found = [r for r in found if on_one_line(r["content"])]
+    limit = max(1, min(int(limit), MAX_LIMIT))
+    page = found[max(0, int(offset)) : max(0, int(offset)) + limit]
+    needles = [fold(w) for w in words if w]
+
+    def matched(content: str) -> tuple[int, list[str]]:
+        count, quoted = 0, []
+        for line in content.splitlines():
+            hits = sum(fold(line).count(n) for n in needles)
+            if not hits:
+                continue
+            count += hits
+            if len(quoted) < SEARCH_LINES:
+                text_ = " ".join(line.split())
+                at = min((fold(text_).find(n) for n in needles if n in fold(text_)), default=0)
+                start = max(0, at - SEARCH_LINE_CHARS // 3)
+                cut = text_[start : start + SEARCH_LINE_CHARS]
+                quoted.append(("… " if start else "") + cut + (" …" if start + SEARCH_LINE_CHARS < len(text_) else ""))
+        return count, quoted
+
+    rows = []
+    for r in page:
+        count, quoted = matched(r["content"])
+        rows.append(
+            {
+                "id": r["id"],
+                "agent_id": r["agent_id"],
+                "project_id": r["project_id"],
+                "channel": r["channel"],
+                "timestamp": r["timestamp"],
+                "matches": count,
+                "lines": quoted or [snippet(r["content"])],
+                "recall_count": r["recall_count"],
+                "locked": bool(r["locked"]),
+            }
+        )
+    return {"total": len(found), "rows": rows}

@@ -29,7 +29,13 @@
     <div class="tree" id="tree" role="tree"></div>
   </div>
   <div class="side-pane" id="sideSearch" hidden>
-    <label class="search side-q"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="m13.2 13.2 3.8 3.8"/></svg><input id="sideQ" type="search" autocomplete="off"></label>
+    <div class="sq-row">
+      <label class="search side-q"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="m13.2 13.2 3.8 3.8"/></svg><input id="sideQ" type="search" autocomplete="off">
+        <button class="sq-case" id="sqCase" aria-pressed="false" data-title-t="matchCase">Aa</button></label>
+      <button class="rb" id="sqOpts" aria-expanded="false" aria-controls="sqSettings" data-title-t="searchSettings"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
+    </div>
+    <div class="sq-help" id="sqHelp" hidden></div>
+    <div class="sq-settings" id="sqSettings" hidden></div>
     <div class="side-results" id="sideResults"></div>
   </div>
   <div class="vault">

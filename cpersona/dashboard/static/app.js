@@ -7,7 +7,13 @@ const T = {
     techAlways: "Always show details",
     calmDots: "Avoid clusters of dots", calmDotsHint: "Draws the network with lines, without bright clusters of dots.",
     sideSearch: "Search", settings: "Settings", back: "Back", forward: "Forward", newTab: "New tab", closeTab: "Close tab",
-    searchHits: n => `${n} found`, searchMore: n => `${n} more: refine the words`,
+    searchHits: n => `${n.toLocaleString()} result${n === 1 ? "" : "s"}`, searchMore: n => `${n} more: refine the words`,
+    sideSearchPh: "Type to start searching…", matchCase: "Match case", searchSettings: "Search settings", searchOptions: "Search options",
+    searchOps: [["path:", "match the agent / project / channel"], ["agent:", "match the agent's name"], ["tag:", "memories that mention an entity"],
+      ["line:", "find the words on the same line"], ["month:", "match the month it was stored (2026-10)"], ["[property]", "match a property: [locked] [recalled] [vector] [project:x]"]],
+    searchHelpNote: "Words are all required. \"Quote\" a phrase; -word leaves it out.",
+    sortBy: "Sort", sorts: { new: "Newest first", old: "Oldest first", recalled: "Most recalled" }, showLines: "Show matching lines",
+    noHits: "No memory matches.",
     kbd: ["⌘K search", "/ find in list", "j/k move", "Enter open", "Esc close"],
     overviewLead: "How many memories are stored, and when they were stored.",
     nMemories: "memories", nEpisodes: "episodes", nEntities: "entities", nAgents: "agents",
@@ -86,7 +92,13 @@ const T = {
     techAlways: "詳細情報を常に開く",
     calmDots: "集合体回避モード", calmDotsHint: "点の集まりを目立たせず、線で描きます。",
     sideSearch: "検索", settings: "設定", back: "戻る", forward: "進む", newTab: "新しいタブ", closeTab: "タブを閉じる",
-    searchHits: n => `${n} 件`, searchMore: n => `ほかに ${n} 件あります。語を足して絞ってください`,
+    searchHits: n => `${n.toLocaleString()} 件の結果`, searchMore: n => `ほかに ${n} 件あります。語を足して絞ってください`,
+    sideSearchPh: "入力して検索を開始...", matchCase: "大文字と小文字を区別", searchSettings: "検索の設定", searchOptions: "検索オプション",
+    searchOps: [["path:", "エージェント / プロジェクト / チャンネルに一致"], ["agent:", "エージェント名に一致"], ["tag:", "実体に言及している記憶を検索"],
+      ["line:", "同一の行でキーワードを検索"], ["month:", "記録した月に一致 (2026-10)"], ["[property]", "属性に一致: [locked] [recalled] [vector] [project:x]"]],
+    searchHelpNote: "語はすべて含むものを探します。\"語句\" で 1 つの語句、-語 で除外します。",
+    sortBy: "並び順", sorts: { new: "新しい順", old: "古い順", recalled: "想起回数の多い順" }, showLines: "一致した行を表示",
+    noHits: "一致する記憶はありません。",
     kbd: ["⌘K 検索", "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
     overviewLead: "保存されている記憶の件数と、保存された時期を確認できます。",
     nMemories: "件の記憶", nEpisodes: "件のエピソード", nEntities: "件の実体", nAgents: "エージェント",
@@ -263,7 +275,7 @@ function applyLang() {
     el.title = t(el.dataset.titleT);
     if (el.tagName === "BUTTON") el.setAttribute("aria-label", t(el.dataset.titleT));
   }
-  $("sideQ").placeholder = t("searchPh");
+  $("sideQ").placeholder = t("sideSearchPh");
   for (const b of document.querySelectorAll("[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang));
   $("paletteInput").placeholder = t("palettePh");
   $("kbd").innerHTML = t("kbd").map(k => `<span>${esc(k)}</span>`).join("");
@@ -1350,20 +1362,66 @@ function sideShow(which) {
   $("sideSearch").hidden = which !== "search";
   if (which === "search") $("sideQ").focus();
 }
+// The search panel follows a notes app's: Aa matches case, the settings set the order
+// and whether matching lines are shown, and an empty box lists the operators.
+const sq = { case: false, sort: "new", lines: true };
+try { Object.assign(sq, JSON.parse(localStorage.getItem("cp.sq") || "{}")); } catch {}
+function sqSave() { try { localStorage.setItem("cp.sq", JSON.stringify(sq)); } catch {} }
+function sqHelp() {
+  const box = $("sqHelp");
+  box.innerHTML = `<div class="sq-head">${t("searchOptions")}</div>` + t("searchOps").map(([op, what]) =>
+    `<button class="sq-op" data-op="${esc(op)}"><b>${esc(op)}</b> ${esc(what)}</button>`).join("") + `<div class="hint sq-note">${esc(t("searchHelpNote"))}</div>`;
+  for (const b of box.querySelectorAll(".sq-op")) b.addEventListener("mousedown", e => {
+    e.preventDefault(); // keep the focus in the box
+    const input = $("sideQ"), op = b.dataset.op === "[property]" ? "[" : b.dataset.op;
+    input.value = (input.value && !input.value.endsWith(" ") ? input.value + " " : input.value) + op;
+    input.focus(); sqToggleHelp(); sideSearch(input.value.trim()).catch(() => {});
+  });
+}
+function sqToggleHelp() { $("sqHelp").hidden = !(document.activeElement === $("sideQ") && !$("sideQ").value.trim()); }
+function sqSettings() {
+  const box = $("sqSettings");
+  box.innerHTML = `<label>${t("sortBy")} <select id="sqSort">${Object.entries(t("sorts")).map(([k, v]) => `<option value="${k}" ${k === sq.sort ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
+    <label><input type="checkbox" id="sqLines" ${sq.lines ? "checked" : ""}> ${t("showLines")}</label>`;
+  $("sqSort").addEventListener("change", e => { sq.sort = e.target.value; sqSave(); sideSearch($("sideQ").value.trim()).catch(() => {}); });
+  $("sqLines").addEventListener("change", e => { sq.lines = e.target.checked; sqSave(); sideSearch($("sideQ").value.trim()).catch(() => {}); });
+}
 async function sideSearch(q) {
   const out = $("sideResults");
-  if (q.length < 2) { out.innerHTML = ""; return; }
-  const res = await api("/api/memories", { q, limit: 50 });
-  out.innerHTML = `<div class="hint">${esc(t("searchHits")(res.total))}</div>` + res.rows.map(r =>
-    `<button class="hit" data-id="${r.id}"><span class="hit-t">${mark(r.snippet, q)}</span><span class="hit-s">${esc(day(r.timestamp))} · ${esc(r.agent_id)}</span></button>`).join("") +
-    (res.total > res.rows.length ? `<div class="hint">${esc(t("searchMore")(res.total - res.rows.length))}</div>` : "");
-  for (const b of out.querySelectorAll(".hit")) b.addEventListener("click", () => { state.q = q; openDetail(Number(b.dataset.id)).catch(fail); });
+  if (!q) { out.innerHTML = ""; return; }
+  const res = await api("/api/search", { q, case: sq.case ? "1" : "0", sort: sq.sort, limit: 100 });
+  if ($("sideQ").value.trim() !== q) return; // a newer search is on its way
+  // Only what is looked for in the text is marked: words, phrases and line: words, not
+  // where a memory lives (path:, agent:, month:, tag:) or its [properties].
+  const words = (q.replace(/\[[^\]]*\]/g, " ").replace(/\b(?:path|agent|month|tag):(?:"[^"]*"|\([^)]*\)|\S+)/g, " ")
+    .replace(/\bline:\(([^)]*)\)/g, " $1 ").replace(/\bline:/g, " ").match(/"[^"]*"|\S+/g) || [])
+    .filter(w => !w.startsWith("-")).map(w => w.replace(/["()]/g, "")).filter(Boolean);
+  const hl = text => words.reduce((h, w) => h.replace(new RegExp(esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), sq.case ? "g" : "gi"), m => `<mark>${m}</mark>`), esc(text));
+  out.innerHTML = `<div class="sq-count">${esc(t("searchHits")(res.total))}</div>` + (res.rows.length ? res.rows.map(r =>
+    `<div class="hit-group"><button class="hit-file" data-id="${r.id}"><span class="hit-name">${esc(day(r.timestamp))} · ${esc(r.agent_id)}${r.project_id ? " / " + esc(r.project_id) : ""}</span>${r.matches ? `<span class="hit-n">${r.matches}</span>` : ""}</button>
+      ${sq.lines ? r.lines.map(l => `<button class="hit-line" data-id="${r.id}">${hl(l)}</button>`).join("") : ""}</div>`).join("")
+    : `<div class="hint sq-note">${esc(t("noHits"))}</div>`) +
+    (res.total > res.rows.length ? `<div class="hint sq-note">${esc(t("searchMore")(res.total - res.rows.length))}</div>` : "");
+  for (const b of out.querySelectorAll("[data-id]")) b.addEventListener("click", () => { state.q = words.join(" "); openDetail(Number(b.dataset.id)).catch(fail); });
 }
 
 function wire() {
   for (const b of document.querySelectorAll(".nav")) b.addEventListener("click", () => go({ view: b.dataset.view, path: [], q: "", month: "" }));
   for (const b of document.querySelectorAll(".st")) b.addEventListener("click", () => sideShow(b.dataset.side));
-  $("sideQ").addEventListener("input", e => { clearTimeout(sideTimer); sideTimer = setTimeout(() => sideSearch(e.target.value.trim()).catch(() => {}), 200); });
+  $("sideQ").addEventListener("input", e => { sqToggleHelp(); clearTimeout(sideTimer); sideTimer = setTimeout(() => sideSearch(e.target.value.trim()).catch(() => {}), 200); });
+  $("sideQ").addEventListener("focus", () => { sqHelp(); sqToggleHelp(); });
+  $("sideQ").addEventListener("blur", () => { $("sqHelp").hidden = true; });
+  $("sqCase").setAttribute("aria-pressed", String(sq.case));
+  $("sqCase").addEventListener("click", e => {
+    e.preventDefault(); sq.case = !sq.case; sqSave();
+    $("sqCase").setAttribute("aria-pressed", String(sq.case));
+    sideSearch($("sideQ").value.trim()).catch(() => {});
+  });
+  $("sqOpts").addEventListener("click", () => {
+    const open = $("sqSettings").hidden;
+    if (open) sqSettings();
+    $("sqSettings").hidden = !open; $("sqOpts").setAttribute("aria-expanded", String(open));
+  });
   $("backBtnTab").addEventListener("click", () => step(-1));
   $("fwdBtnTab").addEventListener("click", () => step(1));
   $("paletteBtn").addEventListener("click", () => openPalette());
@@ -1435,7 +1493,8 @@ function wire() {
   if (openMemory) named.id = 0;
   if (!tabs.length) tabs = [{ hist: [named], pos: 0 }];
   else if (H0.get("view")) { tabs[active].hist = tabs[active].hist.slice(0, tabs[active].pos + 1); tabs[active].hist.push(named); tabs[active].pos = tabs[active].hist.length - 1; }
-  sideShow("tree");
+  sideShow(H0.get("side") === "search" ? "search" : "tree");
+  if (H0.get("sq")) { $("sideQ").value = H0.get("sq"); sqToggleHelp(); sideSearch(H0.get("sq")).catch(() => {}); }
   await show(cur().hist[cur().pos]);
   if (openMemory) await openDetail(openMemory).catch(fail);
   if (H0.get("palette") === "1") openPalette(H0.get("pq") || "");
