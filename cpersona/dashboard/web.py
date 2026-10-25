@@ -52,6 +52,11 @@ def _static(name: str) -> bytes:
     return resources.files("cpersona.dashboard").joinpath("static", name).read_bytes()
 
 
+def _err(code: int, message: str) -> tuple[int, dict]:
+    """A refused data request: its status and the error the page shows."""
+    return code, {"ok": False, "error": message}
+
+
 def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[int, object]:
     """One data request: (status, JSON value). Shared by the loopback server and
     the remote one, so both answer every route the same way.
@@ -66,9 +71,9 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
             raise ValueError("path is a list")
         conn = store.open_store(db_path)
     except store.StoreError as e:
-        return 409, {"error": str(e)}
+        return _err(409, str(e))
     except ValueError as e:
-        return 400, {"error": str(e)}
+        return _err(400, str(e))
     try:
         if scope is not None:
             scope.apply(conn)
@@ -89,19 +94,19 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
             elif route == "/api/memory":
                 out = store.memory(conn, int(q.get("id", 0)))
                 if out is None:
-                    return 404, {"error": "No memory with that id."}
+                    return _err(404, "No memory with that id.")
             elif route == "/api/graph" and q.get("around"):
                 out = graph.around(conn, key, int(q["around"]), int(q.get("hops", graph.DEFAULT_HOPS)))
                 if out is None:
-                    return 404, {"error": "No memory with that id."}
+                    return _err(404, "No memory with that id.")
             elif route == "/api/graph" and q.get("cluster_of"):
                 out = overall.cluster_of(conn, key, int(q["cluster_of"]))
                 if out is None:
-                    return 404, {"error": "That memory is in no group."}
+                    return _err(404, "That memory is in no group.")
             elif route == "/api/graph" and q.get("entity"):
                 out = graph.mentioning(conn, int(q["entity"]))
                 if out is None:
-                    return 404, {"error": "No entity with that id."}
+                    return _err(404, "No entity with that id.")
             elif route == "/api/graph":
                 out = graph.folder(
                     conn, path, q.get("month", ""),
@@ -119,11 +124,11 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
                 else:
                     raise ValueError(f"lens is one of {', '.join(overall.LENSES)}")
             else:
-                return 404, {"error": "not found"}
+                return _err(404, "not found")
     except ValueError as e:
-        return 400, {"error": str(e)}
+        return _err(400, str(e))
     except sqlite3.Error as e:
-        return 500, {"error": f"The database could not be read: {e}"}
+        return _err(500, f"The database could not be read: {e}")
     finally:
         conn.close()
     return 200, out
