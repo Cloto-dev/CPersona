@@ -60,10 +60,9 @@ const T = {
       entities: "Entities are names agents declared. A “mentioned in the same memory” line joins two entities one memory mentions; the thicker it is, the more such memories.",
       clusters: "Groups are computed from the stored embeddings. No agent made them, and they can change as memories are added.",
     },
-    lens: { cosmos: "Universe", memories: "Memories", tree: "Folders", entities: "Entities", clusters: "Similar groups" },
+    lens: { memories: "Memories", tree: "Folders", entities: "Entities", clusters: "Similar groups" },
     lensLead: {
       memories: "Each point is a memory, gathered around its agent, newest 800 at most. Lines join memories with similar content.",
-      cosmos: "Agents, their projects, groups by content, then memories, each level a mesh of a few dozen points. Zoom in and each point opens into its own.",
       tree: "Each point is a folder: agent, project, channel and month. Its size is the number of memories in it.",
       entities: "Each point is an entity an agent declared. Its size is the number of memories that mention it.",
       clusters: "Each point is a group of memories with similar content. It is named by quoting the start of the memory nearest its centre.",
@@ -137,10 +136,9 @@ const T = {
       entities: "実体は、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
       clusters: "まとまりは、保存された埋め込みから計算したものです。エージェントが分けたものではありません。記憶が増えると、分け方が変わることがあります。",
     },
-    lens: { cosmos: "宇宙", memories: "記憶", tree: "分け方", entities: "実体", clusters: "内容の近いまとまり" },
+    lens: { memories: "記憶", tree: "分け方", entities: "実体", clusters: "内容の近いまとまり" },
     lensLead: {
       memories: "記憶を点にして、エージェントのまわりに集めています。新しい順に 800 件までです。線は、内容が似ている記憶どうしを結んでいます。",
-      cosmos: "エージェント、プロジェクト、内容の近いまとまり、記憶の順に入れ子にしています。どの段も数十の点の網目です。拡大すると、点がその中の網目に開きます。",
       tree: "記憶の分け方 (エージェント・プロジェクト・チャンネル・月) を点にしています。点の大きさは記憶の件数です。",
       entities: "エージェントが宣言した実体を点にしています。点の大きさは、その実体に言及している記憶の件数です。",
       clusters: "内容の近い記憶をまとめて点にしています。点の名前は、まとまりの中心にいちばん近い記憶の冒頭の引用です。",
@@ -174,7 +172,7 @@ const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, 
 for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
-if (["tree", "entities", "clusters", "cosmos"].includes(H0.get("lens"))) state.lens = H0.get("lens");
+if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
 if (["calm", "star"].includes(H0.get("look"))) state.look = H0.get("look"); // prototype looks, for comparison
 // Prototype: exp=1 makes the points the subject of a large picture; exp=123 also puts
 // projects between agents and memories and keeps only mutual neighbours.
@@ -506,7 +504,6 @@ const LAYERS = {
   tree: ["part"],
   entities: ["declared", "co"],
   clusters: ["near"],
-  cosmos: [],
 };
 let gs = null; // the graph on screen, or null
 
@@ -583,7 +580,7 @@ async function renderGraph() {
   else if (state.entity) head = `<h1>${esc(t("entityTitle")(G.label))}</h1><p class="lead">${shown}</p>${back}`;
   else if (memoryView) head = `<h1>${t("graph")}</h1><p class="lead">${t("graphLead")}<br>${shown}</p>${back}`;
   else {
-    const seg = [...(state.look ? ["cosmos", "memories"] : []), "tree", "entities", "clusters"].map(l =>
+    const seg = [...(state.look ? ["memories"] : []), "tree", "entities", "clusters"].map(l =>
       `<button data-lens="${l}" aria-pressed="${l === lens}">${t("lens")[l]}</button>`).join("");
     let lead = t("lensLead")[lens];
     if (allMemories) lead += `<br>${shown}`;
@@ -628,192 +625,7 @@ async function renderGraph() {
     : lens === "entities" && !G.nodes.length ? `${t("emptyEntitiesP")} ${t("tryAsk")} ${t("askEntities")}`
     : G.nodes && !G.nodes.length ? t("noMemories") : "";
   if (empty) { $("gc").remove(); page.querySelector(".g-hint").remove(); $("graphWrap").insertAdjacentHTML("beforeend", `<div class="g-empty"><p>${esc(empty)}</p></div>`); return; }
-  if (lens === "cosmos") startCosmos(G); else startGraph(G, lens);
-}
-
-// ---- Prototype: the nested sky (lens=cosmos)
-// Each group's points are laid out once by a small force simulation inside the
-// group's disc, and so on down. What is drawn follows the zoom: a group small on
-// screen is one point; as its disc grows past COSMOS_OPEN px its own mesh fades in,
-// so every level reads like a few dozen points joined into a mesh.
-const COSMOS_OPEN = [40, 110];
-function cosmosLayout(g) {
-  const kids = g.children || [];
-  if (!kids.length) return;
-  for (const c of kids) c.r = c.kind === "memory" ? 1 : Math.sqrt(c.count);
-  kids.forEach((c, i) => {
-    const a = i * 2.39996 + hash01(c.id) * 0.3, d = 2.2 * Math.sqrt(i + 0.5) * (c.r + 1);
-    c.x = Math.cos(a) * d; c.y = Math.sin(a) * d; c.vx = c.vy = 0;
-  });
-  const links = (g.links || []).map(([i, j, w]) => [kids[i], kids[j], w]);
-  // Packed close, discs nearly touching: a weak push, a firm pull to the middle, so a
-  // lone point is not flung out to stretch the disc everything else must fit in.
-  for (let step = 0, alpha = 1; step < 300; step++, alpha *= 0.985) {
-    for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) {
-      const a = kids[i], b = kids[j], dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy + 0.01, rr = a.r + b.r;
-      const f = 0.2 * rr * rr / d2 * alpha;
-      a.vx -= dx * f; a.vy -= dy * f; b.vx += dx * f; b.vy += dy * f;
-      const d = Math.sqrt(d2);
-      if (d < rr * 1.12) { const push = (rr * 1.12 - d) / d * 0.3; a.vx -= dx * push; a.vy -= dy * push; b.vx += dx * push; b.vy += dy * push; }
-    }
-    for (const [a, b] of links) {
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = (d - (a.r + b.r) * 1.35) / d * 0.08 * alpha;
-      a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
-    }
-    for (const c of kids) { c.vx -= c.x * 0.04 * alpha; c.vy -= c.y * 0.04 * alpha; c.vx *= 0.6; c.vy *= 0.6; c.x += c.vx; c.y += c.vy; }
-  }
-  // Into a disc of radius 1, so a parent of any size can hold it.
-  const B = Math.max(1e-6, ...kids.map(c => Math.hypot(c.x, c.y) + c.r));
-  for (const c of kids) { c.x /= B; c.y /= B; c.r /= B; cosmosLayout(c); }
-}
-function cosmosPlace(g, ax, ay, R) {
-  g.ax = ax; g.ay = ay; g.R = R;
-  for (const c of g.children || []) cosmosPlace(c, ax + c.x * R * 0.92, ay + c.y * R * 0.92, c.r * R * 0.92);
-}
-function cosmosName(g) {
-  if (g.kind === "project") return g.label || t("global");
-  if (g.kind === "memory") return g.day;
-  return g.label || "";
-}
-
-function startCosmos(G) {
-  const wrap = $("graphWrap"), cv = $("gc"), ctx = cv.getContext("2d");
-  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, W: 0, H: 0, DPR: 1, hover: null, panning: null, anim: null, hits: [] };
-  const root = G.root;
-  cosmosLayout(root);
-  cosmosPlace(root, 0, 0, 1000);
-  const ease = v => v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v);
-  const FONT = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif';
-
-  function resize() {
-    const r = wrap.getBoundingClientRect();
-    s.DPR = devicePixelRatio || 1; s.W = r.width; s.H = r.height;
-    cv.width = s.W * s.DPR; cv.height = s.H * s.DPR; cv.style.width = s.W + "px"; cv.style.height = s.H + "px";
-  }
-  const frame = g => { const k = Math.min(s.W, s.H) * 0.45 / g.R; return { k, x: s.W / 2 - g.ax * k, y: s.H / 2 - g.ay * k }; };
-
-  function drawGroup(g, alpha, labels) {
-    const { k, x, y } = s.view, sx = g.ax * k + x, sy = g.ay * k + y, sr = g.R * k;
-    if (sx + sr < -20 || sy + sr < -20 || sx - sr > s.W + 20 || sy - sr > s.H + 20 || alpha < 0.01) return;
-    if (g.kind === "memory") {
-      const r = Math.max(1.3, Math.min(4, sr * 0.55));
-      ctx.globalAlpha = alpha; ctx.fillStyle = g === s.hover ? "#ffffff" : "#c7d6f2";
-      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
-      s.hits.push([sx, sy, Math.max(r, 5), g]);
-      if (g === s.hover || sr > 14) labels.push([g, sx, sy + r + 3, alpha * (g === s.hover ? 1 : 0.7)]);
-      return;
-    }
-    const open = g.kind === "root" ? 1 : ease((sr - COSMOS_OPEN[0]) / (COSMOS_OPEN[1] - COSMOS_OPEN[0]));
-    if (open < 1) {
-      const r = Math.min(sr, 1.5 + 1.1 * Math.log2(g.count + 1)), a = alpha * (1 - open);
-      ctx.globalAlpha = a; ctx.fillStyle = g === s.hover ? "#ffffff" : "#e3ecff";
-      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
-      s.hits.push([sx, sy, Math.max(r, 6), g]);
-      if (g === s.hover || g.kind !== "cluster" || r > 6) labels.push([g, sx, sy + r + 3, a * (g === s.hover ? 1 : g.kind === "cluster" ? 0.55 : 0.85)]);
-    }
-    if (open > 0) {
-      const a = alpha * open, kids = g.children || [];
-      // The mesh of this group's own points.
-      const path = new Path2D();
-      for (const [i, j] of g.links || []) {
-        const p = kids[i], q = kids[j];
-        path.moveTo(p.ax * k + x, p.ay * k + y); path.lineTo(q.ax * k + x, q.ay * k + y);
-      }
-      // Once the view is deep inside this group its lines only cross the screen: they fade.
-      const span = Math.max(s.W, s.H), inside = 1 - ease((sr - 1.5 * span) / (3 * span));
-      ctx.globalAlpha = a * 0.32 * inside; ctx.strokeStyle = "rgb(170,200,255)"; ctx.lineWidth = 0.9; ctx.stroke(path);
-      for (const c of kids) drawGroup(c, a, labels);
-      // Its name, above it, while it is open but not yet the whole screen.
-      if (g.kind !== "root" && sr < 1200) labels.push([g, sx, sy - sr * 0.97, a * 0.6 * (1 - ease((sr - 600) / 600)), true]);
-    }
-  }
-
-  function draw() {
-    ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
-    ctx.fillStyle = "#0f131c"; ctx.fillRect(0, 0, s.W, s.H);
-    s.hits = [];
-    const labels = [];
-    drawGroup(root, 1, labels);
-    ctx.textAlign = "center"; ctx.lineJoin = "round"; ctx.strokeStyle = "#0f131c"; ctx.lineWidth = 3;
-    // Names are placed most important first (the hovered point, open groups' headings,
-    // agents, projects, then the larger groups); one that would overlap a placed name
-    // is left out, so the screen never fills with words on top of words.
-    const rank = ([g, , , a, heading]) => (g === s.hover ? 1e9 : 0) + (heading ? 1e8 : 0) + (g.kind === "agent" ? 1e7 : g.kind === "project" ? 1e6 : 0) + (g.count || 1) + a;
-    labels.sort((p, q) => rank(q) - rank(p));
-    const placed = [];
-    for (const [g, lx, ly, a, heading] of labels) {
-      if (a < 0.03) continue;
-      ctx.font = `${heading ? 600 : 400} ${heading ? 12.5 : 11}px ${FONT}`;
-      const text = cosmosName(g), w = ctx.measureText(text).width, h = heading ? 15 : 13;
-      const box = [lx - w / 2 - 2, heading ? ly - h : ly, lx + w / 2 + 2, heading ? ly : ly + h];
-      if (placed.some(b => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
-      placed.push(box);
-      ctx.globalAlpha = a;
-      ctx.textBaseline = heading ? "bottom" : "top";
-      ctx.fillStyle = g.kind === "agent" || heading ? "#eef3ff" : "#c9dcff";
-      ctx.strokeText(text, lx, ly); ctx.fillText(text, lx, ly);
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  function loop() {
-    if (!s.alive) return;
-    if (s.anim) {
-      const v = s.view, tgt = s.anim;
-      // Zoom in the log of the scale, so a deep dive does not rush its last steps.
-      const lk = Math.log(v.k) + (Math.log(tgt.k) - Math.log(v.k)) * 0.16;
-      const wx = (s.W / 2 - v.x) / v.k, wy = (s.H / 2 - v.y) / v.k, tx = (s.W / 2 - tgt.x) / tgt.k, ty = (s.H / 2 - tgt.y) / tgt.k;
-      v.k = Math.exp(lk);
-      const cx = wx + (tx - wx) * 0.16, cy = wy + (ty - wy) * 0.16;
-      v.x = s.W / 2 - cx * v.k; v.y = s.H / 2 - cy * v.k;
-      if (Math.abs(Math.log(v.k / tgt.k)) < 0.01 && Math.hypot(cx - tx, cy - ty) * v.k < 0.5) { Object.assign(v, tgt); s.anim = null; }
-      draw();
-    }
-    requestAnimationFrame(loop);
-  }
-
-  const at = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-  const pick = (x, y) => {
-    let best = null, bd = 1e9;
-    for (const [hx, hy, hr, g] of s.hits) { const d = Math.hypot(hx - x, hy - y); if (d < hr + 4 && d < bd) { best = g; bd = d; } }
-    return best;
-  };
-  cv.addEventListener("pointermove", e => {
-    const [x, y] = at(e);
-    if (s.panning) { s.view.x = x - s.panning.x; s.view.y = y - s.panning.y; s.panning.moved = true; draw(); return; }
-    const h = pick(x, y);
-    if (h !== s.hover) { s.hover = h; cv.classList.toggle("over", !!h); draw(); }
-  });
-  cv.addEventListener("pointerdown", e => {
-    const [x, y] = at(e);
-    cv.setPointerCapture(e.pointerId); s.anim = null;
-    s.panning = { x: x - s.view.x, y: y - s.view.y, moved: false };
-    cv.classList.add("dragging");
-  });
-  cv.addEventListener("pointerup", e => {
-    const [x, y] = at(e), moved = s.panning && s.panning.moved;
-    s.panning = null; cv.classList.remove("dragging");
-    if (moved) return;
-    // A click opens a memory, or flies into a group until it fills the view.
-    const g = pick(x, y);
-    if (!g) return;
-    if (g.kind === "memory") openDetail(g.mem).catch(fail);
-    else s.anim = frame(g);
-  });
-  cv.addEventListener("wheel", e => {
-    e.preventDefault(); s.anim = null;
-    const [x, y] = at(e), f = Math.exp(-e.deltaY * 0.0015), v = s.view;
-    const wx = (x - v.x) / v.k, wy = (y - v.y) / v.k;
-    v.k = Math.max(0.0005, Math.min(400, v.k * f)); v.x = x - wx * v.k; v.y = y - wy * v.k; draw();
-  }, { passive: false });
-  s.observer = new ResizeObserver(() => { if (s.alive) { resize(); draw(); } });
-  s.observer.observe(wrap);
-  resize();
-  // focus=<group id> (prototype) opens the view already flown into that group.
-  const find = (g, id) => g.id === id ? g : (g.children || []).reduce((hit, c) => hit || (c.kind !== "memory" && find(c, id)), null);
-  Object.assign(s.view, frame((H0.get("focus") && find(root, H0.get("focus"))) || root));
-  draw();
-  requestAnimationFrame(loop);
+  startGraph(G, lens);
 }
 
 function groupLabel(n) {

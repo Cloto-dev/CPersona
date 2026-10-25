@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from cpersona.dashboard import cosmos, graph, overall, store
+from cpersona.dashboard import graph, overall, store
 
 HOST = "127.0.0.1"
 
@@ -194,8 +194,6 @@ def make_handler(
                             out = overall.entities(conn)
                         elif lens == "clusters":
                             out = overall.clusters(conn, db_path)
-                        elif lens == "cosmos":  # prototype: the nested sky
-                            out = cosmos.build(conn, db_path)
                         else:
                             raise ValueError(
                                 f"lens is one of {', '.join(overall.LENSES)}"
