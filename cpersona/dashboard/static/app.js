@@ -915,7 +915,7 @@ function startGraph(G, lens) {
       x.fillStyle = ink; x.strokeStyle = ink;
       if (figure === "stripes") { x.lineWidth = R * 0.32; for (const t of [-1, 0, 1]) { x.beginPath(); x.moveTo(-2 * R, t * R * 0.66); x.lineTo(2 * R, t * R * 0.66); x.stroke(); } }
       else if (figure === "crescent") { x.beginPath(); x.arc(R * 0.45, 0, R * 0.95, 0, Math.PI * 2); x.fill(); }
-      else if (figure === "ring") { x.lineWidth = R * 0.28; x.beginPath(); x.arc(0, 0, R * 0.55, 0, Math.PI * 2); x.stroke(); x.beginPath(); x.arc(0, 0, R * 0.12, 0, Math.PI * 2); x.fill(); }
+      else if (figure === "ring") { x.lineWidth = R * 0.28; x.beginPath(); x.arc(0, 0, R * 0.55, 0, Math.PI * 2); x.stroke(); }
       else if (figure === "dots") { for (const [u, v] of [[-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45], [0, 0]]) { x.beginPath(); x.arc(u * R, v * R, R * 0.2, 0, Math.PI * 2); x.fill(); } }
       else { x.fillRect(0, -R, R, R); x.fillRect(-R, 0, R, R); }
       x.restore();
