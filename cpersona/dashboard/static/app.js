@@ -894,20 +894,32 @@ function startGraph(G, lens) {
     return { h1, h2: h1 + 50 + mix01(`${agent}:g`) * 110, sat: 62 + mix01(`${agent}:s`) * 26 };
   }
   const dots = new Map();
-  // One sprite per size and colour. The dot is a light seen face on, not a lit ball:
-  // white at the centre, the colour arriving only towards the edge and staying bright,
-  // and nothing drawn outside the dot.
+  // One sprite per size and colour: a flat dot. Large enough on screen to be read, it
+  // carries one of five figures — stripes, a crescent, a ring, dots or quarters —
+  // turned to an angle, both derived from the agent's id; smaller, it stays plain,
+  // since a figure a few pixels wide only muddies the dot.
+  const FIGURES = ["stripes", "crescent", "ring", "dots", "quarters"];
+  const PATTERN_FROM = 6;
   function agentDot(R, agent, uniform) {
-    const key = `${R}|${uniform ? "" : agent}`;
+    const plain = R < PATTERN_FROM, key = `${R}|${agent}|${uniform ? 1 : 0}`;
     if (dots.has(key)) return dots.get(key);
     const L = lookOf(agent, uniform), size = Math.ceil(R * 2 + 2), c = document.createElement("canvas");
     c.width = c.height = size * 2;
     const x = c.getContext("2d");
     x.scale(2, 2); x.translate(size / 2, size / 2);
-    const body = x.createRadialGradient(0, 0, 0, 0, 0, R);
-    body.addColorStop(0, "#ffffff"); body.addColorStop(0.4, "#ffffff");
-    body.addColorStop(0.75, hsl(L.h1, L.sat, 88)); body.addColorStop(1, hsl(L.h2, L.sat, 78));
-    x.fillStyle = body; x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fill();
+    const base = uniform ? "#c7d6f2" : hsl(L.h1, L.sat, 80), ink = uniform ? "#4f6aa6" : hsl(L.h2, L.sat, 42);
+    x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fillStyle = base; x.fill();
+    if (!plain) {
+      const figure = FIGURES[Math.floor(mix01(`${agent}:k`) * FIGURES.length)];
+      x.save(); x.clip(); x.rotate(mix01(`${agent}:r`) * Math.PI);
+      x.fillStyle = ink; x.strokeStyle = ink;
+      if (figure === "stripes") { x.lineWidth = R * 0.32; for (const t of [-1, 0, 1]) { x.beginPath(); x.moveTo(-2 * R, t * R * 0.66); x.lineTo(2 * R, t * R * 0.66); x.stroke(); } }
+      else if (figure === "crescent") { x.beginPath(); x.arc(R * 0.45, 0, R * 0.95, 0, Math.PI * 2); x.fill(); }
+      else if (figure === "ring") { x.lineWidth = R * 0.28; x.beginPath(); x.arc(0, 0, R * 0.55, 0, Math.PI * 2); x.stroke(); x.beginPath(); x.arc(0, 0, R * 0.12, 0, Math.PI * 2); x.fill(); }
+      else if (figure === "dots") { for (const [u, v] of [[-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45], [0, 0]]) { x.beginPath(); x.arc(u * R, v * R, R * 0.2, 0, Math.PI * 2); x.fill(); } }
+      else { x.fillRect(0, -R, R, R); x.fillRect(-R, 0, R, R); }
+      x.restore();
+    }
     const out = { c, size };
     dots.set(key, out);
     return out;
