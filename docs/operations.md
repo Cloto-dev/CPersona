@@ -508,7 +508,32 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   server already uses and returns the address, so nobody has to look the path up.
   Opened this way the overview also shows the store's health, from the same
   checks as `check_health` without repairs. The page runs until the server stops.
-  `CPERSONA_DASHBOARD=false` removes the tool; over HTTP it is not registered.
+  `CPERSONA_DASHBOARD=false` removes the tool. Over HTTP it is registered only with
+  the remote dashboard on (next item).
+- **On a server people reach remotely** (off by default): with
+  `CPERSONA_DASHBOARD_REMOTE=true` and `CPERSONA_DASHBOARD_PUBLIC_URL` set to the
+  address people reach the server at, the HTTP transport serves the page under
+  `/dashboard/` and registers `open_dashboard` too. Asked by an authenticated
+  client, the tool returns a new link each time, which opens once within two
+  minutes. The link's code is after `#`, so no request line, access log or Referer
+  carries it: the page sends it once in a header and gets a session cookie for it
+  (HttpOnly, Secure, SameSite=Strict, sent only to `/dashboard/`, for eight hours).
+  The address must be https, or plain http on localhost; a browser drops a Secure
+  cookie from any other http address, so the tool refuses one.
+  - **Who sees what**: only the agents the client's grants let it read. Memories,
+    episodes, entities and blocks of any other agent are left out, and so is a
+    mention, relation, alias or node that names one of them, so no id of a hidden
+    record reaches the page. Store health is shown only to a client that reads
+    every agent. Without an ACL the holder of the one token sees everything. A
+    per-subject connection cannot open it yet.
+  - **What it answers**: GET and HEAD only. Everything outside `/dashboard/`,
+    the bare `/dashboard` included, still needs the bearer token.
+  - **Links and sessions live in the server process**, so a restart ends them and
+    the person asks the agent for a new link. Each client holds at most 20 unused
+    links and 20 sessions; past that its own oldest goes first, never another
+    client's.
+  - **Memory**: pictures computed for the page are cached per set of grants, so a
+    server whose clients hold many different grants holds a cache for each.
 
 - **Which database**: the one `--db` names, else `CPERSONA_DB_PATH`. There is
   no fallback to the server's relative default, which would resolve against the
