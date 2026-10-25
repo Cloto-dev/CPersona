@@ -179,8 +179,6 @@ if (["calm", "star"].includes(H0.get("look"))) state.look = H0.get("look"); // p
 // Prototype: exp=1 makes the points the subject of a large picture; exp=123 also puts
 // projects between agents and memories and keeps only mutual neighbours.
 state.exp = ["1", "123", "mix"].includes(H0.get("exp")) ? H0.get("exp") : "";
-// Prototype: shape=poly puts projects between agents and memories, keeping every line.
-state.shape = H0.get("shape") === "poly" ? "poly" : "";
 // Prototype: every memory at once, as first drawn; the constellation look opens on it.
 if (state.look && H0.get("lens") === "memories" || state.look === "star" && !H0.get("lens")) state.lens = "memories";
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
@@ -238,7 +236,6 @@ function saveHash() {
   if (state.lens !== "tree" || state.look === "star") h.set("lens", state.lens);
   if (state.look) h.set("look", state.look);
   if (state.exp) h.set("exp", state.exp);
-  if (state.shape) h.set("shape", state.shape);
   history.replaceState(null, "", "#" + h);
 }
 
@@ -531,7 +528,7 @@ function layoutKey() {
   const where = state.around ? `a:${state.around}` : state.cluster ? `c:${state.cluster}`
     : state.entity ? `e:${state.entity}` : state.path.length || state.month ? `f:${JSON.stringify(state.path)}:${state.month}`
     : `map:${state.lens}`;
-  return `${overviewData.db}|${where}${state.look ? "|" + state.look : ""}${state.exp ? "|x" + state.exp : ""}${state.shape ? "|s" + state.shape : ""}`;
+  return `${overviewData.db}|${where}${state.look ? "|" + state.look : ""}${state.exp ? "|x" + state.exp : ""}`;
 }
 function loadLayout(key) {
   try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")[key]?.pos || null; } catch { return null; }
@@ -576,7 +573,7 @@ async function renderGraph() {
   const G = state.around ? await api("/api/graph", { around: state.around })
     : state.cluster ? await api("/api/graph", { cluster_of: state.cluster })
     : state.entity ? await api("/api/graph", { entity: state.entity })
-    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month, ...(state.exp === "123" ? { hubs: "1", mutual: "1" } : state.shape ? { hubs: "1" } : {}) })
+    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month, ...(state.exp === "123" ? { hubs: "1", mutual: "1" } : {}) })
     : await api("/api/map", { lens: state.lens });
   const lens = memoryView || allMemories ? "memories" : G.lens;
   const back = `<div class="crumbs"><button id="backBtn">${t("backToMap")}</button></div>`;
@@ -748,19 +745,16 @@ function startGraph(G, lens) {
   }
   // scale: how strongly n itself answers (the default layout's push grows with both
   // points' sizes, the calm one's with the other point's only).
-  // maxD2: points farther apart than its root do not push each other at all.
-  function repel(q, n, alpha, chargeOf = charge, scale = 1, maxD2 = Infinity) {
+  function repel(q, n, alpha, chargeOf = charge, scale = 1) {
     if (!q || !q.m) return;
     const dx = q.cx - n.x, dy = q.cy - n.y;
     let l = dx * dx + dy * dy;
     if (q.kids) {
-      if (q.s * q.s / 0.81 >= l) { for (const k of q.kids) repel(k, n, alpha, chargeOf, scale, maxD2); return; }
-      if (l > maxD2) return;
+      if (q.s * q.s / 0.81 >= l) { for (const k of q.kids) repel(k, n, alpha, chargeOf, scale); return; }
     } else {
       for (const o of q.pts) {
         if (o === n) continue;
         const ex = o.x - n.x, ey = o.y - n.y, e = Math.max(1, ex * ex + ey * ey), c = chargeOf(o) * scale;
-        if (e > maxD2) continue;
         n.vx += ex * c * alpha / e; n.vy += ey * c * alpha / e;
       }
       return;
@@ -811,20 +805,7 @@ function startGraph(G, lens) {
   const pushCharge = n => -push(n);
   function tick(alpha, friction = 0.6, pin = false) {
     const N = G.nodes;
-    // With the pair-by-pair rule's reach: points more than 300 apart do not push, which
-    // keeps the spacing even and the lines a mesh rather than a hairball.
-    if (N.length > BH_FROM) {
-      const tree = quadTree(N, pushCharge);
-      for (const n of N) repel(tree, n, alpha, pushCharge, push(n), 90000);
-      // Centres (agents, projects) push each other hard and from any distance, as the
-      // pair-by-pair rule pushes hubs, so each keeps its memories apart from the others'.
-      const centres = N.filter(n => hub(n) || n.kind === "project");
-      for (let i = 0; i < centres.length; i++) for (let j = i + 1; j < centres.length; j++) {
-        const a = centres[i], b = centres[j], dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy + 0.01;
-        const f = 2400 * (0.6 + radius(a) / 8) * (0.6 + radius(b) / 8) / d2 * alpha;
-        a.vx -= dx * f; a.vy -= dy * f; b.vx += dx * f; b.vy += dy * f;
-      }
-    }
+    if (N.length > BH_FROM) { const tree = quadTree(N, pushCharge); for (const n of N) repel(tree, n, alpha, pushCharge, push(n)); }
     else for (let i = 0; i < N.length; i++) {
       const a = N[i], ra = radius(a);
       for (let j = i + 1; j < N.length; j++) {
@@ -839,11 +820,7 @@ function startGraph(G, lens) {
     for (const l of G.links) {
       // exp=123: a project holds its memories tightly, as an index note holds its notes.
       const [len0, str0] = state.exp === "123" && l.kind === "structure" ? [20, 0.2] : SPRING[l.kind] || [34, 0.05 + 0.1 * (l.w - 0.5)];
-      // In a large picture a centre tied to thousands would crush them into a ball; its
-      // springs loosen with the root of its ties, so the memories spread into a mesh.
-      const tied = l.kind === "structure" && G.nodes.length > BH_FROM ? Math.max(adj.get(l.a.id).size, adj.get(l.b.id).size) : 0;
-      // With projects as centres they loosen less, so each still holds its own.
-      const len = len0 + radius(l.a) + radius(l.b), str = tied > 30 ? str0 * Math.pow(30 / tied, state.shape ? 0.25 : 0.5) : str0;
+      const len = len0 + radius(l.a) + radius(l.b), str = str0;
       const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, d = Math.hypot(dx, dy) || 1, f = (d - len) / d * str * alpha;
       // The busier end yields: a point tied to hundreds of others would otherwise take
       // the pull of every spring at once, overshoot, and fly apart. Ends with as many
@@ -870,16 +847,7 @@ function startGraph(G, lens) {
 
   function fitView() {
     const xs = G.nodes.map(n => n.x), ys = G.nodes.map(n => n.y);
-    let minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    // A large picture is framed on its middle 96% with a tenth to spare, so a lone point
-    // far off does not shrink everything else to specks.
-    if (G.nodes.length > BH_FROM) {
-      const q = (v, p) => v[Math.floor(p * (v.length - 1))];
-      const sx = [...xs].sort((a, b) => a - b), sy = [...ys].sort((a, b) => a - b);
-      [minX, maxX, minY, maxY] = [q(sx, 0.02), q(sx, 0.98), q(sy, 0.02), q(sy, 0.98)];
-      const mx = (maxX - minX) * 0.1, my = (maxY - minY) * 0.1;
-      minX -= mx; maxX += mx; minY -= my; maxY += my;
-    }
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
     const k = Math.min(calmPhysics ? 1.3 : 2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
     return { k, x: s.W / 2 - (minX + maxX) / 2 * k, y: s.H / 2 - (minY + maxY) / 2 * k };
   }
@@ -1099,7 +1067,7 @@ function startGraph(G, lens) {
     }
     if (s.heat > 0.004) {
       tick(s.heat, FRICTION); s.heat *= 0.985; moved = true;
-      if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.3; s.view.x += (v.x - s.view.x) * 0.3; s.view.y += (v.y - s.view.y) * 0.3; }
+      if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.12; s.view.x += (v.x - s.view.x) * 0.12; s.view.y += (v.y - s.view.y) * 0.12; }
       if (s.heat <= 0.004) { s.autoFit = false; saveLayout(key, G.nodes); } // still again: remember where it settled
     }
     if (s.panV && !s.panning) {
