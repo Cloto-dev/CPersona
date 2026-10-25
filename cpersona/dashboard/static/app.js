@@ -176,7 +176,7 @@ if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.g
 if (["calm", "star"].includes(H0.get("look"))) state.look = H0.get("look"); // prototype looks, for comparison
 // Prototype: exp=1 makes the points the subject of a large picture; exp=123 also puts
 // projects between agents and memories and keeps only mutual neighbours.
-state.exp = ["1", "123"].includes(H0.get("exp")) ? H0.get("exp") : "";
+state.exp = ["1", "123", "mix"].includes(H0.get("exp")) ? H0.get("exp") : "";
 // Prototype: every memory at once, as first drawn; the constellation look opens on it.
 if (state.look && H0.get("lens") === "memories" || state.look === "star" && !H0.get("lens")) state.lens = "memories";
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
@@ -992,7 +992,7 @@ function startGraph(G, lens) {
         let alpha = kind === "structure" ? 0.08 : kind === "declared" ? 0.55
           : kind === "similar" || kind === "near" ? 0.04 + 0.3 * Math.max(0, Math.min(1, (l.w - 0.55) / 0.35)) : 0.22;
         if (focus) alpha *= 0.35;
-        if (bold) alpha *= 0.3;
+        if (bold && state.exp !== "mix") alpha *= 0.3; // mix keeps the web as it was, with the points of exp=1
         const step = Math.round(alpha * 100) / 100;
         let path = steps.get(step);
         if (!path) steps.set(step, path = new Path2D());
