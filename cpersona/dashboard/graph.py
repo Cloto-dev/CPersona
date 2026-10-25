@@ -13,9 +13,11 @@ Three kinds of line join the points:
 
 Two views:
 
-- **A folder** (the same path and month as the list): its newest ``MAX_NODES``
-  memories, with the similar lines among them. A larger folder says how many it left
-  out rather than drawing a crowd no one can read.
+- **A folder** (the same path and month as the list): every memory in it, with the
+  similar lines among them, as a notes app draws every note. ``MAX_NODES`` can bound
+  it to the newest few; unset, nothing is left out. The neighbours are found a block
+  of ``NEIGHBOUR_BLOCK`` rows at a time, so the similarities held at once grow with
+  the folder, not with its square.
 - **Around one memory**: the memory, its ``K`` nearest across the whole store, their
   nearest, and so on for ``hops`` steps. Each step compares the step's memories with
   every vector of that width once.
@@ -39,9 +41,11 @@ from cpersona.dashboard import store
 K = 3
 #: Cosine below which two memories are not called similar.
 FLOOR = 0.55
-#: Memories a folder view draws. The page lays them out itself, and past a few
-#: hundred points neither the layout nor a reader keeps up.
-MAX_NODES = 800
+#: Memories a folder view draws, the newest first; None draws every one.
+MAX_NODES: int | None = None
+#: Rows whose neighbours are found at once: bounds the similarities held to this many
+#: rows by the folder's size.
+NEIGHBOUR_BLOCK = 1024
 #: Steps the "around" view walks by default, and at most.
 DEFAULT_HOPS = 2
 MAX_HOPS = 3
@@ -132,17 +136,30 @@ def _chunks(conn, db_path: str, width: int):
 
 
 def _nearest_within(ids: np.ndarray, vecs: np.ndarray) -> dict[tuple[int, int], float]:
-    """Similar pairs inside one set: each row to its K nearest at or above FLOOR."""
-    sim = vecs @ vecs.T
-    np.fill_diagonal(sim, -np.inf)
+    """Similar pairs inside one set: each row to its K nearest at or above FLOOR.
+
+    Equal similarities go to the earlier row, whatever the block size.
+    """
     pairs: dict[tuple[int, int], float] = {}
-    for i in range(len(ids)):
-        for j in np.argsort(-sim[i], kind="stable")[:K]:
-            w = float(sim[i, j])
-            if w < FLOOR:
-                break
-            a, b = sorted((int(ids[i]), int(ids[j])))
-            pairs[(a, b)] = max(pairs.get((a, b), -1.0), w)
+    n = len(ids)
+    take = min(K, n - 1)
+    if take <= 0:
+        return pairs
+    for at in range(0, n, NEIGHBOUR_BLOCK):
+        sim = vecs[at : at + NEIGHBOUR_BLOCK] @ vecs.T
+        here = np.arange(len(sim))
+        sim[here, at + here] = -np.inf
+        # Every column as similar as the K-th best is a candidate, so a tie at the cut
+        # is settled by position below, not by how the partition fell.
+        cut = -np.partition(-sim, take - 1, axis=1)[:, take - 1]
+        for r in here:
+            cand = np.flatnonzero(sim[r] >= cut[r])
+            for j in sorted(cand, key=lambda c: (-sim[r, c], c))[:K]:
+                w = float(sim[r, j])
+                if w < FLOOR:
+                    break
+                a, b = sorted((int(ids[at + r]), int(ids[j])))
+                pairs[(a, b)] = max(pairs.get((a, b), -1.0), w)
     return pairs
 
 
@@ -229,7 +246,6 @@ def _points(conn, rows, similar: dict, hops: dict | None = None) -> dict:
             "mem": r["id"],
             "agent": r["agent_id"],
             "timestamp": r["timestamp"],
-            "snippet": store.snippet(r["content"]),
         }
         if hops is not None:
             node["hop"] = hops[r["id"]]
@@ -247,7 +263,7 @@ def _points(conn, rows, similar: dict, hops: dict | None = None) -> dict:
 
 
 def folder(conn, path: list[str] | None = None, month: str = "") -> dict:
-    """The newest MAX_NODES memories of a folder and month, joined as above."""
+    """The memories of a folder and month (the newest MAX_NODES, when set), joined as above."""
     where, args = store._path_where(path or [])
     if month:
         where.append("substr(timestamp, 1, 7) = ?")
@@ -255,9 +271,9 @@ def folder(conn, path: list[str] | None = None, month: str = "") -> dict:
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(f"SELECT count(*) FROM memories{clause}", args).fetchone()[0]
     rows = conn.execute(
-        "SELECT id, agent_id, timestamp, content, embedding FROM memories"
+        "SELECT id, agent_id, timestamp, embedding FROM memories"
         f"{clause} ORDER BY timestamp DESC, id DESC LIMIT ?",
-        [*args, MAX_NODES],
+        [*args, -1 if MAX_NODES is None else MAX_NODES],
     ).fetchall()
     return _drawn(conn, rows, total, "folder")
 
@@ -287,7 +303,7 @@ _ID_BATCH = 900
 
 
 def members(conn, ids: list[int], view: str, **extra) -> dict:
-    """The newest MAX_NODES of these memories, drawn as a folder is."""
+    """These memories (the newest MAX_NODES, when set), drawn as a folder is."""
     dated = []
     for at in range(0, len(ids), _ID_BATCH):
         part = ids[at : at + _ID_BATCH]
@@ -297,11 +313,16 @@ def members(conn, ids: list[int], view: str, **extra) -> dict:
         ).fetchall()
     dated.sort(key=lambda r: (r[1], r[0]), reverse=True)
     keep = [r[0] for r in dated[:MAX_NODES]]
-    rows = conn.execute(
-        "SELECT id, agent_id, timestamp, content, embedding FROM memories "
-        f"WHERE id IN ({','.join('?' * len(keep))}) ORDER BY timestamp DESC, id DESC",
-        keep,
-    ).fetchall()
+    rows = []
+    # Batched like the ids above: undrawn by a cap, a group can hold thousands.
+    for at in range(0, len(keep), _ID_BATCH):
+        part = keep[at : at + _ID_BATCH]
+        rows += conn.execute(
+            "SELECT id, agent_id, timestamp, embedding FROM memories "
+            f"WHERE id IN ({','.join('?' * len(part))})",
+            part,
+        ).fetchall()
+    rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
     return _drawn(conn, rows, len(dated), view, **extra)
 
 
@@ -361,7 +382,7 @@ def around(conn, db_path: str, memory_id: int, hops: int = DEFAULT_HOPS) -> dict
             frontier_vecs = np.stack([_unit(got[i]) for i in frontier])
     marks = ",".join("?" * len(reached))
     rows = conn.execute(
-        f"SELECT id, agent_id, timestamp, content FROM memories WHERE id IN ({marks}) "
+        f"SELECT id, agent_id, timestamp FROM memories WHERE id IN ({marks}) "
         "ORDER BY timestamp DESC, id DESC",
         list(reached),
     ).fetchall()

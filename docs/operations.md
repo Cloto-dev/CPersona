@@ -537,14 +537,19 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   start of the memory nearest its centre; no model is called. Groups are joined
   to the three whose centres are nearest. Only vectors of the most common width
   are grouped, and a store with more than 20,000 of them is not grouped yet.
-  Selecting a point draws its own memories, the newest 800.
+  Selecting a point draws all of its own memories.
 - **The network** draws memories as points joined by three kinds of line, each
   of which can be hidden: relations an agent declared (entities a memory
   mentions, and relations between entities and memories); similar content, each
   memory to its 3 nearest memories by stored embedding at cosine 0.55 or more,
   which the server computes and no agent declared; and each agent to its
-  memories. A folder's view draws its newest 800 memories and says how many it
-  left out. "See it in the network" on a memory draws that memory and the
+  memories. A folder's view draws every memory in the folder, as a notes app
+  draws every note; the nearest neighbours are found 1,024 rows at a time, so the
+  similarities held at once grow with the folder rather than with its square, and
+  the page carries no memory text (a selected point fetches its own). Past 1,000
+  points the page sums the push between points by Barnes–Hut, shows the picture
+  after a short warm-up and lets it settle on screen, and starts with the lines
+  from agents to their memories hidden. "See it in the network" on a memory draws that memory and the
   memories reached from it in two nearest-neighbour steps across the whole
   store. Vectors are compared only with vectors of the same width, are held in
   the process serving the dashboard for up to five minutes while the store keeps the same

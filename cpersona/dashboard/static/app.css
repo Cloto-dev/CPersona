@@ -198,6 +198,7 @@
   .g-agent { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .g-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .g-card p { margin: 0 0 8px; }
+  .g-card .g-loading { color: var(--faint); }
   .g-near { color: var(--faint); font-size: 12px; margin-bottom: 10px; }
   .g-card .actions { margin: 0; }
   .g-hint { position: absolute; left: 16px; bottom: 16px; color: var(--faint); font-size: 12px; }

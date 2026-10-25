@@ -2,7 +2,8 @@
 
 The similar lines are pinned on vectors of known geometry (each memory to its K
 nearest at or above the floor, only within one vector width, never from a vector that
-cannot be compared), the folder view's cap on how many it draws, the "around" walk
+cannot be compared), the folder view drawing every memory unless capped (and the neighbour search giving
+the same pairs a block at a time), the "around" walk
 step by step (and that reading the vectors in chunks gives the same answer as holding
 them), the declared lines (mentions and relations, only between points that are
 shown), the cache seeing a new row at once, and the endpoint never sending a vector.
@@ -140,6 +141,58 @@ async def test_a_large_folder_draws_its_newest_and_says_how_many_it_left_out(db,
     conn.close()
     assert out["total"] == 5 and out["shown"] == 2
     assert {n["mem"] for n in out["nodes"] if n["kind"] == "memory"} == set(ids[-2:])
+
+
+@pytest.mark.asyncio
+async def test_a_folder_draws_every_memory_by_default(db):
+    ids = await _five(db)
+    conn = _open()
+    out = graph.folder(conn)
+    conn.close()
+    assert out["total"] == 5 and out["shown"] == 5 and out["max_nodes"] is None
+    assert {n["mem"] for n in out["nodes"] if n["kind"] == "memory"} == set(ids)
+
+
+def test_neighbours_found_a_block_at_a_time_match_one_block(monkeypatch):
+    # Row 0 is as similar to row 1 as to row 2 (0.8 each): the earlier row wins its
+    # one place, in every block size. Row 2 has a nearer neighbour of its own (row 5),
+    # so a line from 0 to 2 could only come from row 0's choice. Rows 3 to 5 sit in
+    # later blocks and must never be paired with themselves.
+    vecs = np.asarray(
+        [
+            [1, 0, 0, 0],
+            [0.8, 0.6, 0, 0],
+            [0.8, -0.6, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0.9, 0.436],
+            [0.75, -0.66, 0, 0],
+        ],
+        dtype=np.float32,
+    )
+    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+    ids = np.asarray([10, 11, 12, 13, 14, 15])
+    monkeypatch.setattr(graph, "K", 1)
+    answers = []
+    for block in (1, 2, 1024):
+        monkeypatch.setattr(graph, "NEIGHBOUR_BLOCK", block)
+        # Weights to five places: the product of one row and of many round differently
+        # in the last bits, and the page shows three.
+        answers.append({k: round(w, 5) for k, w in graph._nearest_within(ids, vecs).items()})
+    assert answers[0] == answers[1] == answers[2]
+    assert (10, 11) in answers[0] and (10, 12) not in answers[0]
+    assert all(a != b for a, b in answers[0])
+    assert (12, 15) in answers[0] and (13, 14) in answers[0]
+
+
+@pytest.mark.asyncio
+async def test_a_group_larger_than_one_batch_is_drawn_whole_and_newest_first(db, monkeypatch):
+    ids = await _five(db)
+    monkeypatch.setattr(graph, "_ID_BATCH", 2)
+    conn = _open()
+    out = graph.members(conn, ids, "cluster")
+    conn.close()
+    drawn = [n["mem"] for n in out["nodes"] if n["kind"] == "memory"]
+    assert out["shown"] == 5 and drawn == ids[::-1]
 
 
 @pytest.mark.asyncio

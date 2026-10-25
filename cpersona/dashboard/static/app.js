@@ -522,12 +522,16 @@ function loadLayout(key) {
   try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")[key]?.pos || null; } catch { return null; }
 }
 function saveLayout(key, nodes) {
+  const entry = { t: Date.now(), pos: Object.fromEntries(nodes.map(n => [n.id, [Math.round(n.x * 10) / 10, Math.round(n.y * 10) / 10]])) };
   try {
     const all = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
-    all[key] = { t: Date.now(), pos: Object.fromEntries(nodes.map(n => [n.id, [Math.round(n.x * 10) / 10, Math.round(n.y * 10) / 10]])) };
+    all[key] = entry;
     const keep = Object.keys(all).sort((a, b) => all[b].t - all[a].t).slice(0, LAYOUT_KEEP);
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(Object.fromEntries(keep.map(k => [k, all[k]]))));
-  } catch {}
+  } catch {
+    // Past the browser's quota (a picture of every memory is large): keep this one alone.
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ [key]: entry })); } catch {}
+  }
 }
 
 function stopGraph() {
@@ -543,6 +547,11 @@ function layerRow(kind, n, on = true) {
     <svg width="34" height="10" aria-hidden="true">${swatch}</svg>
     <span>${t("layer")[kind]}</span><span class="n">${esc(t("linesN")(n))}</span></label>`;
 }
+
+// The lines from each agent to its memories start hidden in the calm look, and in any
+// picture of more than a thousand points, where an agent of thousands turns them into a
+// burst that hides the rest; where a memory sits already says whose it is.
+const startsHidden = (k, G) => k === "structure" && (state.look === "calm" || (G.nodes || []).length > 1000);
 
 async function renderGraph() {
   const page = $("page");
@@ -585,7 +594,7 @@ async function renderGraph() {
     <div class="g-top">${head}</div>
     <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet">${t("display")}</button>
     <div class="g-panel g-set" id="gSet">
-      ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), state.look !== "calm" || k !== "structure")).join("") : ""}
+      ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), !startsHidden(k, G))).join("") : ""}
       ${G.nodes ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
     </div>
     <div class="g-panel g-card" id="gcard"></div>
@@ -633,7 +642,7 @@ function startGraph(G, lens) {
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   const pal = PALETTE[dark ? "dark" : "light"];
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !(state.look === "calm" && k === "structure")])),
+  const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !startsHidden(k, G)])),
     heat: 0, panV: null, hover: null, sel: null, drag: null, panning: null, W: 0, H: 0, DPR: 1 };
   const byId = new Map(G.nodes.map(n => [n.id, n]));
   const adj = new Map(G.nodes.map(n => [n.id, new Set()]));
@@ -694,7 +703,7 @@ function startGraph(G, lens) {
   const deg = new Map(G.nodes.map(n => [n.id, Math.max(1, adj.get(n.id).size)]));
   const charge = n => -90 * Math.max(1, radius(n) / 3);
   const LINK_LEN = { structure: 50, part: 30, near: 60, co: 45, declared: 35, similar: 35 };
-  function quadTree(N) {
+  function quadTree(N, chargeOf = charge) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of N) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); }
     const root = { x0, y0, s: Math.max(x1 - x0, y1 - y0, 1) + 1, kids: null, pts: [] };
@@ -714,29 +723,31 @@ function startGraph(G, lens) {
     const sum = q => {
       let m = 0, cx = 0, cy = 0;
       if (q.kids) for (const k of q.kids) { if (!k) continue; sum(k); m += k.m; cx += k.cx * k.m; cy += k.cy * k.m; }
-      else for (const n of q.pts) { const c = charge(n); m += c; cx += n.x * c; cy += n.y * c; }
+      else for (const n of q.pts) { const c = chargeOf(n); m += c; cx += n.x * c; cy += n.y * c; }
       q.m = m; q.cx = m ? cx / m : q.x0; q.cy = m ? cy / m : q.y0;
     };
     for (const n of N) insert(root, n, 0);
     sum(root);
     return root;
   }
-  function repel(q, n, alpha) {
+  // scale: how strongly n itself answers (the default layout's push grows with both
+  // points' sizes, the calm one's with the other point's only).
+  function repel(q, n, alpha, chargeOf = charge, scale = 1) {
     if (!q || !q.m) return;
     const dx = q.cx - n.x, dy = q.cy - n.y;
     let l = dx * dx + dy * dy;
     if (q.kids) {
-      if (q.s * q.s / 0.81 >= l) { for (const k of q.kids) repel(k, n, alpha); return; }
+      if (q.s * q.s / 0.81 >= l) { for (const k of q.kids) repel(k, n, alpha, chargeOf, scale); return; }
     } else {
       for (const o of q.pts) {
         if (o === n) continue;
-        const ex = o.x - n.x, ey = o.y - n.y, e = Math.max(1, ex * ex + ey * ey), c = charge(o);
+        const ex = o.x - n.x, ey = o.y - n.y, e = Math.max(1, ex * ex + ey * ey), c = chargeOf(o) * scale;
         n.vx += ex * c * alpha / e; n.vy += ey * c * alpha / e;
       }
       return;
     }
     if (l < 1) l = 1;
-    n.vx += dx * q.m * alpha / l; n.vy += dy * q.m * alpha / l;
+    n.vx += dx * q.m * scale * alpha / l; n.vy += dy * q.m * scale * alpha / l;
   }
   function calmTick(alpha, pin = false) {
     const N = G.nodes, tree = quadTree(N);
@@ -774,9 +785,15 @@ function startGraph(G, lens) {
   const SPRING = { structure: [46, 0.03], part: [36, 0.06], near: [70, 0.03], co: [60, 0.05], declared: [34, 0.08] };
 
   // pin: points seen before hold still, so only the new ones find their place.
+  // Past BH_FROM points the push is summed by Barnes–Hut instead of pair by pair: the
+  // same push, as a product of the two points' sizes, in n log n rather than n².
+  const BH_FROM = 1000;
+  const push = n => Math.sqrt(240) * (0.6 + radius(n) / 8);
+  const pushCharge = n => -push(n);
   function tick(alpha, friction = 0.6, pin = false) {
     const N = G.nodes;
-    for (let i = 0; i < N.length; i++) {
+    if (N.length > BH_FROM) { const tree = quadTree(N, pushCharge); for (const n of N) repel(tree, n, alpha, pushCharge, push(n)); }
+    else for (let i = 0; i < N.length; i++) {
       const a = N[i], ra = radius(a);
       for (let j = i + 1; j < N.length; j++) {
         const b = N[j], dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy + 0.01;
@@ -952,28 +969,51 @@ function startGraph(G, lens) {
     const lit = n => !focus || n === focus || near.has(n.id);
     const ink = star ? "170,200,255" : dark ? "255,255,255" : "0,0,0", accent = star ? "#ffd9ef" : css("--accent"), grey = star ? "#c9dcff" : dark ? "#bdbdbd" : "#8a8a8a";
     ctx.lineWidth = 0.9 / view.k;
+    // Lines go out in batches, one path per kind and strength step, so tens of
+    // thousands of lines cost a few dozen strokes; the lines of the point pointed at
+    // are drawn last, on their own.
+    const hot = new Path2D();
+    let anyHot = false;
     for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
       if (!s.show[kind]) continue;
+      const steps = new Map();
       for (const l of G.links) {
         if (l.kind !== kind) continue;
-        const on = focus && (l.a === focus || l.b === focus);
+        if (focus && (l.a === focus || l.b === focus)) { hot.moveTo(l.a.x, l.a.y); hot.lineTo(l.b.x, l.b.y); anyHot = true; continue; }
         // How similar two memories are shows as how strong their line is.
         let alpha = kind === "structure" ? 0.08 : kind === "declared" ? 0.55
           : kind === "similar" || kind === "near" ? 0.04 + 0.3 * Math.max(0, Math.min(1, (l.w - 0.55) / 0.35)) : 0.22;
-        if (on) alpha = 0.9; else if (focus) alpha *= 0.35;
-        ctx.globalAlpha = alpha;
-        ctx.strokeStyle = on || kind === "declared" ? accent : `rgb(${ink})`;
-        ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+        if (focus) alpha *= 0.35;
+        const step = Math.round(alpha * 50) / 50;
+        let path = steps.get(step);
+        if (!path) steps.set(step, path = new Path2D());
+        path.moveTo(l.a.x, l.a.y); path.lineTo(l.b.x, l.b.y);
       }
+      ctx.strokeStyle = kind === "declared" ? accent : `rgb(${ink})`;
+      for (const [alpha, path] of steps) { ctx.globalAlpha = Math.max(0.02, alpha); ctx.stroke(path); }
     }
+    if (anyHot) { ctx.globalAlpha = 0.9; ctx.strokeStyle = accent; ctx.stroke(hot); }
+    // Plain memory stars, the bulk of a large picture, are filled as two paths (lit and
+    // dimmed); the rest are drawn one by one.
+    const plainLit = new Path2D(), plainDim = new Path2D();
     for (const n of G.nodes) {
       const r = radius(n);
+      if (star && n.kind === "memory" && !s.byAgent && n !== focus && n !== s.sel && n.hop !== 0) {
+        const path = lit(n) ? plainLit : plainDim, rr = r * 0.7;
+        path.moveTo(n.x + rr, n.y); path.arc(n.x, n.y, rr, 0, Math.PI * 2);
+        continue;
+      }
       ctx.globalAlpha = lit(n) ? 1 : 0.18;
       ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       if (star) { drawStar(n, r, n === focus); continue; }
       if (n.kind === "entity") { ctx.fillStyle = css("--base"); ctx.fill(); ctx.lineWidth = 1.6 / view.k; ctx.strokeStyle = n === focus ? accent : grey; ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
       else { ctx.fillStyle = n === focus ? accent : s.byAgent ? tint(n) : grey; ctx.fill(); }
       if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
+    }
+    if (star) {
+      ctx.fillStyle = "#c7d6f2";
+      ctx.globalAlpha = 1; ctx.fill(plainLit);
+      ctx.globalAlpha = 0.18; ctx.fill(plainDim);
     }
     ctx.textAlign = "center"; ctx.textBaseline = "top";
     ctx.font = `400 ${11.5 / view.k}px ${star ? FONT : "system-ui, sans-serif"}`;
@@ -1006,7 +1046,8 @@ function startGraph(G, lens) {
     }
     if (s.heat > 0.004) {
       tick(s.heat, FRICTION); s.heat *= 0.985; moved = true;
-      if (s.heat <= 0.004) saveLayout(key, G.nodes); // still again: remember where it settled
+      if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.12; s.view.x += (v.x - s.view.x) * 0.12; s.view.y += (v.y - s.view.y) * 0.12; }
+      if (s.heat <= 0.004) { s.autoFit = false; saveLayout(key, G.nodes); } // still again: remember where it settled
     }
     if (s.panV && !s.panning) {
       s.view.x += s.panV.x; s.view.y += s.panV.y; s.panV.x *= 0.92; s.panV.y *= 0.92;
@@ -1045,11 +1086,19 @@ function startGraph(G, lens) {
       $("gGo")?.addEventListener("click", () => go({ view: "graph", entity: n.entity }));
     } else {
       card(`<div class="g-head"><span class="g-agent"><span class="g-dot"></span>${esc(n.agent)}</span><span>${esc(day(n.timestamp))} · mem:${n.mem}</span></div>
-        <p>${esc(n.snippet)}</p><div class="g-near">${esc(t("similarN")(n.deg))}</div>`,
+        <p id="gText" class="g-loading">…</p><div class="g-near">${esc(t("similarN")(n.deg))}</div>`,
         n.hop === 0 ? [["gOpen", t("openMemory")]] : [["gOpen", t("openMemory")], ["gCenter", t("centerHere")]]);
       el.querySelector(".g-dot").style.background = tint(n);
       $("gOpen").addEventListener("click", () => openDetail(n.mem).catch(fail));
       $("gCenter")?.addEventListener("click", () => go({ view: "graph", around: n.mem }));
+      // The picture carries no text, so a large one stays light; the card asks for it.
+      api("/api/memory", { id: n.mem }).then(m => {
+        const el = $("gText");
+        if (!el || s.sel !== n) return;
+        const text = m.content || "";
+        el.textContent = text.length > 280 ? text.slice(0, 280) + "…" : text;
+        el.classList.remove("g-loading");
+      }).catch(() => {});
     }
     draw();
   }
@@ -1109,6 +1158,9 @@ function startGraph(G, lens) {
   else if (kept < G.nodes.length) {
     const warm = Math.max(60, Math.min(400, Math.round(120000 / Math.max(1, G.nodes.length))));
     for (let i = 0; i < warm; i++) tick(1 - i / warm, 0.6, kept > 0);
+    // A large first view gets only a short warm-up before it is shown, then goes on
+    // settling on screen until it is still (and remembered then).
+    if (!kept && G.nodes.length > BH_FROM) { s.heat = 0.5; s.autoFit = true; }
   }
   if (!s.autoFit) saveLayout(key, G.nodes); // also marks this picture as recently opened
   fit();
