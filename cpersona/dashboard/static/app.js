@@ -665,7 +665,12 @@ function startGraph(G, lens) {
       const [len0, str0] = SPRING[l.kind] || [34, 0.05 + 0.1 * (l.w - 0.5)];
       const len = len0 + radius(l.a) + radius(l.b), str = str0;
       const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, d = Math.hypot(dx, dy) || 1, f = (d - len) / d * str * alpha;
-      l.a.vx += dx * f; l.a.vy += dy * f; l.b.vx -= dx * f; l.b.vy -= dy * f;
+      // The busier end yields: a point tied to hundreds of others would otherwise take
+      // the pull of every spring at once, overshoot, and fly apart. Ends with as many
+      // ties as each other pull as hard as before.
+      const ca = adj.get(l.a.id).size || 1, cb = adj.get(l.b.id).size || 1;
+      const fa = f * Math.min(1, 2 * cb / (ca + cb)), fb = f * Math.min(1, 2 * ca / (ca + cb));
+      l.a.vx += dx * fa; l.a.vy += dy * fa; l.b.vx -= dx * fb; l.b.vy -= dy * fb;
     }
     for (const n of N) {
       n.vx -= n.x * 0.002 * alpha; n.vy -= n.y * 0.002 * alpha;
