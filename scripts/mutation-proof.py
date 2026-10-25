@@ -6262,7 +6262,7 @@ MUTATIONS += [
         find='    key = db_path if scope is None else f"{db_path}#scope={scope.key}"\n',
         replace='    key = db_path\n',
         breaks="one viewer's groups (and their quotations) are served to another",
-        expect='test_dashboard_remote.py::test_computed_pictures_are_not_shared_across_viewers',
+        expect='test_dashboard_remote.py::test_two_viewers_whose_stores_look_alike_still_get_their_own_pictures',
     ),
     Mutation(
         id='M617',
