@@ -6,6 +6,8 @@ const T = {
     overview: "Overview", memories: "Memories", episodes: "Episodes", entities: "Entities", browse: "Browse",
     techAlways: "Always show details",
     calmDots: "Avoid clusters of dots", calmDotsHint: "Draws the network with lines, without bright clusters of dots.",
+    sideSearch: "Search", settings: "Settings", back: "Back", forward: "Forward", newTab: "New tab", closeTab: "Close tab",
+    searchHits: n => `${n} found`, searchMore: n => `${n} more: refine the words`,
     kbd: ["⌘K search", "/ find in list", "j/k move", "Enter open", "Esc close"],
     overviewLead: "How many memories are stored, and when they were stored.",
     nMemories: "memories", nEpisodes: "episodes", nEntities: "entities", nAgents: "agents",
@@ -83,6 +85,8 @@ const T = {
     overview: "概要", memories: "記憶", episodes: "エピソード", entities: "実体", browse: "たどる",
     techAlways: "詳細情報を常に開く",
     calmDots: "集合体回避モード", calmDotsHint: "点の集まりを目立たせず、線で描きます。",
+    sideSearch: "検索", settings: "設定", back: "戻る", forward: "進む", newTab: "新しいタブ", closeTab: "タブを閉じる",
+    searchHits: n => `${n} 件`, searchMore: n => `ほかに ${n} 件あります。語を足して絞ってください`,
     kbd: ["⌘K 検索", "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
     overviewLead: "保存されている記憶の件数と、保存された時期を確認できます。",
     nMemories: "件の記憶", nEpisodes: "件のエピソード", nEntities: "件の実体", nAgents: "エージェント",
@@ -255,7 +259,11 @@ let overviewData = null;
 function applyLang() {
   document.documentElement.lang = state.lang;
   for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.dataset.t);
-  for (const el of document.querySelectorAll("[data-title-t]")) el.title = t(el.dataset.titleT);
+  for (const el of document.querySelectorAll("[data-title-t]")) {
+    el.title = t(el.dataset.titleT);
+    if (el.tagName === "BUTTON") el.setAttribute("aria-label", t(el.dataset.titleT));
+  }
+  $("sideQ").placeholder = t("searchPh");
   for (const b of document.querySelectorAll("[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang));
   $("paletteInput").placeholder = t("palettePh");
   $("kbd").innerHTML = t("kbd").map(k => `<span>${esc(k)}</span>`).join("");
@@ -418,20 +426,26 @@ function spans(parts, total, kind) {
     aria-label="${esc(t(kind))} ${p.i + 1}"></button>`).join("");
 }
 
+// A memory opens in a tab of its own, as a note does in a notes app; a tab already
+// showing it is brought forward instead of opening another.
 async function openDetail(id) {
-  state.id = id;
-  saveHash();
-  for (const b of document.querySelectorAll(".row")) b.classList.toggle("sel", Number(b.dataset.id) === id);
+  const at = tabs.findIndex(tb => { const c = tb.hist[tb.pos]; return c.view === "memory" && c.id === id; });
+  if (at >= 0) return switchTab(at);
+  return openTab({ view: "memory", id, q: state.q });
+}
+
+async function renderDetail(id) {
   const m = await api("/api/memory", { id });
   let src = m.source;
   try { const s = JSON.parse(m.source); src = [s.type, s.name || s.id].filter(Boolean).join(" · "); } catch {}
   const total = Math.max(1, m.content.length);
   const nodes = m.nodes.map(n => ({ i: n.node_index, start: n.start_char, end: n.end_char }));
   const blocks = m.blocks.map(b => ({ i: b.block_index, start: b.start_char, end: b.end_char }));
-  const d = $("drawer");
-  d.innerHTML = `
-    <div class="top"><h2>${esc(day(m.timestamp))} · ${esc(m.agent_id)}</h2>
-      <button class="x" id="closeBtn" aria-label="${t("close")}">×</button></div>
+  memTitles[id] = `${day(m.timestamp)} · ${m.agent_id}`;
+  renderTabs();
+  const d = $("page");
+  d.innerHTML = `<article class="doc">
+    <div class="top"><h2>${esc(day(m.timestamp))} · ${esc(m.agent_id)}</h2></div>
     <dl class="facts-list">
       <dt>${t("when")}</dt><dd>${esc(when(m.timestamp))} UTC</dd>
       <dt>${t("who")}</dt><dd>${esc(m.agent_id)}</dd>
@@ -457,10 +471,8 @@ async function openDetail(id) {
         <dt>${t("ids")}</dt><dd>mem:${m.id}${m.msg_id ? " · " + esc(m.msg_id) : ""}</dd>
       </dl>
       <details><summary class="hint">${t("raw")}</summary><pre class="raw">${esc(JSON.stringify({ ...m, nodes: undefined, blocks: undefined }, null, 2))}</pre></details>
-    </details>`;
+    </details></article>`;
   sizes(d);
-  d.classList.add("open");
-  $("closeBtn").addEventListener("click", closeDetail);
   $("aroundBtn")?.addEventListener("click", () => go({ view: "graph", around: m.id }));
   $("copyRef").addEventListener("click", () => {
     navigator.clipboard?.writeText(`mem:${m.id}`);
@@ -487,9 +499,6 @@ async function openDetail(id) {
 }
 
 function closeDetail() {
-  state.id = 0;
-  saveHash();
-  $("drawer").classList.remove("open");
   for (const b of document.querySelectorAll(".row.sel")) b.classList.remove("sel");
 }
 
@@ -604,7 +613,7 @@ async function renderGraph() {
   const hint = t("graphHint").split(" · ").map(h => `<span>${h}</span>`).join("");
   page.innerHTML = calmLook ? `<div class="graph calm" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-top">${head}</div>
-    <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet">${t("display")}</button>
+    <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet" aria-label="${t("display")}" title="${t("display")}"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></button>
     <div class="g-panel g-set" id="gSet">
       ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), !startsHidden(k, G))).join("") : ""}
       ${G.nodes ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
@@ -1208,7 +1217,7 @@ async function fillPalette(text) {
     const res = await api("/api/memories", { q, limit: 8 });
     // Start the line just before the match, so the matched word is not cut off at the end.
     const near = s => { const i = s.toLowerCase().indexOf(q.toLowerCase()); return i > 30 ? "… " + s.slice(s.indexOf(" ", i - 30) + 1) : s; };
-    found = res.rows.map(r => ({ label: near(r.snippet), side: day(r.timestamp), q, run: () => go({ view: "memories", path: [], q, month: "" }).then(() => openDetail(r.id)) }));
+    found = res.rows.map(r => ({ label: near(r.snippet), side: day(r.timestamp), q, run: () => { state.q = q; return openDetail(r.id); } }));
   }
   palItems = [...found, ...cmds];
   palOn = 0;
@@ -1229,24 +1238,140 @@ function setLang(l) {
   applyLang();
   route().catch(fail);
 }
+// ---- Tabs, each with its own back and forward
+// A tab holds a history of places (what the hash names); moving within a tab adds to
+// its history, the arrows walk it, and a memory or a new tab opens beside the current.
+const PLACE = ["view", "path", "q", "month", "id", "around", "cluster", "entity", "lens"];
+const place = () => JSON.parse(JSON.stringify(Object.fromEntries(PLACE.map(k => [k, state[k]]))));
+let tabs = [], active = 0;
+const memTitles = {};
+const cur = () => tabs[active];
+function keepPlace() { if (cur()) cur().hist[cur().pos] = place(); }
+function saveTabs() {
+  try { sessionStorage.setItem("cp.tabs", JSON.stringify({ db: overviewData?.db, tabs, active })); } catch {}
+}
+function tabTitle(c) {
+  if (c.view === "memory") return memTitles[c.id] || `mem:${c.id}`;
+  if (c.view === "memories" && c.q) return `${t("sideSearch")}: ${c.q}`;
+  if ((c.view === "memories" || c.view === "graph") && (c.path || []).length) {
+    const i = c.path.length - 1;
+    return `${t(c.view)}: ${levelLabel(LEVELS[i], c.path[i])}`;
+  }
+  return t(c.view);
+}
+function renderTabs() {
+  const bar = $("tabbar");
+  bar.innerHTML = tabs.map((tb, i) => {
+    const c = tb.hist[tb.pos];
+    return `<div class="tab ${i === active ? "on" : ""}" role="tab" aria-selected="${i === active}" data-i="${i}" draggable="true">
+      <button class="tab-go" data-i="${i}" title="${esc(tabTitle(c))}">${esc(tabTitle(c))}</button>
+      <button class="tab-x" data-x="${i}" aria-label="${t("closeTab")}">×</button></div>`;
+  }).join("") + `<button class="tab-new" id="tabNew" aria-label="${t("newTab")}" title="${t("newTab")}">+</button>`;
+  for (const b of bar.querySelectorAll(".tab-go")) b.addEventListener("click", () => switchTab(Number(b.dataset.i)));
+  for (const b of bar.querySelectorAll(".tab-x")) b.addEventListener("click", () => closeTab(Number(b.dataset.x)));
+  for (const el of bar.querySelectorAll(".tab")) {
+    el.addEventListener("auxclick", e => { if (e.button === 1) closeTab(Number(el.dataset.i)); });
+    el.addEventListener("dragstart", e => e.dataTransfer.setData("text/plain", el.dataset.i));
+    el.addEventListener("dragover", e => e.preventDefault());
+    el.addEventListener("drop", e => {
+      e.preventDefault();
+      const from = Number(e.dataTransfer.getData("text/plain")), to = Number(el.dataset.i);
+      if (from === to || Number.isNaN(from)) return;
+      const keep = tabs[active];
+      tabs.splice(to, 0, tabs.splice(from, 1)[0]);
+      active = tabs.indexOf(keep);
+      renderTabs(); saveTabs();
+    });
+  }
+  $("tabNew").addEventListener("click", () => openTab({ view: "overview" }));
+  const c = cur()?.hist[cur().pos];
+  $("navTitle").textContent = c ? tabTitle(c) : "";
+  $("backBtnTab").disabled = !cur() || cur().pos === 0;
+  $("fwdBtnTab").disabled = !cur() || cur().pos >= cur().hist.length - 1;
+}
+function show(c) {
+  Object.assign(state, { path: [], q: "", month: "", id: 0, around: 0, cluster: 0, entity: 0 }, JSON.parse(JSON.stringify(c)));
+  return route().catch(fail);
+}
+function switchTab(i) { keepPlace(); active = i; return show(cur().hist[cur().pos]); }
+function openTab(c) {
+  keepPlace();
+  tabs.splice(active + 1, 0, { hist: [{ ...place(), ...c }], pos: 0 });
+  active += 1;
+  return show(cur().hist[0]);
+}
+function closeTab(i) {
+  keepPlace();
+  if (tabs.length === 1) { tabs = [{ hist: [{ ...place(), view: "overview", id: 0 }], pos: 0 }]; active = 0; return show(cur().hist[0]); }
+  tabs.splice(i, 1);
+  if (active > i || active >= tabs.length) active = Math.max(0, active - 1);
+  return show(cur().hist[cur().pos]);
+}
+function step(d) {
+  const tb = cur(), to = tb.pos + d;
+  if (to < 0 || to >= tb.hist.length) return;
+  keepPlace(); tb.pos = to;
+  return show(tb.hist[to]);
+}
+
 // A move that does not name what to center on leaves the "around", group and entity views.
-function go(next) { Object.assign(state, { around: 0, cluster: 0, entity: 0 }, next); closeDetail(); return route().catch(fail); }
+function go(next) {
+  keepPlace();
+  Object.assign(state, { around: 0, cluster: 0, entity: 0, id: 0 }, next);
+  const tb = cur();
+  if (tb) { tb.hist = tb.hist.slice(0, tb.pos + 1); tb.hist.push(place()); tb.pos = tb.hist.length - 1; }
+  closeDetail();
+  return route().catch(fail);
+}
 async function route() {
   for (const b of document.querySelectorAll(".nav")) {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
   saveHash();
+  keepPlace();
+  renderTabs();
+  saveTabs();
   renderTree().catch(() => {});
   stopGraph();
+  $("main").classList.toggle("is-doc", state.view === "memory");
   if (state.view === "overview") renderOverview();
   else if (state.view === "memories") await renderMemories();
   else if (state.view === "graph") await renderGraph();
+  else if (state.view === "memory") await renderDetail(state.id);
   else renderOther(state.view);
+}
+
+// ---- Side panel: the directory, or a search of memory text
+let sideTimer;
+function sideShow(which) {
+  for (const b of document.querySelectorAll(".st")) b.setAttribute("aria-selected", String(b.dataset.side === which));
+  $("sideTree").hidden = which !== "tree";
+  $("sideSearch").hidden = which !== "search";
+  if (which === "search") $("sideQ").focus();
+}
+async function sideSearch(q) {
+  const out = $("sideResults");
+  if (q.length < 2) { out.innerHTML = ""; return; }
+  const res = await api("/api/memories", { q, limit: 50 });
+  out.innerHTML = `<div class="hint">${esc(t("searchHits")(res.total))}</div>` + res.rows.map(r =>
+    `<button class="hit" data-id="${r.id}"><span class="hit-t">${mark(r.snippet, q)}</span><span class="hit-s">${esc(day(r.timestamp))} · ${esc(r.agent_id)}</span></button>`).join("") +
+    (res.total > res.rows.length ? `<div class="hint">${esc(t("searchMore")(res.total - res.rows.length))}</div>` : "");
+  for (const b of out.querySelectorAll(".hit")) b.addEventListener("click", () => { state.q = q; openDetail(Number(b.dataset.id)).catch(fail); });
 }
 
 function wire() {
   for (const b of document.querySelectorAll(".nav")) b.addEventListener("click", () => go({ view: b.dataset.view, path: [], q: "", month: "" }));
+  for (const b of document.querySelectorAll(".st")) b.addEventListener("click", () => sideShow(b.dataset.side));
+  $("sideQ").addEventListener("input", e => { clearTimeout(sideTimer); sideTimer = setTimeout(() => sideSearch(e.target.value.trim()).catch(() => {}), 200); });
+  $("backBtnTab").addEventListener("click", () => step(-1));
+  $("fwdBtnTab").addEventListener("click", () => step(1));
+  $("paletteBtn").addEventListener("click", () => openPalette());
+  $("setBtn").addEventListener("click", () => {
+    const open = $("settings").hidden;
+    $("settings").hidden = !open;
+    $("setBtn").setAttribute("aria-expanded", String(open));
+  });
   for (const b of document.querySelectorAll("[data-lang]")) b.addEventListener("click", () => setLang(b.dataset.lang));
   const calm = $("calmDots");
   calm.checked = calmDots;
@@ -1269,17 +1394,21 @@ function wire() {
   });
   $("paletteBg").addEventListener("click", e => { if (e.target.id === "paletteBg") closePalette(); });
   document.addEventListener("keydown", e => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
-    if (e.key === "Escape") { closePalette(); closeDetail(); return; }
+    // ⌘K, and ⌘O / ⌘P as in a notes app, all open the same search.
+    if ((e.metaKey || e.ctrlKey) && ["k", "o", "p"].includes(e.key.toLowerCase())) { e.preventDefault(); openPalette(); return; }
+    if ((e.altKey) && e.key === "ArrowLeft") { e.preventDefault(); step(-1); return; }
+    if ((e.altKey) && e.key === "ArrowRight") { e.preventDefault(); step(1); return; }
+    if (e.key === "Escape") { closePalette(); if (!$("settings").hidden) $("setBtn").click(); return; }
     if (e.target.matches("input, textarea")) return;
     if (e.key === "/") { e.preventDefault(); $("q")?.focus(); }
     if (e.key === "j" || e.key === "k") {
       const rows = [...document.querySelectorAll(".row")];
       if (!rows.length) return;
       const i = rows.findIndex(r => r.classList.contains("sel"));
+      // j / k move the selection; Enter opens it in a tab.
       const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "j" ? 1 : -1)))];
+      for (const r of rows) r.classList.toggle("sel", r === next);
       next.focus();
-      next.click();
     }
   });
 }
@@ -1296,7 +1425,18 @@ function wire() {
   $("dbname").textContent = overviewData.db;
   for (const k of ["memories", "episodes", "entities"]) $("n-" + k).textContent = overviewData.counts[k].toLocaleString();
   applyLang();
-  await route().catch(fail);
-  if (state.id) await openDetail(state.id).catch(fail);
+  // Tabs come back from this browser session for the same database; the place the
+  // link names is shown in the active one.
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("cp.tabs") || "null");
+    if (saved && saved.db === overviewData.db && saved.tabs?.length) { tabs = saved.tabs; active = Math.min(saved.active, tabs.length - 1); }
+  } catch {}
+  const named = place(), openMemory = named.id && named.view !== "memory" ? named.id : 0;
+  if (openMemory) named.id = 0;
+  if (!tabs.length) tabs = [{ hist: [named], pos: 0 }];
+  else if (H0.get("view")) { tabs[active].hist = tabs[active].hist.slice(0, tabs[active].pos + 1); tabs[active].hist.push(named); tabs[active].pos = tabs[active].hist.length - 1; }
+  sideShow("tree");
+  await show(cur().hist[cur().pos]);
+  if (openMemory) await openDetail(openMemory).catch(fail);
   if (H0.get("palette") === "1") openPalette(H0.get("pq") || "");
 })();
