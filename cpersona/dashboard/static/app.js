@@ -5,6 +5,7 @@ const T = {
   en: {
     overview: "Overview", memories: "Memories", episodes: "Episodes", entities: "Entities", browse: "Browse",
     techAlways: "Always show details",
+    calmDots: "Avoid clusters of dots", calmDotsHint: "Draws the network with lines, without bright clusters of dots.",
     kbd: ["⌘K search", "/ find in list", "j/k move", "Enter open", "Esc close"],
     overviewLead: "How many memories are stored, and when they were stored.",
     nMemories: "memories", nEpisodes: "episodes", nEntities: "entities", nAgents: "agents",
@@ -81,6 +82,7 @@ const T = {
   ja: {
     overview: "概要", memories: "記憶", episodes: "エピソード", entities: "実体", browse: "たどる",
     techAlways: "詳細情報を常に開く",
+    calmDots: "集合体回避モード", calmDotsHint: "点の集まりを目立たせず、線で描きます。",
     kbd: ["⌘K 検索", "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
     overviewLead: "保存されている記憶の件数と、保存された時期を確認できます。",
     nMemories: "件の記憶", nEpisodes: "件のエピソード", nEntities: "件の実体", nAgents: "エージェント",
@@ -184,6 +186,11 @@ if (state.look && H0.get("lens") === "memories" || state.look === "star" && !H0.
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
 try { state.lang = localStorage.getItem("cp.lang") || (navigator.language || "").startsWith("ja") && "ja" || "en"; } catch {}
 if (H0.get("lang")) state.lang = H0.get("lang");
+// Avoid clusters of dots: dense fields of bright dots can be distressing to look at, so
+// this draws the network with its lines as the subject instead. Kept in this browser.
+let calmDots = false;
+try { calmDots = localStorage.getItem("cp.calmDots") === "1"; } catch {}
+if (H0.get("calm") === "1") calmDots = true;
 let techAlways = false;
 try { techAlways = localStorage.getItem("cp.tech") === "1"; } catch {}
 if (H0.get("tech") === "1") techAlways = true;
@@ -251,6 +258,7 @@ let overviewData = null;
 function applyLang() {
   document.documentElement.lang = state.lang;
   for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.dataset.t);
+  for (const el of document.querySelectorAll("[data-title-t]")) el.title = t(el.dataset.titleT);
   for (const b of document.querySelectorAll("[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang));
   $("paletteInput").placeholder = t("palettePh");
   $("kbd").innerHTML = t("kbd").map(k => `<span>${esc(k)}</span>`).join("");
@@ -1013,7 +1021,9 @@ function startGraph(G, lens) {
     const hot = new Path2D();
     let anyHot = false;
     // exp: in a large picture the points are the subject and the lines a faint web.
-    const bold = !!state.exp && G.nodes.length > 1000;
+    // Bright points over the web (the chosen look) in a large picture, unless clusters
+    // of dots are to be avoided; exp=1 / 123 also fade the web.
+    const bold = !calmDots && (!!state.exp || state.look === "star") && G.nodes.length > 1000;
     for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
       if (!s.show[kind]) continue;
       const steps = new Map();
@@ -1024,7 +1034,7 @@ function startGraph(G, lens) {
         let alpha = kind === "structure" ? 0.08 : kind === "declared" ? 0.55
           : kind === "similar" || kind === "near" ? 0.04 + 0.3 * Math.max(0, Math.min(1, (l.w - 0.55) / 0.35)) : 0.22;
         if (focus) alpha *= 0.35;
-        if (bold && state.exp !== "mix") alpha *= 0.3; // mix keeps the web as it was, with the points of exp=1
+        if (bold && (state.exp === "1" || state.exp === "123")) alpha *= 0.3;
         const step = Math.round(alpha * 100) / 100;
         let path = steps.get(step);
         if (!path) steps.set(step, path = new Path2D());
@@ -1270,6 +1280,13 @@ async function route() {
 function wire() {
   for (const b of document.querySelectorAll(".nav")) b.addEventListener("click", () => go({ view: b.dataset.view, path: [], q: "", month: "" }));
   for (const b of document.querySelectorAll("[data-lang]")) b.addEventListener("click", () => setLang(b.dataset.lang));
+  const calm = $("calmDots");
+  calm.checked = calmDots;
+  calm.addEventListener("change", () => {
+    calmDots = calm.checked;
+    try { localStorage.setItem("cp.calmDots", calmDots ? "1" : "0"); } catch {}
+    if (state.view === "graph") route().catch(fail);
+  });
   const tech = $("techAlways");
   tech.checked = techAlways;
   tech.addEventListener("change", () => {
