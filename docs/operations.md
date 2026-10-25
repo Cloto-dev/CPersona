@@ -550,11 +550,24 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   requests carrying it, only for a Host header naming the loopback address, and
   only to GET. Another user of the same machine can reach the port but not the
   data. `--no-browser` prints the address without opening it.
-- **The whole picture** is what the network opens on. A store of thousands of
-  memories cannot be drawn a point per memory, so it draws groups, through one of
-  three lenses. *Folders* (the default) makes each agent, project, channel and
-  month a point as large as the memories it holds; past 1,500 points the months
-  are left out. *Entities* makes each declared entity a point as large as the
+- **How it is laid out**: a column of icons on the left (overview, memories,
+  network, episodes, entities), a side panel that browses the logical directory or
+  searches, and tabs. Each memory opens in a tab of its own, and each tab has its
+  own back and forward (Alt+← / Alt+→). Ctrl or ⌘ with K, O or P opens the command
+  palette. The settings at the foot of the side panel are kept in the browser.
+- **Search**, in the side panel, finds memories whose text holds every word typed,
+  and shows the lines that matched. `"a phrase"` matches as written and `-word`
+  leaves out memories holding the word. `path:` matches agent/project/channel,
+  `agent:` the agent, `tag:` an entity's name or alias that the memory mentions,
+  `line:` words that must share a line, and `month:` the start of the timestamp
+  (`month:2026-10`). `[locked]`, `[recalled]` and `[vector]` keep memories that
+  are locked, have been recalled, or hold a vector; `[project:x]` and
+  `[channel:x]` keep that exact project or channel. Aa matches case, and the
+  panel's own settings sort the results by newest, oldest or most recalled.
+- **The network opens on every memory**, each a point, as a notes app's graph
+  view draws every note (the next item but one). Three other lenses draw groups
+  instead. *Folders* makes each agent, project, channel and month a point as
+  large as the memories it holds; past 1,500 points the months are left out. *Entities* makes each declared entity a point as large as the
   memories that mention it, joined by declared relations and by being mentioned
   in the same memory. *Similar groups* sorts the memories by their stored vectors
   with seeded spherical k-means (about √(n/2) groups, the best of four starts,
@@ -563,7 +576,16 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   to the three whose centres are nearest. Only vectors of the most common width
   are grouped, and a store with more than 20,000 of them is not grouped yet.
   Selecting a point draws all of its own memories.
-- **The network** draws memories as points joined by three kinds of line, each
+- **How it looks**: on a dark ground, memories are small plain dots and each
+  agent is a flat dot carrying a figure (stripes, a crescent, a ring, dots or
+  quarters) chosen from its id, so the same agent looks the same on every load.
+  Colour marks only the point pointed at and its lines, or every agent when
+  *Colour by agent* is on. Agents are always named; other names appear as the
+  view comes closer. In a picture of
+  more than 1,000 points the dots are drawn brighter over the lines. The setting
+  *Avoid clusters of dots* draws them small and faint instead, with the lines as
+  the subject, for people who find dense fields of dots unpleasant to look at.
+- **The memories** are drawn as points joined by three kinds of line, each
   of which can be hidden: relations an agent declared (entities a memory
   mentions, and relations between entities and memories); similar content, each
   memory to its 3 nearest memories by stored embedding at cosine 0.55 or more,

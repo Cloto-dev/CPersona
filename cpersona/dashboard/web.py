@@ -109,11 +109,7 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
                 if out is None:
                     return _err(404, "No entity with that id.")
             elif route == "/api/graph":
-                out = graph.folder(
-                    conn, path, q.get("month", ""),
-                    # Prototype switches, for comparing the picture's shape.
-                    mutual=q.get("mutual") == "1", hubs=q.get("hubs") == "1",
-                )
+                out = graph.folder(conn, path, q.get("month", ""))
             elif route == "/api/map":
                 lens = q.get("lens", "tree")
                 if lens == "tree":

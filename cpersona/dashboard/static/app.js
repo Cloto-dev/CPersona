@@ -188,17 +188,12 @@ try {
   else token = sessionStorage.getItem("cp.token") || "";
 } catch {}
 
-const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lens: "tree", lang: "en", look: "" };
+const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lens: "memories", lang: "en" };
 for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
-if (["tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
-if (["calm", "star"].includes(H0.get("look"))) state.look = H0.get("look"); // prototype looks, for comparison
-// Prototype: exp=1 makes the points the subject of a large picture; exp=123 also puts
-// projects between agents and memories and keeps only mutual neighbours.
-state.exp = ["1", "123", "mix"].includes(H0.get("exp")) ? H0.get("exp") : "";
-// Prototype: every memory at once, as first drawn; the constellation look opens on it.
-if (state.look && H0.get("lens") === "memories" || state.look === "star" && !H0.get("lens")) state.lens = "memories";
+// The network opens on every memory at once; the other lenses draw groups of them.
+if (["memories", "tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
 try { state.lang = localStorage.getItem("cp.lang") || (navigator.language || "").startsWith("ja") && "ja" || "en"; } catch {}
 if (H0.get("lang")) state.lang = H0.get("lang");
@@ -253,9 +248,7 @@ function saveHash() {
   if (state.month) h.set("month", state.month);
   if (state.id) h.set("id", state.id);
   for (const k of ["around", "cluster", "entity"]) if (state[k]) h.set(k, state[k]);
-  if (state.lens !== "tree" || state.look === "star") h.set("lens", state.lens);
-  if (state.look) h.set("look", state.look);
-  if (state.exp) h.set("exp", state.exp);
+  if (state.lens !== "memories") h.set("lens", state.lens);
   history.replaceState(null, "", "#" + h);
 }
 
@@ -433,7 +426,7 @@ function renderOther(kind) {
     : `<h1>${t(kind)}</h1><div class="empty"><h2>${t(E[0])}</h2><p>${t(E[1])}</p><p class="hint">${t("tryAsk")}</p><div class="say">${t(E[2])}</div></div>`;
 }
 
-// ---- Detail drawer
+// ---- A memory in full
 // Each part sits where its characters are in the text, so the bar never grows past
 // its width however many parts there are.
 function spans(parts, total, kind) {
@@ -553,7 +546,7 @@ function layoutKey() {
   const where = state.around ? `a:${state.around}` : state.cluster ? `c:${state.cluster}`
     : state.entity ? `e:${state.entity}` : state.path.length || state.month ? `f:${JSON.stringify(state.path)}:${state.month}`
     : `map:${state.lens}`;
-  return `${overviewData.db}|${where}${state.look ? "|" + state.look : ""}${state.exp ? "|x" + state.exp : ""}`;
+  return `${overviewData.db}|${where}`;
 }
 function loadLayout(key) {
   try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")[key]?.pos || null; } catch { return null; }
@@ -585,10 +578,10 @@ function layerRow(kind, n, on = true) {
     <span>${t("layer")[kind]}</span><span class="n">${esc(t("linesN")(n))}</span></label>`;
 }
 
-// The lines from each agent to its memories start hidden in the calm look, and in any
-// picture of more than a thousand points, where an agent of thousands turns them into a
-// burst that hides the rest; where a memory sits already says whose it is.
-const startsHidden = (k, G) => k === "structure" && (state.look === "calm" || (G.nodes || []).length > 1000);
+// The lines from each agent to its memories start hidden in any picture of more than a
+// thousand points, where an agent of thousands turns them into a burst that hides the
+// rest; where a memory sits already says whose it is.
+const startsHidden = (k, G) => k === "structure" && (G.nodes || []).length > 1000;
 
 async function renderGraph() {
   const page = $("page");
@@ -598,7 +591,7 @@ async function renderGraph() {
   const G = state.around ? await api("/api/graph", { around: state.around })
     : state.cluster ? await api("/api/graph", { cluster_of: state.cluster })
     : state.entity ? await api("/api/graph", { entity: state.entity })
-    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month, ...(state.exp === "123" ? { hubs: "1", mutual: "1" } : {}) })
+    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month })
     : await api("/api/map", { lens: state.lens });
   const lens = memoryView || allMemories ? "memories" : G.lens;
   const back = `<div class="crumbs"><button id="backBtn">${t("backToMap")}</button></div>`;
@@ -610,7 +603,7 @@ async function renderGraph() {
   else if (state.entity) head = `<h1>${esc(t("entityTitle")(G.label))}</h1><p class="lead">${shown}</p>${back}`;
   else if (memoryView) head = `<h1>${t("graph")}</h1><p class="lead">${t("graphLead")}<br>${shown}</p>${back}`;
   else {
-    const seg = [...(state.look ? ["memories"] : []), "tree", "entities", "clusters"].map(l =>
+    const seg = ["memories", "tree", "entities", "clusters"].map(l =>
       `<button data-lens="${l}" aria-pressed="${l === lens}">${t("lens")[l]}</button>`).join("");
     let lead = t("lensLead")[lens];
     if (allMemories) lead += `<br>${shown}`;
@@ -620,14 +613,12 @@ async function renderGraph() {
   }
   const count = k => G.links ? G.links.filter(l => l.kind === k).length : 0;
   const note = t("layerNote")[lens];
-  // Prototype (look=calm): the picture takes the whole pane; what to show sits behind
-  // a button at the top right, as in a notes app's graph view.
-  const calmLook = !!state.look;
-  // What the lines mean stays on screen, beside the picture, in every look.
+  // The picture takes the whole pane; what to show sits behind the gear at the top
+  // right, as in a notes app's graph view, and what the lines mean stays on screen.
   const keyRows = G.nodes ? LAYERS[lens].filter(k => count(k)).map(k =>
     `<div class="k-row"><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" class="k-${k}"/></svg><span>${t("layer")[k]}</span></div>`).join("") : "";
   const hint = t("graphHint").split(" · ").map(h => `<span>${h}</span>`).join("");
-  page.innerHTML = calmLook ? `<div class="graph calm" id="graphWrap"><canvas id="gc"></canvas>
+  page.innerHTML = `<div class="graph whole" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-top">${head}</div>
     <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet" aria-label="${t("display")}" title="${t("display")}"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></button>
     <div class="g-panel g-set" id="gSet">
@@ -636,18 +627,10 @@ async function renderGraph() {
     </div>
     <div class="g-panel g-card" id="gcard"></div>
     ${keyRows ? `<div class="g-key">${keyRows}${note ? `<p>${note}</p>` : ""}</div>` : ""}
-    <div class="g-hint">${hint}</div></div>` : `<div class="graph" id="graphWrap"><canvas id="gc"></canvas>
-    <div class="g-panel g-legend">${head}
-      ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k))).join("") : ""}
-      ${note ? `<div class="g-note">${note}</div>` : ""}
-    </div>
-    <div class="g-panel g-card" id="gcard"></div>
     <div class="g-hint">${hint}</div></div>`;
-  if (calmLook) {
-    const lead = page.querySelector(".g-top .lead");
-    if (lead) $("gSet").prepend(lead);
-    $("gGear").addEventListener("click", () => { const open = $("gSet").classList.toggle("open"); $("gGear").setAttribute("aria-expanded", open); });
-  }
+  const lead = page.querySelector(".g-top .lead");
+  if (lead) $("gSet").prepend(lead);
+  $("gGear").addEventListener("click", () => { const open = $("gSet").classList.toggle("open"); $("gGear").setAttribute("aria-expanded", open); });
   $("backBtn")?.addEventListener("click", () => go({ view: "graph", path: [], month: "" }));
   for (const b of page.querySelectorAll("[data-lens]")) b.addEventListener("click", () => go({ view: "graph", path: [], month: "", lens: b.dataset.lens }));
   // A lens with nothing to draw says why, instead of an empty canvas.
@@ -698,10 +681,8 @@ function startGraph(G, lens) {
     else if (n.kind === "project") n.name = n.label || t("global");
     else n.name = n.label;
   }
-  // The calm look draws small, nearly even dots, a little larger the more they hold.
-  const calmR = n => hub(n) ? (state.look === "star" ? 5.5 : 4.5) : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
-  const radius = n => state.look ? calmR(n) : n.count != null ? 4 + 16 * Math.sqrt(n.count / maxCount)
-    : n.kind === "agent" ? 7 : n.kind === "entity" ? 5 : 2.4 + Math.min(n.deg, 8) * 0.45 + (n.hop === 0 ? 2 : 0);
+  // Small, nearly even dots, a little larger the more they hold.
+  const radius = n => hub(n) ? 5.5 : n.count != null ? 2.6 + 2.4 * Math.sqrt(n.count / maxCount) : 2.4 + Math.min(2, Math.sqrt(adj.get(n.id).size) * 0.45) + (n.hop === 0 ? 1 : 0);
   const hub = n => n.kind === "agent" || n.kind === "group" && n.level === "agent";
   // A point seen before starts where it was left. A new one starts beside the seen
   // points it is tied to, or else near its agent's angle (around a memory, by step),
@@ -726,22 +707,8 @@ function startGraph(G, lens) {
   }
   const kept = G.nodes.filter(n => n.kept).length;
 
-  // ---- Prototype: the calm look (look=calm), for comparison with the default.
-  // Forces in the manner of d3-force: many-body repulsion by Barnes–Hut (θ = 0.9, no
-  // distance cut-off), springs that yield at the busier end, collision, and a pull to
-  // the centre, so the graph settles into one round body. A first view starts on a
-  // sunflower spiral and is shown blooming out of it.
-  // The constellation look keeps the first layout (each agent's memories gathered
-  // round it); only the calm look uses the forces below.
-  const calm = !!state.look, star = state.look === "star", calmPhysics = state.look === "calm";
-  if (calmPhysics && !kept) G.nodes.forEach((n, i) => {
-    const r = 10 * Math.sqrt(0.5 + i), a = i * Math.PI * (3 - Math.sqrt(5));
-    n.x = r * Math.cos(a); n.y = r * Math.sin(a);
-  });
-  const deg = new Map(G.nodes.map(n => [n.id, Math.max(1, adj.get(n.id).size)]));
-  const charge = n => -90 * Math.max(1, radius(n) / 3);
-  const LINK_LEN = { structure: 50, part: 30, near: 60, co: 45, declared: 35, similar: 35 };
-  function quadTree(N, chargeOf = charge) {
+  // Many-body push by Barnes–Hut (θ = 0.9): a cell far enough away pushes as one point.
+  function quadTree(N, chargeOf) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of N) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); }
     const root = { x0, y0, s: Math.max(x1 - x0, y1 - y0, 1) + 1, kids: null, pts: [] };
@@ -768,9 +735,8 @@ function startGraph(G, lens) {
     sum(root);
     return root;
   }
-  // scale: how strongly n itself answers (the default layout's push grows with both
-  // points' sizes, the calm one's with the other point's only).
-  function repel(q, n, alpha, chargeOf = charge, scale = 1) {
+  // scale: how strongly n itself answers; the push grows with both points' sizes.
+  function repel(q, n, alpha, chargeOf, scale) {
     if (!q || !q.m) return;
     const dx = q.cx - n.x, dy = q.cy - n.y;
     let l = dx * dx + dy * dy;
@@ -787,39 +753,7 @@ function startGraph(G, lens) {
     if (l < 1) l = 1;
     n.vx += dx * q.m * scale * alpha / l; n.vy += dy * q.m * scale * alpha / l;
   }
-  function calmTick(alpha, pin = false) {
-    const N = G.nodes, tree = quadTree(N);
-    for (const n of N) repel(tree, n, alpha);
-    for (const l of G.links) {
-      const a = l.a, b = l.b, ca = deg.get(a.id), cb = deg.get(b.id);
-      const dist = (LINK_LEN[l.kind] ?? 30) + radius(a) + radius(b), bias = ca / (ca + cb);
-      let dx = b.x + b.vx - a.x - a.vx, dy = b.y + b.vy - a.y - a.vy;
-      const d = Math.hypot(dx, dy) || 1e-6, k = (d - dist) / d * alpha / Math.min(ca, cb);
-      dx *= k; dy *= k;
-      b.vx -= dx * bias; b.vy -= dy * bias; a.vx += dx * (1 - bias); a.vy += dy * (1 - bias);
-    }
-    // Collision on a grid of cells as wide as the largest pair can reach.
-    const maxR = Math.max(...N.map(radius)) + 2, cell = maxR * 2, grid = new Map();
-    N.forEach((n, i) => { const key = `${Math.floor(n.x / cell)},${Math.floor(n.y / cell)}`; (grid.get(key) || grid.set(key, []).get(key)).push(i); });
-    N.forEach((a, i) => {
-      const gx = Math.floor(a.x / cell), gy = Math.floor(a.y / cell), ra = radius(a);
-      for (let u = -1; u <= 1; u++) for (let v = -1; v <= 1; v++) for (const j of grid.get(`${gx + u},${gy + v}`) || []) {
-        if (j <= i) continue;
-        const b = N[j], rb = radius(b), R = ra + rb + 2;
-        let dx = b.x + b.vx - a.x - a.vx, dy = b.y + b.vy - a.y - a.vy, d = Math.hypot(dx, dy);
-        if (d >= R) continue;
-        if (!d) { dx = 0.01 * (hash01(a.id + b.id) - 0.5); dy = 0.01; d = Math.hypot(dx, dy); }
-        const k = (R - d) / d * 0.7, wa = rb * rb / (ra * ra + rb * rb);
-        a.vx -= dx * k * wa; a.vy -= dy * k * wa; b.vx += dx * k * (1 - wa); b.vy += dy * k * (1 - wa);
-      }
-    });
-    for (const n of N) {
-      n.vx -= n.x * 0.05 * alpha; n.vy -= n.y * 0.05 * alpha;
-      if (n === s.drag || pin && n.kept) { n.vx = n.vy = 0; continue; }
-      n.vx *= 0.6; n.vy *= 0.6; n.x += n.vx; n.y += n.vy;
-    }
-  }
-  s.alpha = 0; s.alphaTarget = 0; s.autoFit = false; s.byAgent = false;
+  s.autoFit = false; s.byAgent = false;
   const SPRING = { structure: [46, 0.03], part: [36, 0.06], near: [70, 0.03], co: [60, 0.05], declared: [34, 0.08] };
 
   // pin: points seen before hold still, so only the new ones find their place.
@@ -843,8 +777,7 @@ function startGraph(G, lens) {
       }
     }
     for (const l of G.links) {
-      // exp=123: a project holds its memories tightly, as an index note holds its notes.
-      const [len0, str0] = state.exp === "123" && l.kind === "structure" ? [20, 0.2] : SPRING[l.kind] || [34, 0.05 + 0.1 * (l.w - 0.5)];
+      const [len0, str0] = SPRING[l.kind] || [34, 0.05 + 0.1 * (l.w - 0.5)];
       const len = len0 + radius(l.a) + radius(l.b), str = str0;
       const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, d = Math.hypot(dx, dy) || 1, f = (d - len) / d * str * alpha;
       // The busier end yields: a point tied to hundreds of others would otherwise take
@@ -873,69 +806,14 @@ function startGraph(G, lens) {
   function fitView() {
     const xs = G.nodes.map(n => n.x), ys = G.nodes.map(n => n.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    const k = Math.min(calmPhysics ? 1.3 : 2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
+    const k = Math.min(2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
     return { k, x: s.W / 2 - (minX + maxX) / 2 * k, y: s.H / 2 - (minY + maxY) / 2 * k };
   }
   function fit() { Object.assign(s.view, fitView()); }
 
-  function draw() {
-    if (calm) return drawCalm();
-    const { view } = s;
-    ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
-    ctx.fillStyle = css("--base"); ctx.fillRect(0, 0, s.W, s.H);
-    ctx.setTransform(s.DPR * view.k, 0, 0, s.DPR * view.k, s.DPR * view.x, s.DPR * view.y);
-    const focus = s.hover || s.sel, near = focus ? adj.get(focus.id) : null;
-    const lit = n => !focus || n === focus || near.has(n.id);
-    const ink = dark ? "255,255,255" : "20,24,30";
-    // Lines are context, not the subject: thin and faint, tinted with their ends'
-    // colours. Declared relations are drawn last, thicker, in the accent colour.
-    for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
-      if (!s.show[kind]) continue;
-      for (const l of G.links) {
-        if (l.kind !== kind) continue;
-        const on = !focus || l.a === focus || l.b === focus;
-        let alpha = kind === "structure" || kind === "part" ? 0.12 : kind === "similar" || kind === "near" ? 0.16 + 0.3 * (l.w - 0.5) : kind === "co" ? 0.45 : 0.9;
-        let width = kind === "declared" ? 1.8 : kind === "co" ? 0.8 + Math.min(l.w, 6) * 0.3 : kind === "part" ? 0.9 : kind === "structure" ? 0.6 : 0.9;
-        if (focus && on) { alpha = kind === "structure" || kind === "part" ? 0.45 : 0.85; width *= 1.4; } else if (focus) alpha *= 0.25;
-        if (kind === "declared" || kind === "co") ctx.strokeStyle = css("--accent");
-        else if (kind === "similar" || kind === "near") {
-          const g = ctx.createLinearGradient(l.a.x, l.a.y, l.b.x, l.b.y);
-          g.addColorStop(0, tint(l.a)); g.addColorStop(1, tint(l.b));
-          ctx.strokeStyle = g;
-        } else ctx.strokeStyle = `rgb(${ink})`;
-        ctx.globalAlpha = Math.max(0.04, Math.min(1, alpha));
-        ctx.lineWidth = width / Math.sqrt(view.k);
-        ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
-      }
-    }
-    for (const n of G.nodes) {
-      const r = radius(n), col = tint(n);
-      ctx.globalAlpha = lit(n) ? 1 : 0.15;
-      ctx.shadowColor = col; ctx.shadowBlur = (n === focus ? 18 : hub(n) ? 14 : dark ? 5 : 0) * view.k;
-      ctx.beginPath(); ctx.arc(n.x, n.y, n === focus ? r + 1.5 : r, 0, Math.PI * 2);
-      if (n.kind === "entity") { ctx.fillStyle = css("--raised"); ctx.fill(); ctx.lineWidth = 2 / view.k; ctx.strokeStyle = col; ctx.stroke(); }
-      else { ctx.globalAlpha *= n.count != null && !hub(n) ? 0.85 : 1; ctx.fillStyle = col; ctx.fill(); }
-      ctx.shadowBlur = 0;
-      if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2); ctx.stroke(); }
-    }
-    ctx.textAlign = "center"; ctx.textBaseline = "top";
-    for (const n of G.nodes) {
-      const big = n.count != null && radius(n) * view.k > 9;
-      const named = hub(n) || n.kind === "entity" || big || n === focus || (focus && near.has(n.id) && view.k > 1.4) || view.k > 2.6;
-      if (!named) continue;
-      ctx.globalAlpha = lit(n) ? 1 : 0.2;
-      ctx.font = `${hub(n) || n.kind === "entity" ? 600 : 400} ${(n.kind === "memory" ? 10.5 : 12) / view.k}px system-ui, sans-serif`;
-      ctx.fillStyle = hub(n) || n.kind === "entity" ? css("--text") : css("--muted");
-      ctx.fillText(n.kind === "memory" ? day(n.timestamp) : n.name, n.x, n.y + radius(n) + 4 / view.k);
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  // The calm look: grey points and hairlines; colour marks only what is pointed at
-  // (or each agent, when asked for). Names fade in as the view comes closer.
-  // Prototype (look=star): a constellation on a flat night colour. An agent is a
-  // glowing dot with a gradient; memories are plain small stars; only the agents and
-  // the point pointed at glow.
+  // A constellation on a flat night colour: memories are small plain dots, an agent a
+  // flat dot with a figure of its own, and colour marks only what is pointed at (or
+  // each agent, when asked for). Names fade in as the view comes closer.
   const NIGHT = "#0f131c";
   // The page's own stack: its Japanese faces draw "…" as centred dots.
   const FONT = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif';
@@ -999,24 +877,23 @@ function startGraph(G, lens) {
     if (n === s.sel || n.hop === 0) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1 / k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); }
   }
 
-  function drawCalm() {
+  function draw() {
     const { view } = s;
     ctx.setTransform(s.DPR, 0, 0, s.DPR, 0, 0);
-    if (star) { ctx.fillStyle = NIGHT; ctx.fillRect(0, 0, s.W, s.H); } else { ctx.fillStyle = dark ? "#1e1e1e" : "#ffffff"; ctx.fillRect(0, 0, s.W, s.H); }
+    ctx.fillStyle = NIGHT; ctx.fillRect(0, 0, s.W, s.H);
     ctx.setTransform(s.DPR * view.k, 0, 0, s.DPR * view.k, s.DPR * view.x, s.DPR * view.y);
     const focus = s.hover || s.sel, near = focus ? adj.get(focus.id) : null;
     const lit = n => !focus || n === focus || near.has(n.id);
-    const ink = star ? "170,200,255" : dark ? "255,255,255" : "0,0,0", accent = star ? "#ffd9ef" : css("--accent"), grey = star ? "#c9dcff" : dark ? "#bdbdbd" : "#8a8a8a";
+    const ink = "170,200,255", accent = "#ffd9ef", grey = "#c9dcff";
     ctx.lineWidth = 0.9 / view.k;
     // Lines go out in batches, one path per kind and strength step, so tens of
     // thousands of lines cost a few dozen strokes; the lines of the point pointed at
     // are drawn last, on their own.
     const hot = new Path2D();
     let anyHot = false;
-    // exp: in a large picture the points are the subject and the lines a faint web.
-    // Bright points over the web (the chosen look) in a large picture, unless clusters
-    // of dots are to be avoided; exp=1 / 123 also fade the web.
-    const bold = !calmDots && (!!state.exp || state.look === "star") && G.nodes.length > 1000;
+    // In a large picture the points are bright over the web of lines, unless clusters
+    // of dots are to be avoided.
+    const bold = !calmDots && G.nodes.length > 1000;
     for (const kind of ["structure", "part", "near", "similar", "co", "declared"]) {
       if (!s.show[kind]) continue;
       const steps = new Map();
@@ -1027,7 +904,6 @@ function startGraph(G, lens) {
         let alpha = kind === "structure" ? 0.08 : kind === "declared" ? 0.55
           : kind === "similar" || kind === "near" ? 0.04 + 0.3 * Math.max(0, Math.min(1, (l.w - 0.55) / 0.35)) : 0.22;
         if (focus) alpha *= 0.35;
-        if (bold && (state.exp === "1" || state.exp === "123")) alpha *= 0.3;
         const step = Math.round(alpha * 100) / 100;
         let path = steps.get(step);
         if (!path) steps.set(step, path = new Path2D());
@@ -1042,40 +918,34 @@ function startGraph(G, lens) {
     const plainLit = new Path2D(), plainDim = new Path2D();
     for (const n of G.nodes) {
       const r = radius(n);
-      if (star && n.kind === "memory" && !s.byAgent && n !== focus && n !== s.sel && n.hop !== 0) {
+      if (n.kind === "memory" && !s.byAgent && n !== focus && n !== s.sel && n.hop !== 0) {
         // Bold, a point keeps at least 1.3 px on screen however far the view is out.
         const path = lit(n) ? plainLit : plainDim, rr = bold ? Math.max(r * 1.1, 1.3 / view.k) : r * 0.7;
         path.moveTo(n.x + rr, n.y); path.arc(n.x, n.y, rr, 0, Math.PI * 2);
         continue;
       }
       ctx.globalAlpha = lit(n) ? 1 : 0.18;
-      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      if (star) { drawStar(n, r, n === focus); continue; }
-      if (n.kind === "entity") { ctx.fillStyle = css("--base"); ctx.fill(); ctx.lineWidth = 1.6 / view.k; ctx.strokeStyle = n === focus ? accent : grey; ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
-      else { ctx.fillStyle = n === focus ? accent : s.byAgent ? tint(n) : grey; ctx.fill(); }
-      if (n === s.sel || n.hop === 0) { ctx.globalAlpha = 1; ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.2 / view.k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 0.9 / view.k; }
+      drawStar(n, r, n === focus);
     }
-    if (star) {
-      ctx.fillStyle = bold ? "#e6eeff" : "#c7d6f2";
-      ctx.globalAlpha = 1; ctx.fill(plainLit);
-      ctx.globalAlpha = 0.18; ctx.fill(plainDim);
-    }
+    ctx.fillStyle = bold ? "#e6eeff" : "#c7d6f2";
+    ctx.globalAlpha = 1; ctx.fill(plainLit);
+    ctx.globalAlpha = 0.18; ctx.fill(plainDim);
     ctx.textAlign = "center"; ctx.textBaseline = "top";
-    ctx.font = `400 ${11.5 / view.k}px ${star ? FONT : "system-ui, sans-serif"}`;
+    ctx.font = `400 ${11.5 / view.k}px ${FONT}`;
     // A rim in the background colour keeps lines from running through the names.
-    ctx.lineJoin = "round"; ctx.lineWidth = 3 / view.k; ctx.strokeStyle = star ? NIGHT : dark ? "#1e1e1e" : "#ffffff";
+    ctx.lineJoin = "round"; ctx.lineWidth = 3 / view.k; ctx.strokeStyle = NIGHT;
     const ramp = v => Math.max(0, Math.min(1, v));
     for (const n of G.nodes) {
       // No names from afar; they fade in on the way closer, and on the point pointed at.
       // A picture of a few dozen groups is read by their names, so those stay.
       let a = n.kind !== "memory" && G.nodes.length <= 60 ? 0.9 : ramp((view.k - (n.kind === "memory" ? 2.2 : 1.6)) / 0.6);
       if (focus) a = n === focus ? 1 : near.has(n.id) ? Math.max(a, view.k > 1 ? 0.9 : 0) : a * 0.25;
-      if (star && hub(n)) a = Math.max(a, focus && !lit(n) ? 0.3 : 0.95);
-      if (star && n.kind === "project" && n.count >= 50) a = Math.max(a, focus && !lit(n) ? 0.25 : 0.75);
+      if (hub(n)) a = Math.max(a, focus && !lit(n) ? 0.3 : 0.95);
+      if (n.kind === "project" && n.count >= 50) a = Math.max(a, focus && !lit(n) ? 0.25 : 0.75);
       if (a < 0.02) continue;
       ctx.globalAlpha = a;
-      ctx.fillStyle = n === focus || star && hub(n) ? (dark || star ? "#eef3ff" : "#222") : grey;
-      const label = n.kind === "memory" ? day(n.timestamp) : n.name, ly = n.y + radius(n) * (star && hub(n) ? 1.4 : 1) + 4 / view.k;
+      ctx.fillStyle = n === focus || hub(n) ? "#eef3ff" : grey;
+      const label = n.kind === "memory" ? day(n.timestamp) : n.name, ly = n.y + radius(n) * (hub(n) ? 1.4 : 1) + 4 / view.k;
       ctx.strokeText(label, n.x, ly); ctx.fillText(label, n.x, ly);
     }
     ctx.globalAlpha = 1;
@@ -1084,12 +954,6 @@ function startGraph(G, lens) {
   function loop() {
     if (!s.alive) return;
     let moved = false;
-    if (calmPhysics && (s.alpha > 0.001 || s.alphaTarget)) {
-      for (let i = G.nodes.length > 600 ? 1 : 2; i > 0; i--) { s.alpha += (s.alphaTarget - s.alpha) * 0.0228; calmTick(s.alpha); }
-      moved = true;
-      if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.12; s.view.x += (v.x - s.view.x) * 0.12; s.view.y += (v.y - s.view.y) * 0.12; }
-      if (s.alpha <= 0.001 && !s.alphaTarget) { s.autoFit = false; saveLayout(key, G.nodes); }
-    }
     if (s.heat > 0.004) {
       tick(s.heat, FRICTION); s.heat *= 0.985; moved = true;
       if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.12; s.view.x += (v.x - s.view.x) * 0.12; s.view.y += (v.y - s.view.y) * 0.12; }
@@ -1159,7 +1023,7 @@ function startGraph(G, lens) {
   }
   cv.addEventListener("pointermove", e => {
     const [x, y] = at(e);
-    if (s.drag) { [s.drag.x, s.drag.y] = world(x, y); s.drag.vx = s.drag.vy = 0; s.drag.moved = true; if (calmPhysics) { s.alphaTarget = 0.3; s.alpha = Math.max(s.alpha, 0.1); } else s.heat = Math.max(s.heat, 0.3); return; }
+    if (s.drag) { [s.drag.x, s.drag.y] = world(x, y); s.drag.vx = s.drag.vy = 0; s.drag.moved = true; s.heat = Math.max(s.heat, 0.3); return; }
     if (s.panning) {
       const nx = x - s.panning.x, ny = y - s.panning.y;
       s.panning.v = { x: nx - s.view.x, y: ny - s.view.y }; s.view.x = nx; s.view.y = ny; draw(); return;
@@ -1176,7 +1040,7 @@ function startGraph(G, lens) {
   cv.addEventListener("pointerup", e => {
     const [x, y] = at(e);
     // Let go of a point and it stays where it was put: no velocity is carried over.
-    if (s.drag) { const n = s.drag; s.drag = null; n.vx = n.vy = 0; s.alphaTarget = 0; if (!n.moved) select(n === s.sel ? null : n); }
+    if (s.drag) { const n = s.drag; s.drag = null; n.vx = n.vy = 0; if (!n.moved) select(n === s.sel ? null : n); }
     else if (s.panning) {
       if (Math.hypot(x - s.panning.sx, y - s.panning.sy) < 3) select(null);
       else if (s.panning.v) s.panV = { ...s.panning.v };
@@ -1199,9 +1063,7 @@ function startGraph(G, lens) {
   // A picture whose every point was seen before is drawn as it was left.
   // A first view settles its first steps unseen, so it opens near its final size,
   // and is shown finding its place from there.
-  if (calmPhysics && !kept) { s.alpha = 1; for (let i = 0; i < 40; i++) { s.alpha -= s.alpha * 0.0228; calmTick(s.alpha); } s.autoFit = true; }
-  else if (calmPhysics && kept < G.nodes.length) for (let i = 0; i < 200; i++) calmTick(0.5 * (1 - i / 200), true);
-  else if (kept < G.nodes.length) {
+  if (kept < G.nodes.length) {
     const warm = Math.max(60, Math.min(400, Math.round(120000 / Math.max(1, G.nodes.length))));
     for (let i = 0; i < warm; i++) tick(1 - i / warm, 0.6, kept > 0);
     // A large first view gets only a short warm-up before it is shown, then goes on
