@@ -285,3 +285,21 @@ async def test_rows_tying_records_together_are_kept_only_when_every_end_is_visib
         assert conn.execute("SELECT count(*) FROM main.relations").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+@pytest.mark.asyncio
+async def test_two_viewers_whose_stores_look_alike_still_get_their_own_pictures(db):
+    # Inserted in the order a, b, d, b, a, c, the ids are n+1 .. n+6: a holds n+1 and
+    # n+5, b holds n+2 and n+4, c holds n+6. A viewer of a and c and a viewer of b and
+    # c then see three memories with the same highest id and the same sum of ids,
+    # so a cache keyed only by what the store looks like would serve one the other's.
+    for agent, text in (("a", "alpha one"), ("b", "bravo one"), ("d", "delta"), ("b", "bravo two"), ("a", "alpha two"), ("c", "charlie")):
+        await db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp, embedding) VALUES (?, ?, '2026-10-01T00:00:00+00:00', ?)",
+            (agent, text, _vec(1, 0, 0, 0)),
+        )
+    await db.commit()
+    first = _answer("/api/map", Scope({"a": acl.PERM_READ, "c": acl.PERM_READ}), lens="clusters")[1]
+    second = _answer("/api/map", Scope({"b": acl.PERM_READ, "c": acl.PERM_READ}), lens="clusters")[1]
+    assert "alpha" in json.dumps(first)
+    assert "alpha" not in json.dumps(second)
