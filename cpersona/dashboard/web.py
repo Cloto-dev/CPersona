@@ -52,6 +52,83 @@ def _static(name: str) -> bytes:
     return resources.files("cpersona.dashboard").joinpath("static", name).read_bytes()
 
 
+def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[int, object]:
+    """One data request: (status, JSON value). Shared by the loopback server and
+    the remote one, so both answer every route the same way.
+
+    ``scope`` narrows the connection to one viewer's agents (remote only), and keys
+    the caches of computed pictures so they are never shared across viewers.
+    """
+    key = db_path if scope is None else f"{db_path}#scope={scope.key}"
+    try:
+        path = json.loads(q.get("path") or "[]")
+        if not isinstance(path, list):
+            raise ValueError("path is a list")
+        conn = store.open_store(db_path)
+    except store.StoreError as e:
+        return 409, {"error": str(e)}
+    except ValueError as e:
+        return 400, {"error": str(e)}
+    try:
+        if scope is not None:
+            scope.apply(conn)
+        with conn:
+            if route == "/api/overview":
+                out = store.overview(conn, name)
+            elif route == "/api/tree":
+                out = store.tree(conn, path)
+            elif route == "/api/memories":
+                out = store.memories(
+                    conn, q.get("q", ""), path, q.get("month", ""), int(q.get("limit", 50)), int(q.get("offset", 0))
+                )
+            elif route == "/api/search":
+                out = store.search(
+                    conn, q.get("q", ""), q.get("case") == "1", q.get("sort", "new"),
+                    int(q.get("limit", 50)), int(q.get("offset", 0)),
+                )
+            elif route == "/api/memory":
+                out = store.memory(conn, int(q.get("id", 0)))
+                if out is None:
+                    return 404, {"error": "No memory with that id."}
+            elif route == "/api/graph" and q.get("around"):
+                out = graph.around(conn, key, int(q["around"]), int(q.get("hops", graph.DEFAULT_HOPS)))
+                if out is None:
+                    return 404, {"error": "No memory with that id."}
+            elif route == "/api/graph" and q.get("cluster_of"):
+                out = overall.cluster_of(conn, key, int(q["cluster_of"]))
+                if out is None:
+                    return 404, {"error": "That memory is in no group."}
+            elif route == "/api/graph" and q.get("entity"):
+                out = graph.mentioning(conn, int(q["entity"]))
+                if out is None:
+                    return 404, {"error": "No entity with that id."}
+            elif route == "/api/graph":
+                out = graph.folder(
+                    conn, path, q.get("month", ""),
+                    # Prototype switches, for comparing the picture's shape.
+                    mutual=q.get("mutual") == "1", hubs=q.get("hubs") == "1",
+                )
+            elif route == "/api/map":
+                lens = q.get("lens", "tree")
+                if lens == "tree":
+                    out = overall.tree(conn)
+                elif lens == "entities":
+                    out = overall.entities(conn)
+                elif lens == "clusters":
+                    out = overall.clusters(conn, key)
+                else:
+                    raise ValueError(f"lens is one of {', '.join(overall.LENSES)}")
+            else:
+                return 404, {"error": "not found"}
+    except ValueError as e:
+        return 400, {"error": str(e)}
+    except sqlite3.Error as e:
+        return 500, {"error": f"The database could not be read: {e}"}
+    finally:
+        conn.close()
+    return 200, out
+
+
 def make_handler(
     db_path: str,
     token: str,
@@ -133,91 +210,8 @@ def make_handler(
                         502, {"error": f"The health check did not finish: {e}"}
                     )
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
-            try:
-                path = json.loads(q.get("path") or "[]")
-                if not isinstance(path, list):
-                    raise ValueError("path is a list")
-                conn = store.open_store(db_path)
-            except store.StoreError as e:
-                return self._json(409, {"error": str(e)})
-            except ValueError as e:
-                return self._json(400, {"error": str(e)})
-            try:
-                with conn:
-                    if url.path == "/api/overview":
-                        out = store.overview(conn, name)
-                    elif url.path == "/api/tree":
-                        out = store.tree(conn, path)
-                    elif url.path == "/api/memories":
-                        out = store.memories(
-                            conn,
-                            q.get("q", ""),
-                            path,
-                            q.get("month", ""),
-                            int(q.get("limit", 50)),
-                            int(q.get("offset", 0)),
-                        )
-                    elif url.path == "/api/search":
-                        out = store.search(
-                            conn,
-                            q.get("q", ""),
-                            q.get("case") == "1",
-                            q.get("sort", "new"),
-                            int(q.get("limit", 50)),
-                            int(q.get("offset", 0)),
-                        )
-                    elif url.path == "/api/memory":
-                        out = store.memory(conn, int(q.get("id", 0)))
-                        if out is None:
-                            return self._json(404, {"error": "No memory with that id."})
-                    elif url.path == "/api/graph" and q.get("around"):
-                        out = graph.around(
-                            conn,
-                            db_path,
-                            int(q["around"]),
-                            int(q.get("hops", graph.DEFAULT_HOPS)),
-                        )
-                        if out is None:
-                            return self._json(404, {"error": "No memory with that id."})
-                    elif url.path == "/api/graph" and q.get("cluster_of"):
-                        out = overall.cluster_of(conn, db_path, int(q["cluster_of"]))
-                        if out is None:
-                            return self._json(
-                                404, {"error": "That memory is in no group."}
-                            )
-                    elif url.path == "/api/graph" and q.get("entity"):
-                        out = graph.mentioning(conn, int(q["entity"]))
-                        if out is None:
-                            return self._json(404, {"error": "No entity with that id."})
-                    elif url.path == "/api/graph":
-                        out = graph.folder(
-                            conn, path, q.get("month", ""),
-                            # Prototype switches, for comparing the picture's shape.
-                            mutual=q.get("mutual") == "1", hubs=q.get("hubs") == "1",
-                        )
-                    elif url.path == "/api/map":
-                        lens = q.get("lens", "tree")
-                        if lens == "tree":
-                            out = overall.tree(conn)
-                        elif lens == "entities":
-                            out = overall.entities(conn)
-                        elif lens == "clusters":
-                            out = overall.clusters(conn, db_path)
-                        else:
-                            raise ValueError(
-                                f"lens is one of {', '.join(overall.LENSES)}"
-                            )
-                    else:
-                        return self._json(404, {"error": "not found"})
-            except ValueError as e:
-                return self._json(400, {"error": str(e)})
-            except sqlite3.Error as e:
-                return self._json(
-                    500, {"error": f"The database could not be read: {e}"}
-                )
-            finally:
-                conn.close()
-            return self._json(200, out)
+            code, out = answer(db_path, url.path, q, name)
+            return self._json(code, out)
 
         def _refuse(self):
             self._json(405, {"error": "This dashboard only reads."})

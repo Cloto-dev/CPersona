@@ -51,7 +51,7 @@ const T = {
     askEntities: "“Remember that Caroline and Melanie are friends.”",
     palettePh: "Search memories, or type a command", cmdGo: v => `Go to ${v}`, cmdLang: "Switch to 日本語", cmd: "Command",
     today: "Today", yesterday: "Yesterday", readOnly: "read-only",
-    noToken: "Open the dashboard from the address it printed when it started.",
+    noToken: "Open the dashboard again from the address it printed, or ask your agent for a new link.",
     graph: "Network",
     graphLead: "The memories of this folder, joined by what they have in common.",
     nGraph: (shown, total) => shown < total ? `The newest ${shown.toLocaleString()} of ${total.toLocaleString()} memories` : `${total.toLocaleString()} memories`,
@@ -136,7 +136,7 @@ const T = {
     askEntities: "「Caroline と Melanie は友達だと覚えておいて」",
     palettePh: "記憶を検索、またはコマンドを入力", cmdGo: v => `${v} へ移動`, cmdLang: "Switch to English", cmd: "コマンド",
     today: "今日", yesterday: "昨日", readOnly: "読み取り専用",
-    noToken: "起動時に表示されたアドレスから、ダッシュボードを開き直してください。",
+    noToken: "表示されたアドレスから開き直すか、エージェントに新しいリンクを頼んでください。",
     graph: "記憶ネットワーク",
     graphLead: "このフォルダの記憶を、共通点の線で結んで表示します。",
     nGraph: (shown, total) => shown < total ? `${total.toLocaleString()} 件のうち、新しい ${shown.toLocaleString()} 件を表示しています` : `${total.toLocaleString()} 件の記憶`,
@@ -225,8 +225,10 @@ function levelLabel(level, key) {
   return key;
 }
 
+// Relative, so the same page works at the loopback root and under /dashboard/ on a
+// remote server; there the session cookie, not a token, carries the access.
 async function api(path, params = {}) {
-  const r = await fetch(path + "?" + new URLSearchParams(params), { headers: { Authorization: `Bearer ${token}` } });
+  const r = await fetch(path.replace(/^\//, "") + "?" + new URLSearchParams(params), token ? { headers: { Authorization: `Bearer ${token}` } } : {});
   if (r.status === 401) throw new Error(t("noToken"));
   const body = await r.json();
   if (!r.ok) throw new Error(body.error || r.statusText);
@@ -1475,7 +1477,6 @@ function wire() {
   wire();
   applyLang();
   try {
-    if (!token) throw new Error(t("noToken"));
     overviewData = await api("/api/overview");
   } catch (e) {
     return fail(e);

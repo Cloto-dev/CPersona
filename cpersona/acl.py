@@ -634,11 +634,15 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
 # Tools registered only under a setting, so each row exists only when its tool
 # does: the exhaustiveness test compares this table with the tools.
 # - organize_folders: with declared folders on (config.DECLARED_FOLDERS).
-# - open_dashboard: with the dashboard on and the stdio transport. The page shows
-#   every agent of the store, so it demands read on all of them.
+# - open_dashboard: with the dashboard on, under stdio (the page shows every agent
+#   of the store, so it demands read on all of them) or, with the remote dashboard
+#   on, under HTTP (the page shows only the agents the caller reads, so any
+#   authenticated caller may open it).
+_DASHBOARD_LOCAL = config.DASHBOARD and config.transport() == "stdio"
+_DASHBOARD_REMOTE = config.DASHBOARD and config.DASHBOARD_REMOTE and config.transport() != "stdio"
 CONDITIONAL_CLASSIFICATION: dict[str, Demands] = {
     "organize_folders": _scoped(PERM_WRITE),
-    "open_dashboard": _process_wide(
+    "open_dashboard": (lambda args: list(_AUTHENTICATED_ONLY)) if _DASHBOARD_REMOTE else _process_wide(
         "the dashboard shows every agent of the store and takes no argument that "
         "narrows it to one",
         required=PERM_READ,
@@ -646,7 +650,7 @@ CONDITIONAL_CLASSIFICATION: dict[str, Demands] = {
 }
 _REGISTERED_UNDER = {
     "organize_folders": config.DECLARED_FOLDERS,
-    "open_dashboard": config.DASHBOARD and config.transport() == "stdio",
+    "open_dashboard": _DASHBOARD_LOCAL or _DASHBOARD_REMOTE,
 }
 ACL_CLASSIFICATION.update({tool: demands for tool, demands in CONDITIONAL_CLASSIFICATION.items() if _REGISTERED_UNDER[tool]})
 

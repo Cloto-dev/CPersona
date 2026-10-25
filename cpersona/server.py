@@ -44,6 +44,8 @@ from cpersona import blocks
 from cpersona import excerpts
 from cpersona import folders as folders_module
 from cpersona.dashboard import embedded as dashboard_embedded
+from cpersona.dashboard import remote as dashboard_remote
+from cpersona.dashboard import scope as dashboard_scope
 from cpersona.dashboard import store as dashboard_store
 from cpersona import tokens as tokens_module
 from cpersona import generation
@@ -3163,6 +3165,8 @@ def _dashboard_health(loop: asyncio.AbstractEventLoop):
 
 
 async def do_open_dashboard(open_browser: bool = False) -> dict:
+    if config.transport() != "stdio":
+        return _open_remote_dashboard()
     try:
         url = dashboard_embedded.open_for(config.DB_PATH, _dashboard_health(asyncio.get_running_loop()))
     except dashboard_store.StoreError as e:
@@ -3174,6 +3178,30 @@ async def do_open_dashboard(open_browser: bool = False) -> dict:
         "read_only": True,
         "opened": opened,
         "hint": "Give this address to the person. It opens only on this machine and stops when the server stops.",
+    }
+
+
+def _open_remote_dashboard() -> dict:
+    """A one-time link to /dashboard on this server, for the caller's agents only."""
+    if not config.DASHBOARD_PUBLIC_URL:
+        return error_response(
+            "The remote dashboard needs CPERSONA_DASHBOARD_PUBLIC_URL: the address people "
+            "reach this server at (for example https://memory.example.com)."
+        )
+    try:
+        viewer = dashboard_scope.for_principal()
+    except PermissionError as e:
+        return error_response(str(e))
+    code = dashboard_remote.issue_link(viewer)
+    return {
+        "ok": True,
+        "url": f"{config.DASHBOARD_PUBLIC_URL}{dashboard_remote.PREFIX}/open?c={code}",
+        "read_only": True,
+        "expires_in_seconds": dashboard_remote.LINK_SECONDS,
+        "hint": (
+            "Give this address to the person. It opens once, within two minutes, and "
+            "shows only the agents this connection can read."
+        ),
     }
 
 
@@ -3198,7 +3226,7 @@ def _enable_dashboard(registry) -> None:
 
 # Only where the server runs on the person's machine: over HTTP the page would open
 # on the server's loopback, which the person cannot reach.
-if config.DASHBOARD and config.transport() == "stdio":
+if config.DASHBOARD and (config.transport() == "stdio" or config.DASHBOARD_REMOTE):
     _enable_dashboard(registry)
 
 
@@ -3658,8 +3686,12 @@ class BearerTokenMiddleware:
         acl_config: "acl.AclConfig | None" = None,
         oauth: "_OAuthDiscovery | None" = None,
         oauth_verifier=None,
+        passthrough_prefix: str | None = None,
     ):
         self.app = app
+        # The remote dashboard's mount point, or None: the one path a browser reaches
+        # without a bearer token, because the dashboard checks its own session.
+        self.passthrough_prefix = passthrough_prefix
         self.auth_token = auth_token
         # ACL mode (docs/ACL_DESIGN.md §5.1): token → Principal via the
         # identity seam; auth_token is not consulted while this is set (D3).
@@ -3693,6 +3725,13 @@ class BearerTokenMiddleware:
             headers={"WWW-Authenticate": challenge},
         )
         return response(scope, receive, send)
+
+    def _is_dashboard_request(self, scope) -> bool:
+        prefix = self.passthrough_prefix
+        if not prefix:
+            return False
+        path = scope.get("path", "")
+        return path == prefix or path.startswith(prefix + "/")
 
     def _is_public_metadata_request(self, scope) -> bool:
         """Is this the one unauthenticated request the server owes an answer?
@@ -3807,6 +3846,12 @@ class BearerTokenMiddleware:
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 1008})
                 return
+            await self.app(scope, receive, send)
+            return
+        if self._is_dashboard_request(scope):
+            # The dashboard answers only GET and checks its own session cookie. The
+            # router reads the same scope["path"], so a path this lets through is
+            # routed to the dashboard and never to the MCP mounts.
             await self.app(scope, receive, send)
             return
         if self._is_public_metadata_request(scope):
@@ -3969,6 +4014,13 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
 
     oauth = _oauth_discovery()
     routes = [Mount("/mcp", app=mcp_endpoint), Mount("/", app=mcp_endpoint)]
+    remote_dashboard = config.DASHBOARD and config.DASHBOARD_REMOTE
+    if remote_dashboard:
+        # Ahead of Mount("/"), which matches every path. The dashboard checks its
+        # own session cookie; the bearer check lets only this prefix through.
+        routes = [
+            Mount(dashboard_remote.PREFIX, app=dashboard_remote.make_app(config.DB_PATH, _dashboard_health))
+        ] + routes
     if oauth is not None:
         # RFC 9728 (docs/OAUTH_DESIGN.md §7). The SDK builds the route and the
         # document; writing either by hand would be a second implementation of
@@ -4014,6 +4066,7 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
                 acl_config=acl_config,
                 oauth=oauth,
                 oauth_verifier=_oauth_verifier(oauth, acl_config),
+                passthrough_prefix=dashboard_remote.PREFIX if remote_dashboard else None,
             ),
         ],
         lifespan=lifespan,
