@@ -728,6 +728,15 @@ DECLARED_FOLDERS = _parse_bool("CPERSONA_DECLARED_FOLDERS", False)
 # out of the person's reach. Off removes the tool definition.
 DASHBOARD = _parse_bool("CPERSONA_DASHBOARD", True)
 
+# The dashboard over HTTP (2.6.15, off by default): with the dashboard on and the
+# streamable-http transport, open_dashboard returns a link to /dashboard on this
+# server instead. The link works once for two minutes and becomes a session cookie;
+# the page shows only the agents the caller's grants let them read. The public
+# address the link names (scheme and host, as people reach this server) is set by
+# CPERSONA_DASHBOARD_PUBLIC_URL; without it the tool says so instead of guessing.
+DASHBOARD_REMOTE = _parse_bool("CPERSONA_DASHBOARD_REMOTE", False)
+DASHBOARD_PUBLIC_URL = os.environ.get("CPERSONA_DASHBOARD_PUBLIC_URL", "").strip().rstrip("/")
+
 # How deep a folder may sit below its project (the project itself is depth 0).
 # Lowering it leaves deeper folders readable; it refuses new folders and filings
 # below the limit, and check_health names the folders past it.
