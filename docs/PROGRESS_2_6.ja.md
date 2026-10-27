@@ -1,16 +1,17 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:a4663db9b2d575642fa0cd8b23981689dd8e6f20 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:08b56ec35ba66a3e906c5c2289ac1a0143f91040 -->
 
 # 2.6 系はいまどこまで来ているか
 
 > **翻訳について**: 原文は英語版です。この日本語版は参照用の翻訳で、内容が食い違う場合は英語版が優先されます。
 
-更新日: 2026-10-26。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
+更新日: 2026-10-27。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
 示します。このラインが何を作り、何をもって完了とするかは
 [ラインのページ](RELIABLE_RECALL_2_6.md) が、各リリースに何が入っているかは
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
 2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7、2026-10-11 に 2.6.8 と 2.6.9、2026-10-12 に 2.6.10、2026-10-19 に 2.6.11、2026-10-21 に 2.6.12、2026-10-23 に 2.6.13、2026-10-26 に 2.6.14 が続き、バージョンを指定しない導入は 2.6.14 になります。
+2.6.15a1 (2026-10-27) は pre-release で、バージョンを指定した時だけ入ります。
 pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -93,6 +94,7 @@ pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI
 | 2.6.13 | 2.6.13 系の final で、パッケージのコードは 2.6.13a2 から変えていません。スキーマと依存は変えていません。2.6.12 と比べて、バージョンを指定しない導入に上の 2 つの pre-release が入ります。エージェントのプラグインの知らせが、呼ぶ時の `agent_id` を名指します (bug-809)。`mode: "pro"` の `reconstruct` は、窓の横にキーワードの追加の場所を 8 つと深い場所を 8 つ持ち、長い held の記録の 2 か所目以降を、同じ上限の中で後ろで引用します。`list_memories` は、記録を読み取り専用のフォルダの階層として返せます (`CPERSONA_LOGICAL_DIRECTORY`、既定 off)。2.6.13 では精度を主張しません。ここで出す長い記録の規則の形は、新しい問いで確かめていないためです。2.6.13a2 を本番で約 16 時間使ってから出しました。その間、設定を on にするための再起動が 1 回あり、エラーはありませんでした | [#526](https://github.com/Cloto-dev/cpersona/pull/526), [#479](https://github.com/Cloto-dev/cpersona/pull/479), [#530](https://github.com/Cloto-dev/cpersona/pull/530), [#529](https://github.com/Cloto-dev/cpersona/pull/529) |
 | 2.6.14a1 | pre-release。依存は変えていません。最初の起動でスキーマをバージョン 21 に移行し、空の表を 2 つ足します。宣言フォルダを足します (既定 off、`CPERSONA_DECLARED_FOLDERS`)。エージェントは project の下にフォルダを 6 段まで宣言し (`CPERSONA_FOLDER_MAX_DEPTH`)、各記憶とエピソードを、`store` の `folder` か `organize_folders` ツールで、そのどれか 1 つに入れます。`list_memories` は `view: "folders"` でフォルダを開き、`recall` と `reconstruct` は `include_folders: true` で各記録のフォルダを返します。フォルダは答えを切り詰めた後で足し、mode の上限の外に置きます (`folder_tokens`)。フォルダは分類するだけで絞り込みません。どの検索もフォルダを読まず、ロックした記録も入れられます。`check_health` に `folder_unfiled` と `folder_integrity` が加わり、export・import・merge がフォルダを運びます。off ではどのツールの定義も応答も変わりません。精度の主張はしていません | [#532](https://github.com/Cloto-dev/cpersona/pull/532), [#534](https://github.com/Cloto-dev/cpersona/pull/534) |
 | 2.6.14 | 2.6.14 系の final で、パッケージのコードは 2.6.14a1 から変えていません。依存は変えていません。2.6.13 から上げると、最初の起動でスキーマをバージョン 21 に移行し、空の表を 2 つ足します。2.6.13 と比べて、バージョンを指定しない導入に宣言フォルダが入ります (既定 off、`CPERSONA_DECLARED_FOLDERS`)。エージェントは project の下にフォルダを宣言し、各記憶とエピソードをそのどれか 1 つに入れます。フォルダは分類するだけで、検索を絞りません。設定が off の時は、ツールの定義も答えも変わりません。精度は主張しません。2.6.14a1 を本番で約 2 日使ったあとに切りました。その間、宣言フォルダは off で、再起動もエラーもありませんでした | [#532](https://github.com/Cloto-dev/cpersona/pull/532), [#534](https://github.com/Cloto-dev/cpersona/pull/534) |
+| 2.6.15a1 | pre-release。スキーマと依存は変えていません。読み取り専用のダッシュボードを足します([運用](operations.md#the-dashboard))。`cpersona dashboard --db <path>` は、記録先のページを 127.0.0.1 で開きます。ページには、全体の様子、論理ディレクトリの木、一致した行を見せる検索、各記憶の全文、すべての記憶のネットワークがあります。stdio のトランスポートでは、`open_dashboard` ツールが人のためにページを開きます (既定 on、`CPERSONA_DASHBOARD=false` で消えます)。エージェントのプラグインには `/cpersona:dashboard` が加わります。HTTP では、`CPERSONA_DASHBOARD_REMOTE` が on の時だけページを配ります (既定 off)。認証を通った呼び出し手は 1 回限りのリンクを受け取り、見る人には権限で読めるエージェントの分だけが見えます。保存した記録は書き換えません。精度は主張しません | [#536](https://github.com/Cloto-dev/cpersona/pull/536), [#537](https://github.com/Cloto-dev/cpersona/pull/537), [#538](https://github.com/Cloto-dev/cpersona/pull/538), [#539](https://github.com/Cloto-dev/cpersona/pull/539), [#540](https://github.com/Cloto-dev/cpersona/pull/540), [#543](https://github.com/Cloto-dev/cpersona/pull/543) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
