@@ -6476,13 +6476,13 @@ MUTATIONS += [
     ),
     Mutation(
         id='M638',
-        tests=('tests/test_dashboard_remote.py',),
+        tests=('tests/test_dashboard_remote.py', 'tests/test_structural_gates.py'),
         target="dashboard remote — the key file is the owner's alone and kept",
         file='cpersona/dashboard/remote.py',
         find='        if fileperms.create_private(path):\n',
         replace='        if open(path, "a").close() is None and os.path.getsize(path) == 0:\n',
         breaks="other users on the host can read the key and sign any session",
-        expect='test_dashboard_remote.py::test_a_session_outlives_a_restart_through_the_key_file',
+        expect='test_structural_gates.py::test_no_caller_creates_a_file_at_the_ambient_umask',
     ),
     Mutation(
         id='M639',
@@ -6493,6 +6493,26 @@ MUTATIONS += [
         replace='[_set_cookie("", SESSION_SECONDS)]',
         breaks="signing out leaves the browser signed in",
         expect='test_dashboard_remote.py::test_a_used_session_is_renewed_and_signing_out_drops_it',
+    ),
+    Mutation(
+        id='M640',
+        tests=('tests/test_mutation_proof_shard.py',),
+        target="mutation proof — the CI shards together run every mutation once",
+        file='scripts/mutation-proof.py',
+        find='    return mutations[i - 1 :: n]\n',
+        replace='    return mutations[i :: n]\n',
+        breaks="the first mutation of every shard is never applied, and no job goes red for it",
+        expect='test_mutation_proof_shard.py::test_the_shards_together_run_every_mutation_exactly_once',
+    ),
+    Mutation(
+        id='M641',
+        tests=('tests/test_mutation_proof_shard.py',),
+        target="mutation proof — a shard past the count is refused",
+        file='scripts/mutation-proof.py',
+        find='    if not match or int(match.group(1)) > int(match.group(2)):\n',
+        replace='    if not match:\n',
+        breaks="a matrix that asks for shard 5/4 runs nothing and passes",
+        expect='test_mutation_proof_shard.py::test_a_spec_that_names_no_share_is_refused',
     ),
 ]
 
@@ -6653,14 +6673,36 @@ def missing_test_files(selected: list[Mutation]) -> list[str]:
     return sorted({f"{m.id}: {t}" for m in selected for t in m.tests if not (REPO / t).is_file()})
 
 
+def shard(mutations: list[Mutation], spec: str) -> list[Mutation]:
+    """The `i/N` share of `mutations`: every Nth one, from position i - 1.
+
+    The N shares of a list are disjoint and together are the whole list, so
+    running every shard runs every mutation exactly once. Taking positions in
+    turn keeps the shares within one mutation of each other in size, and
+    spreads the mutations of one area (which sit together in the list) across
+    the shards.
+    """
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", spec)
+    if not match or int(match.group(1)) > int(match.group(2)):
+        raise SystemExit(f"--shard takes i/N with 1 <= i <= N, not {spec!r}")
+    i, n = int(match.group(1)), int(match.group(2))
+    return mutations[i - 1 :: n]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", help="run a single mutation by id")
+    ap.add_argument("--shard", help="run the i/N share of the mutations (see `shard`)")
     args = ap.parse_args()
+    # One line per verdict as it is reached, so a CI log's timestamps say what
+    # each mutation cost instead of when an 8 KB buffer happened to fill.
+    sys.stdout.reconfigure(line_buffering=True)
 
     selected = [m for m in MUTATIONS if not args.id or m.id == args.id]
+    if args.shard:
+        selected = shard(selected, args.shard)
     if not selected:
-        raise SystemExit(f"no mutation matches --id {args.id}")
+        raise SystemExit(f"no mutation matches --id {args.id} --shard {args.shard}")
 
     if not tree_is_clean({m.file for m in selected}):
         return 2
@@ -6672,7 +6714,8 @@ def main() -> int:
             print(f"   {line}")
         return 2
 
-    print(f"Baseline: running the suite unmutated ({len(selected)} mutations queued)...")
+    share = f" of {len(MUTATIONS)}, shard {args.shard}" if args.shard else ""
+    print(f"Baseline: running the suite unmutated ({len(selected)} mutations queued{share})...")
     base = run(["uv", "run", "pytest", "-q", "-x"])
     if base.returncode != 0:
         print("!! the suite is already failing — fix that first; mutation results would be meaningless")
