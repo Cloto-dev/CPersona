@@ -236,7 +236,7 @@ jobs:
           )
           "
 
-  mutation-proof:
+  mutation-proof-shard:
     # First increment: the 2.5.2 refactor seams are guarded by
     # scripts/mutation-proof.py, which applies each hand-authored mutation, runs
     # the suite, and asserts the mutant is CAUGHT (or is a documented equivalent
@@ -248,12 +248,26 @@ jobs:
     # Pinned to 3.13 only to bound cost: the mutations exercise handler logic, not
     # stdlib version edges, so a second Python version would add runtime without
     # adding signal.
+    #
+    # Split into shards that run side by side, because one job running every
+    # mutation in turn took 15 to 20 minutes and decided how long CI took. Every
+    # shard still runs the whole suite unmutated first, and together the shards
+    # run every mutation exactly once (tests/test_mutation_proof_shard.py), so
+    # what a green run proves is unchanged. The count of shards is the length of the
+    # `shard` list below; the job name and `--shard` read it from the matrix.
     if: github.event_name != 'schedule'  # locked/pinned — see lint
     runs-on: ubuntu-latest
+    name: mutation-proof (${{ matrix.shard }}/${{ strategy.job-total }})
+    strategy:
+      # One shard's red must not cancel the others: each reports its own
+      # mutations, and a cancelled shard hides which seams it would have shown.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     # Each mutant runs its own test files first and falls back to the full suite
-    # only when they stay green, so a normal run is a few minutes. The ceiling
-    # stays at 30 minutes for the case where every `tests` list goes stale and
-    # every mutant falls back; each test remains bounded by its 60s timeout.
+    # only when they stay green. The ceiling stays at 30 minutes for the case
+    # where every `tests` list goes stale and every mutant falls back; each test
+    # remains bounded by its 60s timeout.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -264,7 +278,20 @@ jobs:
       - name: Sync dependencies (incl. test toolchain)
         run: uv sync --locked --dev --python 3.13
       - name: Mutation proof (2.5.2 refactor seams)
-        run: uv run --frozen python scripts/mutation-proof.py
+        run: uv run --frozen python scripts/mutation-proof.py --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+
+  mutation-proof:
+    # The one check that says whether every shard above passed, under the name
+    # the mutation proof had before it was split, so what reads the checks of a
+    # pull request by name keeps reading one result. `always()` makes it run,
+    # and fail, when a shard failed or was cancelled; without it a failed shard
+    # would leave this job skipped, which reads as nothing to check.
+    if: always() && github.event_name != 'schedule'
+    needs: mutation-proof-shard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        run: test "${{ needs.mutation-proof-shard.result }}" = success
 
   mutation-diff:
     # Lane L1: ADVISORY, non-blocking mutation testing scoped
