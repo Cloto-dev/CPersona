@@ -6514,6 +6514,26 @@ MUTATIONS += [
         breaks="a matrix that asks for shard 5/4 runs nothing and passes",
         expect='test_mutation_proof_shard.py::test_a_spec_that_names_no_share_is_refused',
     ),
+    Mutation(
+        id='M642',
+        tests=('tests/test_dashboard_storage_keys.py',),
+        target="dashboard — the layout choice has a key of its own",
+        file='cpersona/dashboard/static/app.js',
+        find='const LAYOUT_MODE_KEY = "cp.layoutMode";\n',
+        replace='const LAYOUT_MODE_KEY = "cp.layout";\n',
+        breaks="drawing a network overwrites the chosen layout, and choosing one discards the network's places",
+        expect='test_dashboard_storage_keys.py::test_no_key_holds_both_json_and_a_plain_value',
+    ),
+    Mutation(
+        id='M643',
+        tests=('tests/test_dashboard_storage_keys.py',),
+        target="dashboard — a tabs choice under the old key is carried over",
+        file='cpersona/dashboard/static/app.js',
+        find='    localStorage.setItem(LAYOUT_MODE_KEY, chosen);\n',
+        replace='',
+        breaks="a browser that chose tabs in 2.6.15 loses the choice the next time a network is drawn",
+        expect='test_dashboard_storage_keys.py::test_a_tabs_choice_left_under_the_old_key_is_carried_over',
+    ),
 ]
 
 

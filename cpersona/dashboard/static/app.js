@@ -182,8 +182,19 @@ try {
 
 const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lang: "en" };
 // The layout this browser chose in the settings; the classic one unless it chose tabs.
+// Its own key: it was kept under "cp.layout", which is also where the network keeps
+// where its points were left (LAYOUT_KEY), so each overwrote the other. A "tabs" left
+// there by that version is carried over once.
+const LAYOUT_MODE_KEY = "cp.layoutMode";
 let layout = "classic";
-try { if (localStorage.getItem("cp.layout") === "tabs") layout = "tabs"; } catch {}
+try {
+  let chosen = localStorage.getItem(LAYOUT_MODE_KEY);
+  if (chosen === null && localStorage.getItem("cp.layout") === "tabs") {
+    chosen = "tabs";
+    localStorage.setItem(LAYOUT_MODE_KEY, chosen);
+  }
+  if (chosen === "tabs") layout = "tabs";
+} catch {}
 document.body.dataset.layout = layout;
 for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
@@ -547,7 +558,7 @@ async function setLayout(l) {
   closeDetail();
   layout = l;
   document.body.dataset.layout = l;
-  try { localStorage.setItem("cp.layout", l); } catch {}
+  try { localStorage.setItem(LAYOUT_MODE_KEY, l); } catch {}
   drawLayoutChoice();
   if (l === "classic") {
     sideShow("tree");
