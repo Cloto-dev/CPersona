@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:49df6215e2a97df1d45f129580548e398b40c130 -->
+<!-- i18n-source: docs/configuration.md@blob:5384229a048a49fee5df4fd89dc615a26e187abd -->
 
 # 設定リファレンス
 
@@ -35,6 +35,7 @@
 | `CPERSONA_DECLARED_FOLDERS` | `false` | `true` にすると、エージェントが project の下にフォルダを宣言し、各記憶とエピソードをそのどれか 1 つに入れられる。`store` が `folder` を受け取り、`organize_folders` ツールがフォルダの作成・名前の変更・移動・削除と、記録の出し入れをする。`list_memories` は `view: "folders"` で、`path` ([エージェント, project, フォルダ, ...]) のフォルダを開く。`recall` と `reconstruct` は `include_folders: true` で各記録のフォルダを返す。フォルダは答えを切り詰めた後で足し、mode の上限の外に置く (`folder_tokens`)。フォルダは分類するだけで絞り込まない。どの検索もフォルダを読まず、記録の行は書き換えないので、ロックした記録も入れられる。`check_health` に `folder_unfiled` (info) と `folder_integrity` が加わる。`false` ではどのツールの定義も応答も今までどおりで、2 つのテーブルはどちらでも作られ、空のまま |
 | `CPERSONA_DASHBOARD` | `true` | `open_dashboard` ツールを登録する。エージェントはこのツールで、このサーバーが使っているデータベースの読み取り専用の[ダッシュボード](operations.md#the-dashboard)を開き、人にアドレスを渡す。既定では stdio のトランスポートの時だけ登録する。HTTP ではページがサーバー自身のループバックで開き、人の手が届かないので、`CPERSONA_DASHBOARD_REMOTE` が on の時だけ登録する。`false` でツールの定義を消す。`cpersona dashboard --db <path>` はどちらでも使える |
 | `CPERSONA_DASHBOARD_REMOTE` | `false` | `true` で、HTTP のトランスポートが `/dashboard/` の下で[ダッシュボード](operations.md#the-dashboard)を配る。ページは、`open_dashboard` が認証を通ったクライアントに返す 1 回限りのリンクで開き、そのクライアントが読めるエージェントの分だけを見せる。`CPERSONA_DASHBOARD_PUBLIC_URL` が要る。stdio では効かない |
+| `CPERSONA_DASHBOARD_SESSION_KEY` | *(未設定)* | リモートのダッシュボードのセッションの Cookie に署名する秘密の値。未設定なら、初めて使う時に、サーバーがデータベースの横のファイル (`<名前>-dashboard.key`、所有者だけが読める) に作る。この値を変えるか、そのファイルを消すと、すべてのセッションが終わる |
 | `CPERSONA_DASHBOARD_PUBLIC_URL` | *(未設定)* | 人がこのサーバーに届くアドレス。リモートのダッシュボードのリンクはこのアドレスで始まる (例: `https://memory.example.com`)。ダッシュボードのセッションの Cookie は Secure なので、https か、localhost の http でなければならない |
 | `CPERSONA_FOLDER_MAX_DEPTH` | `6` | project の下に置けるフォルダの段の数 (1〜16)。下げても、それより深いフォルダは読めるまま残る。上限より下への新しいフォルダと記録の出し入れは拒まれ、`folder_integrity` が上限を超えたフォルダを挙げる |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`)。後述 |

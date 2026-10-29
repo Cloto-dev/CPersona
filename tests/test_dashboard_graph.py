@@ -354,3 +354,138 @@ async def test_the_endpoint_needs_the_token_and_never_sends_a_vector(db, served)
     assert b"embedding" not in body
     assert _get(served, "/api/graph?around=999999")[0] == 404
     assert _get(served, "/api/graph?around=x")[0] == 400
+
+
+# ---- The kept picture of a folder's network
+
+def _network(scope=None):
+    code, out = web.answer(database.DB_PATH, "/api/graph", {"path": "[]", "month": ""}, "t.db", scope)
+    assert code == 200, out
+    return out
+
+
+def _memory_ids(out):
+    return {n["id"] for n in out["nodes"] if n.get("kind") == "memory"}
+
+
+def _settled(timeout=10.0):
+    """Wait for background refreshes to finish."""
+    import time
+
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        with graph._pictures_lock:
+            if not graph._refreshing:
+                return
+        time.sleep(0.01)
+    raise AssertionError("the background refresh did not finish")
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_store_is_answered_from_the_kept_picture(db, monkeypatch):
+    await _add(db, "one", _at(0), _ts(0))
+    await _add(db, "two", _at(10), _ts(1))
+    computed = []
+    real = graph.folder
+    monkeypatch.setattr(graph, "folder", lambda *a, **k: computed.append(1) or real(*a, **k))
+    first = _network()
+    assert _network() is first and _network() is first
+    assert len(computed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_changed_store_answers_at_once_and_shows_the_change_next(db):
+    a = await _add(db, "one", _at(0), _ts(0))
+    assert _memory_ids(_network()) == {f"m:{a}"}
+    b = await _add(db, "two", _at(10), _ts(1))
+    # At once: the kept picture, while the new one is computed behind it.
+    assert _memory_ids(_network()) == {f"m:{a}"}
+    _settled()
+    assert _memory_ids(_network()) == {f"m:{a}", f"m:{b}"}
+
+
+@pytest.mark.asyncio
+async def test_a_declared_line_added_later_is_seen_too(db):
+    a = await _add(db, "one", _at(0), _ts(0))
+    b = await _add(db, "two", _at(90), _ts(1))
+    before = _network()
+    await db.execute(
+        "INSERT INTO relations (agent_id, subject_kind, subject_id, predicate, object_kind, object_id, declared_by, declared_at) "
+        "VALUES ('a', 'mem', ?, 'cites', 'mem', ?, 'a', 'x')",
+        (a, b),
+    )
+    await db.commit()
+    _network()
+    _settled()
+    assert len(_network()["links"]) > len(before["links"])
+
+
+@pytest.mark.asyncio
+async def test_a_kept_picture_is_never_shown_to_another_viewer(db):
+    from cpersona import acl
+    from cpersona.dashboard.scope import Scope
+
+    a = await _add(db, "alpha", _at(0), _ts(0), agent="a")
+    b = await _add(db, "bravo", _at(5), _ts(1), agent="b")
+    wide = _network(Scope({"*": acl.PERM_READ}))
+    assert _memory_ids(wide) == {f"m:{a}", f"m:{b}"}
+    narrow = _network(Scope({"a": acl.PERM_READ}))
+    assert _memory_ids(narrow) == {f"m:{a}"} and "bravo" not in json.dumps(narrow)
+
+
+@pytest.mark.asyncio
+async def test_an_old_picture_is_computed_again(db, monkeypatch):
+    import time
+
+    a = await _add(db, "one", _at(0), _ts(0))
+    _network()
+    # A record changed in place keeps the signature: only age brings it back.
+    await db.execute("UPDATE memories SET agent_id = 'renamed' WHERE id = ?", (a,))
+    await db.commit()
+    assert "renamed" not in json.dumps(_network())
+    now = time.monotonic()
+    monkeypatch.setattr(graph.time, "monotonic", lambda: now + graph.PICTURE_SECONDS + 1)
+    _network()
+    _settled()
+    assert "renamed" in json.dumps(_network())
+
+
+@pytest.mark.asyncio
+async def test_the_pictures_kept_are_bounded(db, monkeypatch):
+    await _add(db, "one", _at(0), _ts(0))
+    monkeypatch.setattr(graph, "PICTURE_MAX", 2)
+    for month in ("2026-08", "2026-09", "2026-10"):
+        web.answer(database.DB_PATH, "/api/graph", {"path": "[]", "month": month}, "t.db")
+    assert len(graph._pictures) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_picture_computed_in_the_background_stays_in_the_viewers_reach(db):
+    from cpersona import acl
+    from cpersona.dashboard.scope import Scope
+
+    only_a = Scope({"a": acl.PERM_READ})
+    a = await _add(db, "alpha", _at(0), _ts(0), agent="a")
+    _network(only_a)
+    a2 = await _add(db, "alpha two", _at(3), _ts(1), agent="a")
+    await _add(db, "bravo", _at(5), _ts(2), agent="b")
+    _network(only_a)
+    _settled()
+    out = _network(only_a)
+    assert _memory_ids(out) == {f"m:{a}", f"m:{a2}"} and "bravo" not in json.dumps(out)
+
+
+@pytest.mark.asyncio
+async def test_the_overview_starts_the_network_for_that_viewer(db, monkeypatch):
+    from cpersona import acl
+    from cpersona.dashboard.scope import Scope
+
+    a = await _add(db, "alpha", _at(0), _ts(0), agent="a")
+    await _add(db, "bravo", _at(5), _ts(1), agent="b")
+    only_a = Scope({"a": acl.PERM_READ})
+    assert web.answer(database.DB_PATH, "/api/overview", {}, "t.db", only_a)[0] == 200
+    _settled()
+    computed = []
+    monkeypatch.setattr(graph, "folder", lambda *a, **k: computed.append(1))
+    out = _network(only_a)  # ready: nothing is computed while the request waits
+    assert computed == [] and _memory_ids(out) == {f"m:{a}"}

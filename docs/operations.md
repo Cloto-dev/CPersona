@@ -514,10 +514,13 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   `CPERSONA_DASHBOARD_REMOTE=true` and `CPERSONA_DASHBOARD_PUBLIC_URL` set to the
   address people reach the server at, the HTTP transport serves the page under
   `/dashboard/` and registers `open_dashboard` too. Asked by an authenticated
-  client, the tool returns a new link each time, which opens once within two
-  minutes. The link's code is after `#`, so no request line, access log or Referer
+  client, the tool returns a new link each time, which opens once within ten
+  minutes; the tool tells the agent to open it in the person's browser itself when
+  it can. The link's code is after `#`, so no request line, access log or Referer
   carries it: the page sends it once in a header and gets a session cookie for it
-  (HttpOnly, Secure, SameSite=Strict, sent only to `/dashboard/`, for eight hours).
+  (HttpOnly, Secure, SameSite=Strict, sent only to `/dashboard/`). The session lasts
+  30 days and is renewed once half of it has passed, so a bookmark of the page
+  keeps working for as long as it is used.
   The address must be https, or plain http on localhost; a browser drops a Secure
   cookie from any other http address, so the tool refuses one.
   - **Who sees what**: only the agents the client's grants let it read. Memories,
@@ -528,10 +531,17 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
     per-subject connection cannot open it yet.
   - **What it answers**: GET and HEAD only. Everything outside `/dashboard/`,
     the bare `/dashboard` included, still needs the bearer token.
-  - **Links and sessions live in the server process**, so a restart ends them and
-    the person asks the agent for a new link. Each client holds at most 20 unused
-    links and 20 sessions; past that its own oldest goes first, never another
-    client's.
+  - **The session is the cookie**, signed by the server: it names the client and
+    when it ends, and its signature covers the client's current bearer token
+    (the server's token without an ACL). A restart keeps it. Replacing the
+    client's token, or removing the client from the ACL, ends every session it
+    opened; the grants are read from the ACL on every request. The settings'
+    *Sign out* drops the cookie in that browser. The signing key is
+    `CPERSONA_DASHBOARD_SESSION_KEY` when set, else a file beside the store
+    (`<name>-dashboard.key`, owner-only) made on first use; deleting it ends
+    every session. Unused links live in the server process, so a restart ends
+    them; each client holds at most 20, and past that its own oldest goes first,
+    never another client's.
   - **Memory**: pictures computed for the page are cached per set of grants, so a
     server whose clients hold many different grants holds a cache for each.
 
@@ -550,12 +560,17 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   requests carrying it, only for a Host header naming the loopback address, and
   only to GET. Another user of the same machine can reach the port but not the
   data. `--no-browser` prints the address without opening it.
-- **How it is laid out**: a column of icons on the left (overview, memories,
-  network, episodes, entities), a side panel that browses the logical directory or
-  searches, and tabs. Each memory opens in a tab of its own, and each tab has its
-  own back and forward (Alt+← / Alt+→). Ctrl or ⌘ with K, O or P opens the command
-  palette. The settings at the foot of the side panel are kept in the browser.
-- **Search**, in the side panel, finds memories whose text holds every word typed,
+- **How it is laid out**: two layouts, chosen in the settings (the gear at the
+  foot of the side panel) and kept in the browser. *Standard*, the default, is
+  one side panel of the views (overview, memories, network, episodes, entities)
+  with a search box, over the logical directory; a memory opens in a drawer
+  beside the list, so the list does not move. The search box opens the memory
+  list on the words typed, within the folder the list shows. *Tabbed* puts a
+  column of icons on the left, a side panel that browses the logical directory or
+  searches, and tabs: each memory opens in a tab of its own, and each tab has its
+  own back and forward (Alt+← / Alt+→). Switching keeps the memory that is open.
+  In both, Ctrl or ⌘ with K, O or P opens the command palette.
+- **Search**, in the tabbed layout's side panel, finds memories whose text holds every word typed,
   and shows the lines that matched. `"a phrase"` matches as written and `-word`
   leaves out memories holding the word. `path:` matches agent/project/channel,
   `agent:` the agent, `tag:` an entity's name or alias that the memory mentions,
@@ -564,18 +579,10 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   are locked, have been recalled, or hold a vector; `[project:x]` and
   `[channel:x]` keep that exact project or channel. Aa matches case, and the
   panel's own settings sort the results by newest, oldest or most recalled.
-- **The network opens on every memory**, each a point, as a notes app's graph
-  view draws every note (the next item but one). Three other lenses draw groups
-  instead. *Folders* makes each agent, project, channel and month a point as
-  large as the memories it holds; past 1,500 points the months are left out. *Entities* makes each declared entity a point as large as the
-  memories that mention it, joined by declared relations and by being mentioned
-  in the same memory. *Similar groups* sorts the memories by their stored vectors
-  with seeded spherical k-means (about √(n/2) groups, the best of four starts,
-  so the same store groups the same way) and names each group by quoting the
-  start of the memory nearest its centre; no model is called. Groups are joined
-  to the three whose centres are nearest. Only vectors of the most common width
-  are grouped, and a store with more than 20,000 of them is not grouped yet.
-  Selecting a point draws all of its own memories.
+- **The network is of memories**: every memory, each a point, as a notes app's
+  graph view draws every note (the next item but one), or the memories of a
+  folder, a month, an entity or a group of similar memories when a link narrows
+  it.
 - **How it looks**: on a dark ground, memories are small plain dots and each
   agent is a flat dot carrying a figure (stripes, a crescent, a ring, dots or
   quarters) chosen from its id, so the same agent looks the same on every load.
@@ -594,9 +601,17 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   draws every note; the nearest neighbours are found 1,024 rows at a time, so the
   similarities held at once grow with the folder rather than with its square, and
   the page carries no memory text (a selected point fetches its own). Past 1,000
-  points the page sums the push between points by Barnes–Hut, shows the picture
-  after a short warm-up and lets it settle on screen, and starts with the lines
-  from agents to their memories hidden. "See it in the network" on a memory draws that memory and the
+  points the page sums the push between points by Barnes–Hut and starts with the
+  lines from agents to their memories hidden. Nothing is settled before the first
+  frame: a picture seen before is drawn where it was left, its new points find
+  their place on screen while the rest hold still, and a first view settles on
+  screen and is framed as it goes. The server keeps the last picture of each
+  folder for each viewer. When the store has changed since, it answers with the
+  kept picture at once and computes a new one in the background for the next
+  request, so a memory stored a moment ago can be missing from one opening; a
+  kept picture is computed again at least every ten minutes. Reading the
+  overview starts the whole store's picture in the background, so the network is
+  usually ready when it is opened. "See it in the network" on a memory draws that memory and the
   memories reached from it in two nearest-neighbour steps across the whole
   store. Vectors are compared only with vectors of the same width, are held in
   the process serving the dashboard for up to five minutes while the store keeps the same
