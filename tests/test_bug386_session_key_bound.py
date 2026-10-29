@@ -39,9 +39,15 @@ async def _call(name: str, arguments: dict) -> types.CallToolResult:
     return (await handler(request)).root
 
 
+# The bound as published (docs/upgrading-to-2.6.md). Written out rather than read
+# from SESSION_KEY_MAX_CHARS, so that raising the constant fails here instead of
+# moving the test's bound along with it.
+PUBLISHED_BOUND = 256
+
+
 @pytest.mark.asyncio
 async def test_a_key_past_the_bound_is_refused_at_the_boundary():
-    result = await _call("persistence_status", {"session_key": "k" * (SESSION_KEY_MAX_CHARS + 1)})
+    result = await _call("persistence_status", {"session_key": "k" * (PUBLISHED_BOUND + 1)})
     # Before the fix the call succeeded and answered scope "session".
     assert result.isError is True
     text = result.content[0].text
@@ -50,7 +56,7 @@ async def test_a_key_past_the_bound_is_refused_at_the_boundary():
 
 @pytest.mark.asyncio
 async def test_a_key_at_the_bound_is_accepted():
-    result = await _call("persistence_status", {"session_key": "k" * SESSION_KEY_MAX_CHARS})
+    result = await _call("persistence_status", {"session_key": "k" * PUBLISHED_BOUND})
     assert result.isError is not True, result.content[0].text
     assert '"scope": "session"' in result.content[0].text
 

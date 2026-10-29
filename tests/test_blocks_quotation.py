@@ -131,6 +131,26 @@ def test_a_qualifier_on_the_next_line_is_still_attached(text):
     assert complete
 
 
+@pytest.mark.parametrize(
+    "text, node_bound",
+    [
+        ("Enable caching.\n\nHowever, never in production.", 16),
+        ("Enable caching.\n\nHowever, never in production.", 17),
+        ("本番でキャッシュを有効にする。\n\nただし、夜間は無効にする。", 16),
+    ],
+)
+def test_a_qualifier_behind_a_blank_block_is_still_attached(text, node_bound):
+    """bug-445: the divider now joins a line break to the next sentence, so the
+    case above no longer leaves a block of whitespace between the two. A node
+    boundary inside the line breaks still does, and the forward check has to read
+    through that block to the qualifier."""
+    spans = [(s.start, s.end) for s in blocks.segment(text, node_bounds=(node_bound,))]
+    assert any(not text[a:b].strip() for a, b in spans), "the case no longer has a blank block"
+    start, end, complete = blocks.context_range(text, spans, 0)
+    assert text[start:end] == text
+    assert complete
+
+
 @pytest.mark.parametrize("text", ["Enable caching.\nDeploy on Monday.", "Enable caching.\n\nDeploy on Monday."])
 def test_a_line_break_does_not_join_independent_sentences(text):
     """The control: reading through the blank must not take whatever comes next."""
