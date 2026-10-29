@@ -35,7 +35,7 @@ import time
 from collections.abc import Callable
 from urllib.parse import parse_qs
 
-from cpersona import acl
+from cpersona import acl, fileperms
 from cpersona.dashboard import web
 from cpersona.dashboard.scope import Scope
 
@@ -100,19 +100,15 @@ def _signing_key(db_path: str) -> bytes:
     stem = os.path.splitext(os.path.basename(db_path))[0] or "cpersona"
     path = os.path.join(os.path.dirname(os.path.abspath(db_path)), f"{stem}-dashboard.key")
     try:
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            with open(path) as f:
-                text = f.read().strip()
-            if len(text) < 32:
-                raise ValueError(f"{path} holds no key")
-            _key = hashlib.sha256(text.encode()).digest()
-        else:
-            text = secrets.token_hex(32)
-            with os.fdopen(fd, "w") as f:
-                f.write(text + "\n")
-            _key = hashlib.sha256(text.encode()).digest()
+        # Made owner-only and never replaced: an existing key file is the one in use.
+        if fileperms.create_private(path):
+            with fileperms.open_private(path, "w") as f:
+                f.write(secrets.token_hex(32) + "\n")
+        with open(path) as f:
+            text = f.read().strip()
+        if len(text) < 32:
+            raise ValueError(f"{path} holds no key")
+        _key = hashlib.sha256(text.encode()).digest()
     except (OSError, ValueError) as e:
         # Sessions still work, but end when the process does.
         logger.warning("dashboard sessions will not outlive this process: %s", e)
