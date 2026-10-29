@@ -505,6 +505,21 @@ async def test_records_that_need_no_blocks_do_not_use_up_the_record_cap(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_records_that_need_no_blocks_do_not_use_up_the_character_cap(monkeypatch, enabled):
+    """The record cap counts only records that reached the backend, so the test
+    above holds even when such a record goes through the build. The character cap
+    counts what the build read: a one-block record taken through it spends the cap
+    that the next record that needs blocks would have used."""
+    async with _TempDB() as tmp:
+        first, second = _many(1), _many(2)
+        seeded = await _seed(tmp, monkeypatch, [first] + [f"{ONE} {i}" for i in range(3)] + [second])
+        monkeypatch.setattr(blocks, "BACKFILL_CHAR_CAP", len(first) + 1)
+        report = await blocks.backfill({})
+        assert "built 2 records" in report and "3 needed none" in report, report
+        assert len(await tmp.blocks_of(parent_id=seeded[-1][0])) > 1
+
+
+@pytest.mark.asyncio
 async def test_a_record_that_needs_no_blocks_opens_no_connection_of_its_own(monkeypatch, enabled):
     """Its node ends come from the page's one query, not a query of its own."""
     async with _TempDB() as tmp:

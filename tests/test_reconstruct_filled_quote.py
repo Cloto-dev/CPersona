@@ -401,6 +401,26 @@ async def test_an_episode_head_quote_is_the_recall_excerpt_of_the_same_episode(f
 
 @pytest.mark.usefixtures("blocks_off")
 @pytest.mark.asyncio
+async def test_an_episode_without_blocks_is_measured_in_its_summary_on_both_sides(filling, monkeypatch):
+    """The case above with no block set: the recall excerpt is then taken from the
+    text the recall row carries, which for an episode starts with its display
+    label. Read as it is shown, the label moves every passage, and the excerpt no
+    longer matches the head quote taken from the stored summary."""
+    monkeypatch.setattr(config, "RECALL_EXCERPT_CHARS", 800)
+    async with _TempDB() as tmp:
+        await _store(tmp)
+        archived = await memory_handlers.do_archive_episode(AGENT, [], summary=LONG)
+        ref = f"ep:{archived['episode_id']}"
+        await tmp.drain()
+        item, _ = await _item(ref)
+        recalled = await memory_handlers.do_recall(AGENT, QUERY, limit=10, deep=True, excerpt_chars=800)
+        row = next(m for m in recalled["messages"] if m.get("ref") == ref)
+        assert item["content"] == row["excerpt"]
+        assert item["quote_basis"] == row["excerpt_basis"]
+
+
+@pytest.mark.usefixtures("blocks_off")
+@pytest.mark.asyncio
 async def test_excerpts_read_no_record_the_recall_row_already_carries(filling):
     """bug-491: each record without a current block set was read again, one SELECT per
     ref, although its text was in the row being turned into the message."""

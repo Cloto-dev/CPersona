@@ -1371,7 +1371,7 @@ MUTATIONS += [
         find="or _starts_with_qualifier(_following(text, spans, last + 1))",
         replace="or _starts_with_qualifier(text[spans[last + 1][0] : spans[last + 1][1]])",
         breaks="'Enable caching.' is quoted alone and complete when 'However, never in production.' follows on the next line",
-        expect="test_blocks_quotation.py::test_a_qualifier_on_the_next_line_is_still_attached",
+        expect="test_blocks_quotation.py::test_a_qualifier_behind_a_blank_block_is_still_attached",
     ),
     Mutation(
         id="M121",
@@ -2010,8 +2010,8 @@ MUTATIONS += [
         file='cpersona/blocks.py',
         find='                    if len(segment(text, node_bounds=node_bounds)) <= 1:\n',
         replace='                    if False:\n',
-        breaks='one-block records use up the record cap and stop the sweep before the records that need blocks',
-        expect='test_blocks_backfill.py::test_records_that_need_no_blocks_do_not_use_up_the_record_cap',
+        breaks='one-block records spend the character cap and stop the sweep before the records that need blocks',
+        expect='test_blocks_backfill.py::test_records_that_need_no_blocks_do_not_use_up_the_character_cap',
     ),
     Mutation(
         id='M187',
@@ -2151,7 +2151,7 @@ MUTATIONS += [
         find='    known = {ref: stored_text(ref, shown) for ref, shown in (texts or {}).items() if shown}\n',
         replace='    known = {ref: shown for ref, shown in (texts or {}).items() if shown}\n',
         breaks="an episode's recall excerpt is taken from its display string and differs from its head quote",
-        expect='test_reconstruct_filled_quote.py::test_an_episode_head_quote_is_the_recall_excerpt_of_the_same_episode',
+        expect='test_reconstruct_filled_quote.py::test_an_episode_without_blocks_is_measured_in_its_summary_on_both_sides',
     ),
     Mutation(
         id='M201',
