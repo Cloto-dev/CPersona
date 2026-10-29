@@ -634,6 +634,35 @@ function layerRow(kind, n, on = true) {
 // rest; where a memory sits already says whose it is.
 const startsHidden = (k, G) => k === "structure" && (G.nodes || []).length > 1000;
 
+// A folder's network, kept in the page: an opening draws what is kept at once and
+// fetches it again behind the drawing, for the next one. The whole store's network is
+// fetched as soon as the page has opened, so the first opening does not wait either.
+const NET_KEEP = 6;
+const netKept = new Map(); // request parameters -> the answer's text
+async function apiText(path, params) {
+  const r = await fetch(path.replace(/^\//, "") + "?" + new URLSearchParams(params), token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+  if (r.status === 401) throw new Error(t("noToken"));
+  const text = await r.text();
+  if (!r.ok) throw new Error(JSON.parse(text).error || r.statusText);
+  return text;
+}
+function keepNetwork(key, text) {
+  netKept.delete(key);
+  netKept.set(key, text);
+  while (netKept.size > NET_KEEP) netKept.delete(netKept.keys().next().value);
+}
+async function folderNetwork(params) {
+  const key = JSON.stringify(params), kept = netKept.get(key);
+  const fresh = apiText("/api/graph", params).then(text => { keepNetwork(key, text); return text; });
+  if (kept) { fresh.catch(() => {}); return JSON.parse(kept); }
+  return JSON.parse(await fresh);
+}
+function prefetchNetwork() {
+  if (!overviewData?.counts.memories) return;
+  const params = { path: "[]", month: "" }, key = JSON.stringify(params);
+  if (!netKept.has(key)) apiText("/api/graph", params).then(text => { if (!netKept.has(key)) keepNetwork(key, text); }).catch(() => {});
+}
+
 async function renderGraph() {
   const page = $("page");
   if (!overviewData.counts.memories) return renderEmptyMemories();
@@ -642,7 +671,7 @@ async function renderGraph() {
   const G = state.around ? await api("/api/graph", { around: state.around })
     : state.cluster ? await api("/api/graph", { cluster_of: state.cluster })
     : state.entity ? await api("/api/graph", { entity: state.entity })
-    : await api("/api/graph", { path: JSON.stringify(state.path), month: state.month });
+    : await folderNetwork({ path: JSON.stringify(state.path), month: state.month });
   const lens = "memories";
   const back = `<div class="crumbs"><button id="backBtn">${t("backToMap")}</button></div>`;
   const shown = G.shown != null ? `<span class="hint">${esc(t("nGraph")(G.shown, G.total))}${G.without_vector ? "<br>" + esc(t("noVectorN")(G.without_vector)) : ""}</span>` : "";
@@ -1454,6 +1483,7 @@ function wire() {
   sideShow(H0.get("side") === "search" && layout === "tabs" ? "search" : "tree");
   if (H0.get("sq")) { $("sideQ").value = H0.get("sq"); sqToggleHelp(); sideSearch(H0.get("sq")).catch(() => {}); }
   await show(cur().hist[cur().pos]);
+  setTimeout(prefetchNetwork, 0);
   if (openMemory) await openDetail(openMemory).catch(fail);
   if (H0.get("palette") === "1") openPalette(H0.get("pq") || "");
 })();

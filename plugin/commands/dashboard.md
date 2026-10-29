@@ -1,7 +1,12 @@
 ---
-description: Open the read-only CPersona dashboard for this memory store
+description: Open the read-only CPersona dashboard for this memory store in the browser
 ---
 
-Call CPersona's `open_dashboard` tool and give me the `url` it returns as a link I can open.
+Open the CPersona dashboard for me now, in my browser:
 
-If the tool is not available, tell me that the dashboard opens from the agent only when CPersona runs on this machine (the stdio transport) with `CPERSONA_DASHBOARD` on, and that `cpersona dashboard --db <path to the database>` opens it from a terminal.
+1. Call CPersona's `open_dashboard` tool with `open_browser: true`.
+2. If the result says `"opened": true`, the page is already open: tell me so in one line.
+3. Otherwise, open the returned `url` in my browser yourself, right away, with this machine's command: `open "<url>"` on macOS, `xdg-open "<url>"` on Linux, `start "" "<url>"` on Windows. A link from a remote server opens once and only for ten minutes, so do not wait for me to click it. Then tell me in one line that it is open.
+4. Only if you cannot run a command here, give me the `url` as a link I can open.
+
+If the tool is not available, tell me why: the server registers it when CPersona runs on this machine (the stdio transport) with `CPERSONA_DASHBOARD` on, or on an HTTP server with `CPERSONA_DASHBOARD_REMOTE` on and `CPERSONA_DASHBOARD_PUBLIC_URL` set. From a terminal, `cpersona dashboard --db <path to the database>` opens it for a database on this machine.

@@ -509,7 +509,10 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   Opened this way the overview also shows the store's health, from the same
   checks as `check_health` without repairs. The page runs until the server stops.
   `CPERSONA_DASHBOARD=false` removes the tool. Over HTTP it is registered only with
-  the remote dashboard on (next item).
+  the remote dashboard on (next item). With the agent plugin, `/cpersona:dashboard`
+  asks the agent to open it in your browser: on this machine through the tool's
+  `open_browser`, and from a remote server by opening the link it returns at once,
+  so nobody copies a link by hand.
 - **On a server people reach remotely** (off by default): with
   `CPERSONA_DASHBOARD_REMOTE=true` and `CPERSONA_DASHBOARD_PUBLIC_URL` set to the
   address people reach the server at, the HTTP transport serves the page under
@@ -611,7 +614,10 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   request, so a memory stored a moment ago can be missing from one opening; a
   kept picture is computed again at least every ten minutes. Reading the
   overview starts the whole store's picture in the background, so the network is
-  usually ready when it is opened. "See it in the network" on a memory draws that memory and the
+  usually ready when it is opened. The page in turn fetches the whole store's
+  network as soon as it has opened and keeps the last few networks it fetched:
+  opening one draws the kept one at once and fetches it again behind the drawing,
+  for the next opening. "See it in the network" on a memory draws that memory and the
   memories reached from it in two nearest-neighbour steps across the whole
   store. Vectors are compared only with vectors of the same width, are held in
   the process serving the dashboard for up to five minutes while the store keeps the same
