@@ -3148,8 +3148,11 @@ _OPEN_REMOTE_DASHBOARD_DESCRIPTION = (
     "Make a link to the read-only dashboard of this memory store, for the person to "
     "open in a browser: what is stored and when, the logical directory, and each "
     "memory in full with how it is split. It shows only the agents this connection "
-    "can read, writes nothing, and opens once within two minutes; each call makes a "
-    "new link. Give the returned url to the person. open_browser is ignored here."
+    "can read and writes nothing. The link opens once, within ten minutes, and then "
+    "the browser stays signed in for 30 days, so the person can bookmark the page; "
+    "each call makes a new link. If you can open a browser on the person's machine "
+    "(for example `open <url>` on macOS), open the url yourself right away; otherwise "
+    "give it to the person. open_browser is ignored here."
 )
 
 
@@ -3203,19 +3206,22 @@ def _open_remote_dashboard() -> dict:
             "for localhost), because the dashboard's session cookie is sent over https only."
         )
     try:
-        viewer = dashboard_scope.for_principal()
+        # Refuses a caller the dashboard cannot serve; the session reads the grants
+        # again on every request, so the scope itself is not kept.
+        dashboard_scope.for_principal()
     except PermissionError as e:
         return error_response(str(e))
     principal = acl.current_principal()
-    code = dashboard_remote.issue_link(viewer, principal.client_id if principal is not None else "")
+    code = dashboard_remote.issue_link(principal.client_id if principal is not None and acl.is_active() else "")
     return {
         "ok": True,
         "url": f"{config.DASHBOARD_PUBLIC_URL}{dashboard_remote.PREFIX}/#c={code}",
         "read_only": True,
         "expires_in_seconds": dashboard_remote.LINK_SECONDS,
         "hint": (
-            "Give this address to the person. It opens once, within two minutes, and "
-            "shows only the agents this connection can read."
+            "Open this address in the person's browser yourself if you can; otherwise "
+            "give it to them. It opens once, within ten minutes, signs the browser in "
+            "for 30 days, and shows only the agents this connection can read."
         ),
     }
 
@@ -4051,7 +4057,7 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
         # Ahead of Mount("/"), which matches every path. The dashboard checks its
         # own session cookie; the bearer check lets only this prefix through.
         routes = [
-            Mount(dashboard_remote.PREFIX, app=dashboard_remote.make_app(config.DB_PATH, _dashboard_health))
+            Mount(dashboard_remote.PREFIX, app=dashboard_remote.make_app(config.DB_PATH, _dashboard_health, bearer=auth_token))
         ] + routes
     if oauth is not None:
         # RFC 9728 (docs/OAUTH_DESIGN.md §7). The SDK builds the route and the

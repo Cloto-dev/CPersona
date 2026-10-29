@@ -1,4 +1,4 @@
-"""The dashboard over HTTP (2.6.15): one-time links, sessions, and each viewer's reach.
+"""The dashboard over HTTP (2.6.15): one-time links, signed sessions, and each viewer's reach.
 
 Pinned on real requests through the server's own app (``_build_http_app``), so the
 mount, the bearer pass-through and the dashboard's own session check are tested as
@@ -31,7 +31,9 @@ async def db(monkeypatch):
     graph.clear_cache()
     overall.clear_cache()
     monkeypatch.setattr(config, "DB_PATH", database.DB_PATH)
+    monkeypatch.setattr(config, "DASHBOARD_SESSION_KEY", "key-for-tests")
     yield conn
+    acl.activate(None)
     remote.clear()
     graph.clear_cache()
     overall.clear_cache()
@@ -120,28 +122,107 @@ async def test_computed_pictures_are_not_shared_across_viewers(db):
 
 # ---- Links and sessions
 
-def test_a_link_opens_once():
-    code = remote.issue_link(Scope(None))
-    assert remote.redeem(code) is not None
-    assert remote.redeem(code) is None
-    assert remote.redeem("never-issued") is None
+def _clients(**grants):
+    """An ACL whose client ``name`` holds token ``tok-<name>`` and the grants given."""
+    acl.activate(acl.AclConfig(
+        grants_by_client=dict(grants),
+        token_entries=tuple((f"tok-{name}", name) for name in grants),
+    ))
 
 
-def test_a_link_expires(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr(remote.time, "monotonic", lambda: now[0])
-    code = remote.issue_link(Scope(None))
+def _clock(monkeypatch):
+    now = [1_800_000_000.0]
+    monkeypatch.setattr(remote.time, "time", lambda: now[0])
+    return now
+
+
+def test_a_link_opens_once(db):
+    code = remote.issue_link()
+    assert remote.redeem(code, database.DB_PATH) is not None
+    assert remote.redeem(code, database.DB_PATH) is None
+    assert remote.redeem("never-issued", database.DB_PATH) is None
+
+
+def test_a_link_lasts_ten_minutes(db, monkeypatch):
+    now = _clock(monkeypatch)
+    code = remote.issue_link()
+    now[0] += remote.LINK_SECONDS - 1
+    assert remote.redeem(code, database.DB_PATH) is not None
+    code = remote.issue_link()
     now[0] += remote.LINK_SECONDS + 1
-    assert remote.redeem(code) is None
+    assert remote.redeem(code, database.DB_PATH) is None
+    assert remote.LINK_SECONDS == 600
 
 
-def test_a_session_expires(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr(remote.time, "monotonic", lambda: now[0])
-    sid = remote.redeem(remote.issue_link(Scope(None)))
-    assert remote.session(sid) is not None
-    now[0] += remote.SESSION_SECONDS + 1
-    assert remote.session(sid) is None
+def test_a_session_lasts_thirty_days_and_is_renewed_while_used(db, monkeypatch):
+    now = _clock(monkeypatch)
+    value = remote.redeem(remote.issue_link(), database.DB_PATH)
+    viewer, renewed = remote.session(value, database.DB_PATH)
+    assert viewer.grants is None and renewed is None  # fresh: nothing to renew
+    now[0] += remote.SESSION_SECONDS / 2 + 1
+    _, renewed = remote.session(value, database.DB_PATH)
+    assert renewed is not None and renewed != value
+    now[0] += remote.SESSION_SECONDS / 2  # past the first cookie's end
+    assert remote.session(value, database.DB_PATH) is None
+    assert remote.session(renewed, database.DB_PATH) is not None
+    assert remote.SESSION_SECONDS == 30 * 86400
+
+
+def test_a_session_outlives_a_restart_through_the_key_file(db, monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DASHBOARD_SESSION_KEY", "")
+    store_path = str(tmp_path / "memories.db")
+    remote.clear()
+    value = remote.redeem(remote.issue_link(), store_path)
+    key_file = tmp_path / "memories-dashboard.key"
+    assert key_file.exists() and (key_file.stat().st_mode & 0o777) == 0o600
+    remote.clear()  # what a restart forgets
+    assert remote.session(value, store_path) is not None
+    key_file.unlink()  # a new key ends every session
+    remote.clear()
+    assert remote.session(value, store_path) is None
+
+
+def test_replacing_the_token_or_removing_the_client_ends_the_session(db):
+    _clients(v={"a": acl.PERM_READ})
+    value = remote.redeem(remote.issue_link("v"), database.DB_PATH)
+    assert remote.session(value, database.DB_PATH) is not None
+    acl.activate(acl.AclConfig(grants_by_client={"v": {"a": acl.PERM_READ}}, token_entries=(("tok-new", "v"),)))
+    assert remote.session(value, database.DB_PATH) is None
+    _clients(v={"a": acl.PERM_READ})
+    assert remote.session(value, database.DB_PATH) is not None  # the old token again
+    _clients(w={"a": acl.PERM_READ})
+    assert remote.session(value, database.DB_PATH) is None
+    acl.activate(acl.AclConfig(
+        grants_by_client={"v": {"a": acl.PERM_READ}}, token_entries=(("tok-v", "v"),), per_subject_clients=frozenset({"v"})
+    ))
+    assert remote.session(value, database.DB_PATH) is None
+
+
+def test_without_an_acl_the_session_is_bound_to_the_servers_token(db):
+    value = remote.redeem(remote.issue_link(), database.DB_PATH, "server-token")
+    assert remote.session(value, database.DB_PATH, "server-token") is not None
+    assert remote.session(value, database.DB_PATH, "another-token") is None
+    # A link made for a client cannot open a session when no ACL names it.
+    assert remote.redeem(remote.issue_link("v"), database.DB_PATH, "server-token") is None
+
+
+def test_a_session_cookie_cannot_be_altered(db):
+    _clients(v={"a": acl.PERM_READ}, w={"*": acl.PERM_READ})
+    value = remote.redeem(remote.issue_link("v"), database.DB_PATH)
+    version, owner, until, mac = value.split(".")
+    wider = ".".join((version, remote._b64(b"w"), until, mac))
+    later = ".".join((version, owner, str(int(until) + 86400), mac))
+    for forged in (wider, later, value[:-2], "v1.x.y.z", "", "garbage"):
+        assert remote.session(forged, database.DB_PATH) is None, forged
+    assert remote.session(value, database.DB_PATH) is not None
+
+
+def test_the_grants_are_read_again_on_every_request(db):
+    _clients(v={"a": acl.PERM_READ})
+    value = remote.redeem(remote.issue_link("v"), database.DB_PATH)
+    assert remote.session(value, database.DB_PATH)[0].grants == {"a": acl.PERM_READ}
+    _clients(v={"b": acl.PERM_READ})
+    assert remote.session(value, database.DB_PATH)[0].grants == {"b": acl.PERM_READ}
 
 
 # ---- Wiring through the server's app
@@ -184,15 +265,24 @@ async def _get(app, path, query=b"", headers=(), method="GET"):
     return start["status"], {k.decode(): v.decode() for k, v in start.get("headers", [])}, body
 
 
+async def _login(app, owner=""):
+    """The cookie header a link for ``owner`` opens, through the app."""
+    code = remote.issue_link(owner)
+    status, headers, _ = await _get(app, "/dashboard/api/session", headers=[("x-dashboard-code", code)])
+    assert status == 204
+    return headers["set-cookie"].split(";")[0]
+
+
 @pytest.mark.asyncio
 async def test_a_link_becomes_a_session_cookie_that_reads_the_viewers_agents(db, monkeypatch):
     ids, _ = await _two_agents(db)
     app, reached = _app(monkeypatch)
-    code = remote.issue_link(Scope({"a": acl.PERM_READ}))
+    _clients(v={"a": acl.PERM_READ})
+    code = remote.issue_link("v")
     status, headers, _ = await _get(app, "/dashboard/api/session", headers=[("x-dashboard-code", code)])
     assert status == 204
     cookie = headers["set-cookie"]
-    for flag in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/dashboard/"):
+    for flag in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/dashboard/", f"Max-Age={remote.SESSION_SECONDS}"):
         assert flag in cookie
     sid = cookie.split(";")[0]
     status, _, body = await _get(app, "/dashboard/api/overview", headers=[("cookie", sid)])
@@ -252,7 +342,7 @@ async def test_the_tool_needs_a_public_address_and_returns_a_one_time_link(db, m
     # The code is after the "#", so no request line (and no access log) carries it.
     assert out["ok"] and out["url"].startswith("https://memory.example.com/dashboard/#c=")
     code = out["url"].split("#c=", 1)[1]
-    assert remote.redeem(code) is not None
+    assert remote.redeem(code, database.DB_PATH) is not None
 
 
 @pytest.mark.asyncio
@@ -317,8 +407,13 @@ async def test_store_health_is_shown_only_to_a_viewer_who_reads_every_agent(db, 
     app, _ = _app(monkeypatch)
 
     async def health_for(grants):
-        sid = remote.redeem(remote.issue_link(Scope(grants)))
-        return await _get(app, "/dashboard/api/health", headers=[("cookie", f"{remote.COOKIE}={sid}")])
+        if grants is None:
+            acl.activate(None)
+            cookie = await _login(app)
+        else:
+            _clients(v=grants)
+            cookie = await _login(app, "v")
+        return await _get(app, "/dashboard/api/health", headers=[("cookie", cookie)])
 
     status, _, body = await health_for(None)
     assert status == 200 and json.loads(body)["status"] == "healthy"
@@ -386,39 +481,36 @@ async def test_without_a_known_caller_no_link_is_made(db):
         acl.activate(None)
 
 
-def test_one_client_asking_again_and_again_pushes_out_only_its_own_links():
-    victim = remote.issue_link(Scope({"a": acl.PERM_READ}), "victim")
-    first = remote.issue_link(Scope({"b": acl.PERM_READ}), "flood")
+def test_one_client_asking_again_and_again_pushes_out_only_its_own_links(db):
+    _clients(victim={"a": acl.PERM_READ}, flood={"b": acl.PERM_READ})
+    victim = remote.issue_link("victim")
+    first = remote.issue_link("flood")
     for _ in range(remote.MAX_PER_OWNER * 3):
-        last = remote.issue_link(Scope({"b": acl.PERM_READ}), "flood")
-    assert remote.redeem(victim) is not None
-    assert remote.redeem(first) is None  # the flooding client's oldest went first
-    assert remote.redeem(last) is not None
-    # Sessions likewise: the victim's session outlives the other client's many.
-    victim_sid = remote.redeem(remote.issue_link(Scope({"a": acl.PERM_READ}), "victim"))
-    for _ in range(remote.MAX_PER_OWNER * 3):
-        remote.redeem(remote.issue_link(Scope({"b": acl.PERM_READ}), "flood"))
-    assert remote.session(victim_sid) is not None
+        last = remote.issue_link("flood")
+    assert remote.redeem(victim, database.DB_PATH) is not None
+    assert remote.redeem(first, database.DB_PATH) is None  # the flooding client's oldest went first
+    assert remote.redeem(last, database.DB_PATH) is not None
 
 
 @pytest.mark.asyncio
 async def test_two_session_cookies_are_not_guessed_between(db, monkeypatch):
     await _two_agents(db)
     app, _ = _app(monkeypatch)
-    sid = remote.redeem(remote.issue_link(Scope({"a": acl.PERM_READ})))
-    other = remote.redeem(remote.issue_link(Scope(None)))
-    ok = await _get(app, "/dashboard/api/overview", headers=[("cookie", f"{remote.COOKIE}={sid}")])
+    _clients(v={"a": acl.PERM_READ}, w={"*": acl.PERM_READ})
+    sid = await _login(app, "v")
+    other = await _login(app, "w")
+    ok = await _get(app, "/dashboard/api/overview", headers=[("cookie", sid)])
     assert ok[0] == 200
-    both = f"{remote.COOKIE}={other}; {remote.COOKIE}={sid}"
+    both = f"{other}; {sid}"
     assert (await _get(app, "/dashboard/api/overview", headers=[("cookie", both)]))[0] == 401
 
 
 @pytest.mark.asyncio
 async def test_a_head_request_neither_uses_a_code_up_nor_carries_a_body(db, monkeypatch):
     app, _ = _app(monkeypatch)
-    code = remote.issue_link(Scope(None))
+    code = remote.issue_link()
     assert (await _get(app, "/dashboard/api/session", headers=[("x-dashboard-code", code)], method="HEAD"))[0] == 405
-    assert remote.redeem(code) is not None
+    assert remote.redeem(code, database.DB_PATH, TOKEN) is not None
     status, headers, body = await _get(app, "/dashboard/", method="HEAD")
     assert status == 200 and body == b"" and int(headers["content-length"]) > 0
 
@@ -469,3 +561,46 @@ def test_over_http_any_authenticated_caller_may_ask_and_each_call_is_a_new_link(
     local = _remote_registration({})
     assert not local["authenticated_only"] and local["idempotent"]
     assert "127.0.0.1" in local["description"]
+
+
+@pytest.mark.asyncio
+async def test_a_used_session_is_renewed_and_signing_out_drops_it(db, monkeypatch):
+    await _two_agents(db)
+    now = _clock(monkeypatch)
+    app, _ = _app(monkeypatch)
+    cookie = await _login(app)
+    status, headers, _ = await _get(app, "/dashboard/api/overview", headers=[("cookie", cookie)])
+    assert status == 200 and "set-cookie" not in headers
+    now[0] += remote.SESSION_SECONDS / 2 + 1
+    status, headers, _ = await _get(app, "/dashboard/api/overview", headers=[("cookie", cookie)])
+    assert status == 200 and f"Max-Age={remote.SESSION_SECONDS}" in headers["set-cookie"]
+    renewed = headers["set-cookie"].split(";")[0]
+    now[0] += remote.SESSION_SECONDS / 2
+    assert (await _get(app, "/dashboard/api/overview", headers=[("cookie", cookie)]))[0] == 401
+    assert (await _get(app, "/dashboard/api/overview", headers=[("cookie", renewed)]))[0] == 200
+    status, headers, _ = await _get(app, "/dashboard/api/logout", headers=[("cookie", renewed)])
+    assert status == 204 and headers["set-cookie"].startswith(f"{remote.COOKIE}=;") and "Max-Age=0" in headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_the_servers_token_binds_the_session_through_the_app(db, monkeypatch):
+    await _two_agents(db)
+    app, _ = _app(monkeypatch)
+    cookie = await _login(app)
+    assert (await _get(app, "/dashboard/api/overview", headers=[("cookie", cookie)]))[0] == 200
+    # The same cookie under a server with another token is refused.
+    value = cookie.split("=", 1)[1]
+    assert remote.session(value, database.DB_PATH, "another") is None
+    assert remote.session(value, database.DB_PATH, TOKEN) is not None
+
+
+def test_a_client_without_a_static_token_is_held_to_its_name_and_its_row(db):
+    # A client that signs in another way (OAuth) has no static token to bind to, so
+    # what keeps its session its own is the name in the signature and its ACL row.
+    acl.activate(acl.AclConfig(grants_by_client={"v": {"a": acl.PERM_READ}, "w": {"*": acl.PERM_READ}}, token_entries=()))
+    value = remote.redeem(remote.issue_link("v"), database.DB_PATH)
+    assert remote.session(value, database.DB_PATH)[0].grants == {"a": acl.PERM_READ}
+    version, _owner, until, mac = value.split(".")
+    assert remote.session(".".join((version, remote._b64(b"w"), until, mac)), database.DB_PATH) is None
+    acl.activate(acl.AclConfig(grants_by_client={"w": {"*": acl.PERM_READ}}, token_entries=()))
+    assert remote.session(value, database.DB_PATH) is None
