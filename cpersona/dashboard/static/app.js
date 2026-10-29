@@ -875,11 +875,20 @@ function startGraph(G, lens) {
     cv.style.width = s.W + "px"; cv.style.height = s.H + "px";
   }
 
+  // The room around the picture is in screen pixels, not in the picture's units: names
+  // are drawn at one size whatever the zoom, so a margin in picture units shrank to a
+  // few pixels on a large picture and the name of an agent at the edge was cut off.
+  // Sideways it leaves half the widest agent's name; below, the name's height.
   function fitView() {
-    const xs = G.nodes.map(n => n.x), ys = G.nodes.map(n => n.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    const k = Math.min(2.4, s.W / (maxX - minX + 160), s.H / (maxY - minY + 160));
-    return { k, x: s.W / 2 - (minX + maxX) / 2 * k, y: s.H / 2 - (minY + maxY) / 2 * k };
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const n of G.nodes) { minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); }
+    ctx.font = `400 11.5px ${FONT}`;
+    let half = 0;
+    for (const n of G.nodes) if (hub(n) && n.name) half = Math.max(half, ctx.measureText(n.name).width / 2);
+    const padX = Math.max(40, half + 16), padTop = 48, padBottom = 40;
+    const k = Math.max(0.02, Math.min(2.4,
+      (s.W - 2 * padX) / Math.max(1, maxX - minX), (s.H - padTop - padBottom) / Math.max(1, maxY - minY)));
+    return { k, x: s.W / 2 - (minX + maxX) / 2 * k, y: padTop + (s.H - padTop - padBottom) / 2 - (minY + maxY) / 2 * k };
   }
   function fit() { Object.assign(s.view, fitView()); }
 
