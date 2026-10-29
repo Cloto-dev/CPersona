@@ -7,6 +7,11 @@ const T = {
     techAlways: "Always show details",
     calmDots: "Avoid clusters of dots", calmDotsHint: "Draws the network with lines, without bright clusters of dots.",
     sideSearch: "Search", settings: "Settings", back: "Back", forward: "Forward", newTab: "New tab", closeTab: "Close tab",
+    layout: "Layout", layoutClassic: "Standard", layoutTabs: "Tabbed", language: "Language",
+    layoutDesc: "Standard shows one view at a time and opens a memory beside the list. Tabbed adds a strip of view icons and opens each memory in a tab.",
+    techAlwaysDesc: "Show a memory's technical details opened, without a click.",
+    signOut: "Sign out", signOutDesc: "Signs this browser out. To open the dashboard again, ask your agent for a new link.",
+    signedOut: "Signed out. To open the dashboard again, ask your agent for a new link.",
     searchHits: n => `${n.toLocaleString()} result${n === 1 ? "" : "s"}`, searchMore: n => `${n} more: refine the words`,
     sideSearchPh: "Type to start searching…", matchCase: "Match case", searchSettings: "Search settings", searchOptions: "Search options",
     searchOps: [["path:", "match the agent / project / channel"], ["agent:", "match the agent's name"], ["tag:", "memories that mention an entity"],
@@ -70,16 +75,7 @@ const T = {
       entities: "Entities are names agents declared. A “mentioned in the same memory” line joins two entities one memory mentions; the thicker it is, the more such memories.",
       clusters: "Groups are computed from the stored embeddings. No agent made them, and they can change as memories are added.",
     },
-    lens: { memories: "Memories", tree: "Folders", entities: "Entities", clusters: "Similar groups" },
-    lensLead: {
-      memories: "Each point is a memory, gathered around its agent, newest 800 at most. Lines join memories with similar content.",
-      tree: "Each point is a folder: agent, project, channel and month. Its size is the number of memories in it.",
-      entities: "Each point is an entity an agent declared. Its size is the number of memories that mention it.",
-      clusters: "Each point is a group of memories with similar content. It is named by quoting the start of the memory nearest its centre.",
-    },
-    treeNoMonths: n => `Months (${n}) are left out: there are too many points.`,
-    clusterCount: (g, n) => `${n.toLocaleString()} memories in ${g} groups`,
-    notGrouped: n => `${n.toLocaleString()} with vectors of another width are not grouped.`,
+    networkLead: "Each point is a memory, gathered around its agent. Lines join memories with similar content.",
     tooMany: (n, max) => `${n.toLocaleString()} memories have vectors, more than can be grouped (${max.toLocaleString()}). Larger stores will be grouped once the time it takes has been measured.`,
     clusterTitle: "Similar group", entityTitle: name => `Memories that mention ${name}`, memoriesN: n => `${n.toLocaleString()} memories`,
     openGroup: "Open this folder's network", openCluster: "See this group's memories", openEntity: "See the memories that mention it",
@@ -93,6 +89,11 @@ const T = {
     techAlways: "詳細情報を常に開く",
     calmDots: "集合体回避モード", calmDotsHint: "点の集まりを目立たせず、線で描きます。",
     sideSearch: "検索", settings: "設定", back: "戻る", forward: "進む", newTab: "新しいタブ", closeTab: "タブを閉じる",
+    layout: "表示の方式", layoutClassic: "標準", layoutTabs: "タブ表示", language: "言語",
+    layoutDesc: "標準は、画面を 1 つずつ表示し、記憶の詳細を一覧の横に開きます。タブ表示は、左端にアイコンの列を置き、記憶を 1 件ずつタブで開きます。",
+    techAlwaysDesc: "記憶の技術的な情報を、クリックしなくても開いた状態で表示します。",
+    signOut: "ログアウト", signOutDesc: "このブラウザからログアウトします。もう一度開くには、エージェントに新しいリンクを頼んでください。",
+    signedOut: "ログアウトしました。もう一度開くには、エージェントに新しいリンクを頼んでください。",
     searchHits: n => `${n.toLocaleString()} 件の結果`, searchMore: n => `ほかに ${n} 件あります。語を足して絞ってください`,
     sideSearchPh: "入力して検索を開始...", matchCase: "大文字と小文字を区別", searchSettings: "検索の設定", searchOptions: "検索オプション",
     searchOps: [["path:", "エージェント / プロジェクト / チャンネルに一致"], ["agent:", "エージェント名に一致"], ["tag:", "実体に言及している記憶を検索"],
@@ -156,16 +157,7 @@ const T = {
       entities: "実体は、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
       clusters: "まとまりは、保存された埋め込みから計算したものです。エージェントが分けたものではありません。記憶が増えると、分け方が変わることがあります。",
     },
-    lens: { memories: "記憶", tree: "分け方", entities: "実体", clusters: "内容の近いまとまり" },
-    lensLead: {
-      memories: "記憶を点にして、エージェントのまわりに集めています。新しい順に 800 件までです。線は、内容が似ている記憶どうしを結んでいます。",
-      tree: "記憶の分け方 (エージェント・プロジェクト・チャンネル・月) を点にしています。点の大きさは記憶の件数です。",
-      entities: "エージェントが宣言した実体を点にしています。点の大きさは、その実体に言及している記憶の件数です。",
-      clusters: "内容の近い記憶をまとめて点にしています。点の名前は、まとまりの中心にいちばん近い記憶の冒頭の引用です。",
-    },
-    treeNoMonths: n => `点が多いので、月 (${n} 件) は省いています。`,
-    clusterCount: (g, n) => `${n.toLocaleString()} 件の記憶を ${g} のまとまりに分けています`,
-    notGrouped: n => `幅の違うベクトルを持つ ${n.toLocaleString()} 件は、まとめていません。`,
+    networkLead: "記憶を点にして、エージェントのまわりに集めています。線は、内容が似ている記憶どうしを結んでいます。",
     tooMany: (n, max) => `ベクトルを持つ記憶が ${n.toLocaleString()} 件あり、まとめられる上限 (${max.toLocaleString()} 件) を超えています。この規模での計算時間を測ってから対応します。`,
     clusterTitle: "内容の近いまとまり", entityTitle: name => `${name} に言及している記憶`, memoriesN: n => `${n.toLocaleString()} 件の記憶`,
     openGroup: "このフォルダの図を開く", openCluster: "このまとまりの記憶を図で見る", openEntity: "言及している記憶を図で見る",
@@ -188,12 +180,14 @@ try {
   else token = sessionStorage.getItem("cp.token") || "";
 } catch {}
 
-const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lens: "memories", lang: "en" };
+const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lang: "en" };
+// The layout this browser chose in the settings; the classic one unless it chose tabs.
+let layout = "classic";
+try { if (localStorage.getItem("cp.layout") === "tabs") layout = "tabs"; } catch {}
+document.body.dataset.layout = layout;
 for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
-// The network opens on every memory at once; the other lenses draw groups of them.
-if (["memories", "tree", "entities", "clusters"].includes(H0.get("lens"))) state.lens = H0.get("lens");
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
 try { state.lang = localStorage.getItem("cp.lang") || (navigator.language || "").startsWith("ja") && "ja" || "en"; } catch {}
 if (H0.get("lang")) state.lang = H0.get("lang");
@@ -248,7 +242,6 @@ function saveHash() {
   if (state.month) h.set("month", state.month);
   if (state.id) h.set("id", state.id);
   for (const k of ["around", "cluster", "entity"]) if (state[k]) h.set(k, state[k]);
-  if (state.lens !== "memories") h.set("lens", state.lens);
   history.replaceState(null, "", "#" + h);
 }
 
@@ -273,7 +266,10 @@ function applyLang() {
     if (el.tagName === "BUTTON") el.setAttribute("aria-label", t(el.dataset.titleT));
   }
   $("sideQ").placeholder = t("sideSearchPh");
+  $("cnavQ").placeholder = t("searchPh");
+  $("cnavQ").setAttribute("aria-label", t("searchPh"));
   for (const b of document.querySelectorAll("[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang));
+  drawLayoutChoice();
   $("paletteInput").placeholder = t("palettePh");
   $("kbd").innerHTML = t("kbd").map(k => `<span>${esc(k)}</span>`).join("");
   if (overviewData) $("schemaLine").textContent = `Schema ${overviewData.schema} · ${t("readOnly")}`;
@@ -438,12 +434,22 @@ function spans(parts, total, kind) {
 // A memory opens in a tab of its own, as a note does in a notes app; a tab already
 // showing it is brought forward instead of opening another.
 async function openDetail(id) {
+  // The classic layout opens a memory in a drawer over the list, so the list stays.
+  if (layout === "classic") {
+    state.id = id;
+    saveHash();
+    keepPlace();
+    for (const b of document.querySelectorAll(".row")) b.classList.toggle("sel", Number(b.dataset.id) === id);
+    await renderDetail(id, $("drawer"));
+    $("drawer").classList.add("open");
+    return;
+  }
   const at = tabs.findIndex(tb => { const c = tb.hist[tb.pos]; return c.view === "memory" && c.id === id; });
   if (at >= 0) return switchTab(at);
   return openTab({ view: "memory", id, q: state.q });
 }
 
-async function renderDetail(id) {
+async function renderDetail(id, d = $("page")) {
   const m = await api("/api/memory", { id });
   let src = m.source;
   try { const s = JSON.parse(m.source); src = [s.type, s.name || s.id].filter(Boolean).join(" · "); } catch {}
@@ -452,9 +458,8 @@ async function renderDetail(id) {
   const blocks = m.blocks.map(b => ({ i: b.block_index, start: b.start_char, end: b.end_char }));
   memTitles[id] = `${day(m.timestamp)} · ${m.agent_id}`;
   renderTabs();
-  const d = $("page");
   d.innerHTML = `<article class="doc">
-    <div class="top"><h2>${esc(day(m.timestamp))} · ${esc(m.agent_id)}</h2></div>
+    <div class="top"><h2>${esc(day(m.timestamp))} · ${esc(m.agent_id)}</h2>${d.id === "drawer" ? `<button class="x" id="closeBtn" aria-label="${t("close")}">×</button>` : ""}</div>
     <dl class="facts-list">
       <dt>${t("when")}</dt><dd>${esc(when(m.timestamp))} UTC</dd>
       <dt>${t("who")}</dt><dd>${esc(m.agent_id)}</dd>
@@ -482,6 +487,7 @@ async function renderDetail(id) {
       <details><summary class="hint">${t("raw")}</summary><pre class="raw">${esc(JSON.stringify({ ...m, nodes: undefined, blocks: undefined }, null, 2))}</pre></details>
     </details></article>`;
   sizes(d);
+  $("closeBtn")?.addEventListener("click", closeDetail);
   $("aroundBtn")?.addEventListener("click", () => go({ view: "graph", around: m.id }));
   $("copyRef").addEventListener("click", () => {
     navigator.clipboard?.writeText(`mem:${m.id}`);
@@ -509,6 +515,51 @@ async function renderDetail(id) {
 
 function closeDetail() {
   for (const b of document.querySelectorAll(".row.sel")) b.classList.remove("sel");
+  if (!$("drawer").classList.contains("open")) return;
+  $("drawer").classList.remove("open");
+  state.id = 0;
+  saveHash();
+  keepPlace();
+}
+
+// ---- Settings
+let settingsFrom = null;
+function openSettings() {
+  settingsFrom = document.activeElement;
+  $("settingsBg").hidden = false;
+  $("setClose").focus();
+}
+function closeSettings() {
+  if ($("settingsBg").hidden) return;
+  $("settingsBg").hidden = true;
+  settingsFrom?.focus?.();
+}
+function drawLayoutChoice() {
+  for (const b of document.querySelectorAll("[data-layout]")) b.setAttribute("aria-pressed", String(b.dataset.layout === layout));
+  $("layoutSeg").setAttribute("aria-label", t("layout"));
+}
+// Switching keeps what is open: a memory in a tab moves to the drawer over its list,
+// and a memory in the drawer moves to a tab.
+async function setLayout(l) {
+  if (l === layout) return;
+  const inTab = state.view === "memory" ? state.id : 0;
+  const inDrawer = $("drawer").classList.contains("open") ? state.id : 0;
+  closeDetail();
+  layout = l;
+  document.body.dataset.layout = l;
+  try { localStorage.setItem("cp.layout", l); } catch {}
+  drawLayoutChoice();
+  if (l === "classic") {
+    sideShow("tree");
+    if (inTab) { await go({ view: "memories", path: [], month: "" }); await openDetail(inTab); }
+  } else if (inDrawer) await openDetail(inDrawer);
+}
+// Signing out reloads the page, so nothing read before stays on the screen.
+async function signOut() {
+  await fetch("api/logout").catch(() => {});
+  try { sessionStorage.removeItem("cp.tabs"); } catch {}
+  location.replace(location.pathname + "#signedout=1");
+  location.reload();
 }
 
 // ---- Memory network
@@ -545,7 +596,7 @@ const LAYOUT_KEY = "cp.layout", LAYOUT_KEEP = 20;
 function layoutKey() {
   const where = state.around ? `a:${state.around}` : state.cluster ? `c:${state.cluster}`
     : state.entity ? `e:${state.entity}` : state.path.length || state.month ? `f:${JSON.stringify(state.path)}:${state.month}`
-    : `map:${state.lens}`;
+    : "map:memories"; // the key it had while other pictures existed, so saved places stay
   return `${overviewData.db}|${where}`;
 }
 function loadLayout(key) {
@@ -586,14 +637,13 @@ const startsHidden = (k, G) => k === "structure" && (G.nodes || []).length > 100
 async function renderGraph() {
   const page = $("page");
   if (!overviewData.counts.memories) return renderEmptyMemories();
+  // The network is always of memories: the whole store, or the part a link narrowed it to.
   const memoryView = state.around || state.cluster || state.entity || state.path.length || state.month;
-  const allMemories = !memoryView && state.lens === "memories";
   const G = state.around ? await api("/api/graph", { around: state.around })
     : state.cluster ? await api("/api/graph", { cluster_of: state.cluster })
     : state.entity ? await api("/api/graph", { entity: state.entity })
-    : memoryView || allMemories ? await api("/api/graph", { path: JSON.stringify(state.path), month: state.month })
-    : await api("/api/map", { lens: state.lens });
-  const lens = memoryView || allMemories ? "memories" : G.lens;
+    : await api("/api/graph", { path: JSON.stringify(state.path), month: state.month });
+  const lens = "memories";
   const back = `<div class="crumbs"><button id="backBtn">${t("backToMap")}</button></div>`;
   const shown = G.shown != null ? `<span class="hint">${esc(t("nGraph")(G.shown, G.total))}${G.without_vector ? "<br>" + esc(t("noVectorN")(G.without_vector)) : ""}</span>` : "";
   let head;
@@ -602,15 +652,7 @@ async function renderGraph() {
   else if (state.cluster) head = `<h1>${t("clusterTitle")}</h1><p class="lead">“${esc(G.label)}”<br>${shown}</p>${back}`;
   else if (state.entity) head = `<h1>${esc(t("entityTitle")(G.label))}</h1><p class="lead">${shown}</p>${back}`;
   else if (memoryView) head = `<h1>${t("graph")}</h1><p class="lead">${t("graphLead")}<br>${shown}</p>${back}`;
-  else {
-    const seg = ["memories", "tree", "entities", "clusters"].map(l =>
-      `<button data-lens="${l}" aria-pressed="${l === lens}">${t("lens")[l]}</button>`).join("");
-    let lead = t("lensLead")[lens];
-    if (allMemories) lead += `<br>${shown}`;
-    if (lens === "tree" && !G.months_shown) lead += " " + t("treeNoMonths")(G.months);
-    if (lens === "clusters" && G.groups != null) lead += `<br><span class="hint">${esc(t("clusterCount")(G.groups, G.grouped))}${G.not_grouped ? "<br>" + esc(t("notGrouped")(G.not_grouped)) : ""}</span>`;
-    head = `<h1>${t("graph")}</h1><div class="seg lens" role="group" aria-label="${t("graph")}">${seg}</div><p class="lead">${lead}</p>`;
-  }
+  else head = `<h1>${t("graph")}</h1><p class="lead">${t("networkLead")}<br>${shown}</p>`;
   const count = k => G.links ? G.links.filter(l => l.kind === k).length : 0;
   const note = t("layerNote")[lens];
   // The picture takes the whole pane; what to show sits behind the gear at the top
@@ -632,7 +674,6 @@ async function renderGraph() {
   if (lead) $("gSet").prepend(lead);
   $("gGear").addEventListener("click", () => { const open = $("gSet").classList.toggle("open"); $("gGear").setAttribute("aria-expanded", open); });
   $("backBtn")?.addEventListener("click", () => go({ view: "graph", path: [], month: "" }));
-  for (const b of page.querySelectorAll("[data-lens]")) b.addEventListener("click", () => go({ view: "graph", path: [], month: "", lens: b.dataset.lens }));
   // A lens with nothing to draw says why, instead of an empty canvas.
   const empty = G.too_many ? t("tooMany")(G.too_many, G.max_rows)
     : lens === "entities" && !G.nodes.length ? `${t("emptyEntitiesP")} ${t("tryAsk")} ${t("askEntities")}`
@@ -663,7 +704,7 @@ function startGraph(G, lens) {
   const pal = PALETTE[dark ? "dark" : "light"];
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const s = gs = { alive: true, view: { x: 0, y: 0, k: 1 }, show: Object.fromEntries(LAYERS[lens].map(k => [k, !startsHidden(k, G)])),
-    heat: 0, panV: null, hover: null, sel: null, drag: null, panning: null, W: 0, H: 0, DPR: 1 };
+    heat: 0, pin: false, panV: null, hover: null, sel: null, drag: null, panning: null, W: 0, H: 0, DPR: 1 };
   const byId = new Map(G.nodes.map(n => [n.id, n]));
   const adj = new Map(G.nodes.map(n => [n.id, new Set()]));
   G.links = G.links.filter(l => byId.has(l.s) && byId.has(l.t));
@@ -674,8 +715,10 @@ function startGraph(G, lens) {
   const tint = n => n.kind === "entity" ? css("--accent") : color[n.agent] || css("--faint");
   const counted = G.nodes.filter(n => n.count != null);
   const maxCount = Math.max(1, ...counted.map(n => n.count));
+  // Counted in one pass over the lines: per point it would be points × lines.
+  for (const n of G.nodes) n.deg = 0;
+  for (const l of G.links) if (l.kind === "similar") { l.a.deg++; if (l.b !== l.a) l.b.deg++; }
   for (const n of G.nodes) {
-    n.deg = G.links.filter(l => l.kind === "similar" && (l.a === n || l.b === n)).length;
     if (n.kind === "group") n.name = groupLabel(n);
     else if (n.kind === "cluster") n.name = n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label;
     else if (n.kind === "project") n.name = n.label || t("global");
@@ -955,9 +998,12 @@ function startGraph(G, lens) {
     if (!s.alive) return;
     let moved = false;
     if (s.heat > 0.004) {
-      tick(s.heat, FRICTION); s.heat *= 0.985; moved = true;
+      tick(s.heat, FRICTION, s.pin); s.heat *= 0.985; moved = true;
       if (s.autoFit) { const v = fitView(); s.view.k += (v.k - s.view.k) * 0.12; s.view.x += (v.x - s.view.x) * 0.12; s.view.y += (v.y - s.view.y) * 0.12; }
-      if (s.heat <= 0.004) { s.autoFit = false; saveLayout(key, G.nodes); } // still again: remember where it settled
+      if (s.heat <= 0.004) { // still again: frame it where it settled, and remember that
+        if (s.autoFit) Object.assign(s.view, fitView());
+        s.autoFit = false; s.pin = false; saveLayout(key, G.nodes);
+      }
     }
     if (s.panV && !s.panning) {
       s.view.x += s.panV.x; s.view.y += s.panV.y; s.panV.x *= 0.92; s.panV.y *= 0.92;
@@ -1059,16 +1105,16 @@ function startGraph(G, lens) {
   s.observer.observe(wrap);
 
   resize();
-  // Fewer warm-up steps for a large graph: each step compares every pair of points.
-  // A picture whose every point was seen before is drawn as it was left.
-  // A first view settles its first steps unseen, so it opens near its final size,
-  // and is shown finding its place from there.
+  // Nothing is settled before the first frame: settling unseen held a large picture
+  // back for a second or more. A picture whose every point was seen before is drawn
+  // as it was left; new points start beside the points they are tied to and find
+  // their place on screen while the seen ones hold still; a first view is drawn at
+  // once and settles on screen, framed as it goes, until it is still (and
+  // remembered then).
   if (kept < G.nodes.length) {
-    const warm = Math.max(60, Math.min(400, Math.round(120000 / Math.max(1, G.nodes.length))));
-    for (let i = 0; i < warm; i++) tick(1 - i / warm, 0.6, kept > 0);
-    // A large first view gets only a short warm-up before it is shown, then goes on
-    // settling on screen until it is still (and remembered then).
-    if (!kept && G.nodes.length > BH_FROM) { s.heat = 0.5; s.autoFit = true; }
+    s.pin = kept > 0;
+    s.heat = kept ? 0.3 : 1;
+    s.autoFit = !kept;
   }
   if (!s.autoFit) saveLayout(key, G.nodes); // also marks this picture as recently opened
   fit();
@@ -1119,7 +1165,7 @@ function setLang(l) {
 // ---- Tabs, each with its own back and forward
 // A tab holds a history of places (what the hash names); moving within a tab adds to
 // its history, the arrows walk it, and a memory or a new tab opens beside the current.
-const PLACE = ["view", "path", "q", "month", "id", "around", "cluster", "entity", "lens"];
+const PLACE = ["view", "path", "q", "month", "id", "around", "cluster", "entity"];
 const place = () => JSON.parse(JSON.stringify(Object.fromEntries(PLACE.map(k => [k, state[k]]))));
 let tabs = [], active = 0;
 const memTitles = {};
@@ -1210,6 +1256,8 @@ async function route() {
   keepPlace();
   renderTabs();
   saveTabs();
+  // The side bar's search shows the words the list is searching, unless being typed in.
+  if (document.activeElement !== $("cnavQ")) $("cnavQ").value = state.view === "memories" ? state.q : "";
   renderTree().catch(() => {});
   stopGraph();
   $("main").classList.toggle("is-doc", state.view === "memory");
@@ -1291,11 +1339,34 @@ function wire() {
   $("backBtnTab").addEventListener("click", () => step(-1));
   $("fwdBtnTab").addEventListener("click", () => step(1));
   $("paletteBtn").addEventListener("click", () => openPalette());
-  $("setBtn").addEventListener("click", () => {
-    const open = $("settings").hidden;
-    $("settings").hidden = !open;
-    $("setBtn").setAttribute("aria-expanded", String(open));
+  // The side bar's search opens the memory list on the words typed, as the list's own
+  // search does; within a folder already open in the list, it searches that folder.
+  let cnavTimer;
+  $("cnavQ").addEventListener("input", e => {
+    clearTimeout(cnavTimer);
+    cnavTimer = setTimeout(() => {
+      const q = e.target.value.trim();
+      if (state.view !== "memories" && !q) return;
+      const inList = state.view === "memories";
+      go({ view: "memories", q, path: inList ? state.path : [], month: inList ? state.month : "" }).catch(fail);
+    }, 220);
   });
+  $("setBtn").addEventListener("click", openSettings);
+  $("setClose").addEventListener("click", closeSettings);
+  $("settingsBg").addEventListener("click", e => { if (e.target.id === "settingsBg") closeSettings(); });
+  // Tab stays inside the dialog while it is open.
+  $("settings").addEventListener("keydown", e => {
+    if (e.key !== "Tab") return;
+    const all = [...$("settings").querySelectorAll("button, input")].filter(el => !el.closest("[hidden]"));
+    const first = all[0], last = all[all.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  for (const b of document.querySelectorAll("[data-layout]")) b.addEventListener("click", () => setLayout(b.dataset.layout).catch(fail));
+  // Signing out is for a remote server's page, which a session cookie opens; the page
+  // on this machine opens with the token in its address instead.
+  $("signOutRow").hidden = Boolean(token);
+  $("signOut").addEventListener("click", () => signOut());
   for (const b of document.querySelectorAll("[data-lang]")) b.addEventListener("click", () => setLang(b.dataset.lang));
   const calm = $("calmDots");
   calm.checked = calmDots;
@@ -1322,7 +1393,12 @@ function wire() {
     if ((e.metaKey || e.ctrlKey) && ["k", "o", "p"].includes(e.key.toLowerCase())) { e.preventDefault(); openPalette(); return; }
     if ((e.altKey) && e.key === "ArrowLeft") { e.preventDefault(); step(-1); return; }
     if ((e.altKey) && e.key === "ArrowRight") { e.preventDefault(); step(1); return; }
-    if (e.key === "Escape") { closePalette(); if (!$("settings").hidden) $("setBtn").click(); return; }
+    if (e.key === "Escape") {
+      if (!$("settingsBg").hidden) return closeSettings();
+      closePalette();
+      if (layout === "classic") closeDetail();
+      return;
+    }
     if (e.target.matches("input, textarea")) return;
     if (e.key === "/") { e.preventDefault(); $("q")?.focus(); }
     if (e.key === "j" || e.key === "k") {
@@ -1351,10 +1427,11 @@ function wire() {
     }
     overviewData = await api("/api/overview");
   } catch (e) {
-    return fail(e);
+    return fail(H0.get("signedout") ? new Error(t("signedOut")) : e);
   }
   $("dbname").textContent = overviewData.db;
   for (const k of ["memories", "episodes", "entities"]) $("n-" + k).textContent = overviewData.counts[k].toLocaleString();
+  for (const el of document.querySelectorAll("[data-n]")) el.textContent = overviewData.counts[el.dataset.n].toLocaleString();
   applyLang();
   // Tabs come back from this browser session for the same database; the place the
   // link names is shown in the active one.
@@ -1362,11 +1439,19 @@ function wire() {
     const saved = JSON.parse(sessionStorage.getItem("cp.tabs") || "null");
     if (saved && saved.db === overviewData.db && saved.tabs?.length) { tabs = saved.tabs; active = Math.min(saved.active, tabs.length - 1); }
   } catch {}
-  const named = place(), openMemory = named.id && named.view !== "memory" ? named.id : 0;
+  const named = place();
+  let openMemory = named.id && named.view !== "memory" ? named.id : 0;
   if (openMemory) named.id = 0;
   if (!tabs.length) tabs = [{ hist: [named], pos: 0 }];
   else if (H0.get("view")) { tabs[active].hist = tabs[active].hist.slice(0, tabs[active].pos + 1); tabs[active].hist.push(named); tabs[active].pos = tabs[active].hist.length - 1; }
-  sideShow(H0.get("side") === "search" ? "search" : "tree");
+  // The classic layout has no memory tabs: one left from the tabbed layout opens in
+  // the drawer over the list instead.
+  const here = cur().hist[cur().pos];
+  if (layout === "classic" && here.view === "memory") {
+    openMemory = here.id;
+    cur().hist[cur().pos] = { ...here, view: "memories", id: 0 };
+  }
+  sideShow(H0.get("side") === "search" && layout === "tabs" ? "search" : "tree");
   if (H0.get("sq")) { $("sideQ").value = H0.get("sq"); sqToggleHelp(); sideSearch(H0.get("sq")).catch(() => {}); }
   await show(cur().hist[cur().pos]);
   if (openMemory) await openDetail(openMemory).catch(fail);

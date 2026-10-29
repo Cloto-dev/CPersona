@@ -29,7 +29,9 @@ those three numbers, so it can be seen at most ``CACHE_SECONDS`` late. A store w
 vectors are larger than ``CACHE_MAX_BYTES`` is not held: each step reads it in chunks.
 """
 
+import json
 import os
+import sqlite3
 import threading
 import time
 
@@ -397,7 +399,100 @@ def around(conn, db_path: str, memory_id: int, hops: int = DEFAULT_HOPS) -> dict
     }
 
 
+# ---- The network of a folder, answered from the last picture
+#
+# Finding every memory's nearest takes about a second on a small server at several
+# thousand memories, and agents write often, so a picture computed per request made
+# opening the network slow almost every time. A folder's picture is kept per viewer;
+# when the store has changed since, the kept one is answered at once and a new one is
+# computed in the background for the next request. Only a picture never computed for
+# that viewer (after a start, or for a folder not opened before) makes a request wait.
+
+#: A kept picture is recomputed in the background at least this often, to catch a
+#: record changed in place, which the signature below does not see.
+PICTURE_SECONDS = 600
+#: Pictures kept at once (viewer, folder and month); the least recently used goes first.
+PICTURE_MAX = 16
+
+_pictures_lock = threading.Lock()
+# (cache key, path, month) -> (signature, made at, picture)
+_pictures: dict[tuple, tuple] = {}
+_refreshing: set[tuple] = set()
+
+
+def _picture_signature(conn) -> tuple:
+    """What a viewer's network is drawn from, cheaply: the memories, mentions and
+    relations they can see (count, highest id and sum of ids of each)."""
+    sig = [tuple(conn.execute("SELECT count(*), max(id), total(id) FROM memories").fetchone())]
+    for table in ("entity_mentions", "relations"):
+        try:
+            sig.append(tuple(conn.execute(f"SELECT count(*), max(rowid), total(rowid) FROM {table}").fetchone()))
+        except sqlite3.OperationalError:  # a store from before the table
+            sig.append(None)
+    return tuple(sig)
+
+
+def _keep(at: tuple, sig: tuple, picture: dict) -> None:
+    with _pictures_lock:
+        _pictures.pop(at, None)
+        _pictures[at] = (sig, time.monotonic(), picture)
+        while len(_pictures) > PICTURE_MAX:
+            _pictures.pop(next(iter(_pictures)))
+
+
+def _refresh(at: tuple, db_path: str, scope, path: list, month: str) -> None:
+    """Compute one picture again on a connection of its own, narrowed as the request's was."""
+    try:
+        conn = store.open_store(db_path)
+        try:
+            if scope is not None:
+                scope.apply(conn)
+            with conn:
+                _keep(at, _picture_signature(conn), folder(conn, path, month))
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - the kept picture stays; the next request tries again
+        pass
+    finally:
+        with _pictures_lock:
+            _refreshing.discard(at)
+
+
+def folder_picture(conn, db_path: str, key: str, scope, path: list, month: str) -> dict:
+    """``folder``, answered from the picture kept for this viewer (``key`` names the
+    store and the viewer's scope, so a picture is never shown to another viewer)."""
+    at = (key, json.dumps(path), month)
+    sig = _picture_signature(conn)
+    with _pictures_lock:
+        kept = _pictures.get(at)
+        if kept is not None:
+            _pictures[at] = _pictures.pop(at)  # the most recently used goes last
+            stale = kept[0] != sig or time.monotonic() - kept[1] >= PICTURE_SECONDS
+            if stale and at not in _refreshing:
+                _refreshing.add(at)
+                threading.Thread(target=_refresh, args=(at, db_path, scope, path, month), daemon=True).start()
+            return kept[2]
+    picture = folder(conn, path, month)
+    _keep(at, sig, picture)
+    return picture
+
+
+def warm(db_path: str, key: str, scope) -> None:
+    """Start computing the whole store's picture for this viewer in the background,
+    unless it is kept or under way: the page asks for the overview first, so the
+    network is usually ready by the time it is opened."""
+    at = (key, json.dumps([]), "")
+    with _pictures_lock:
+        if at in _pictures or at in _refreshing:
+            return
+        _refreshing.add(at)
+    threading.Thread(target=_refresh, args=(at, db_path, scope, [], ""), daemon=True).start()
+
+
 def clear_cache() -> None:
-    """Drop the held vectors (tests, and a store that was replaced on disk)."""
+    """Drop the held vectors and pictures (tests, and a store that was replaced on disk)."""
     with _lock:
         _cache.clear()
+    with _pictures_lock:
+        _pictures.clear()
+        _refreshing.clear()

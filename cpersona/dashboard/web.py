@@ -81,6 +81,7 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
         with conn:
             if route == "/api/overview":
                 out = store.overview(conn, name)
+                graph.warm(db_path, key, scope)
             elif route == "/api/tree":
                 out = store.tree(conn, path)
             elif route == "/api/memories":
@@ -109,7 +110,7 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
                 if out is None:
                     return _err(404, "No entity with that id.")
             elif route == "/api/graph":
-                out = graph.folder(conn, path, q.get("month", ""))
+                out = graph.folder_picture(conn, db_path, key, scope, path, q.get("month", ""))
             elif route == "/api/map":
                 lens = q.get("lens", "tree")
                 if lens == "tree":
