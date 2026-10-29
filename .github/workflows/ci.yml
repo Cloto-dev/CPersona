@@ -263,7 +263,7 @@ jobs:
       # mutations, and a cancelled shard hides which seams it would have shown.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     # Each mutant runs its own test files first and falls back to the full suite
     # only when they stay green. The ceiling stays at 30 minutes for the case
     # where every `tests` list goes stale and every mutant falls back; each test
