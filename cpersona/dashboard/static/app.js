@@ -12,6 +12,8 @@ const T = {
     techAlwaysDesc: "Show a memory's technical details opened, without a click.",
     signOut: "Sign out", signOutDesc: "Signs this browser out. To open the dashboard again, ask your agent for a new link.",
     signedOut: "Signed out. To open the dashboard again, ask your agent for a new link.",
+    signOutDescLocal: "Signs this browser out. To open the dashboard again, run cpersona dashboard.",
+    signedOutLocal: "Signed out. To open the dashboard again, run cpersona dashboard.",
     searchHits: n => `${n.toLocaleString()} result${n === 1 ? "" : "s"}`, searchMore: n => `${n} more: refine the words`,
     sideSearchPh: "Type to start searching…", matchCase: "Match case", searchSettings: "Search settings", searchOptions: "Search options",
     searchOps: [["path:", "match the agent / project / channel"], ["agent:", "match the agent's name"], ["tag:", "memories that mention an entity"],
@@ -91,6 +93,8 @@ const T = {
     today: "Today", yesterday: "Yesterday", readOnly: "read-only",
     noToken: "Open the dashboard again from the address it printed, or ask your agent for a new link.",
     linkUsed: "This link has been used or has expired. Ask your agent to open the dashboard again.",
+    noTokenLocal: "Not signed in. Run cpersona dashboard, or open the address it printed.",
+    linkUsedLocal: "This link has been used or has expired. Run cpersona dashboard again.",
     graph: "Network",
     graphLead: "The memories of this folder, joined by what they have in common.",
     nGraph: (shown, total) => shown < total ? `The newest ${shown.toLocaleString()} of ${total.toLocaleString()} memories` : `${total.toLocaleString()} memories`,
@@ -127,6 +131,8 @@ const T = {
     techAlwaysDesc: "記憶の技術的な情報を、クリックしなくても開いた状態で表示します。",
     signOut: "ログアウト", signOutDesc: "このブラウザからログアウトします。もう一度開くには、エージェントに新しいリンクを頼んでください。",
     signedOut: "ログアウトしました。もう一度開くには、エージェントに新しいリンクを頼んでください。",
+    signOutDescLocal: "このブラウザからログアウトします。もう一度開くには、cpersona dashboard を実行してください。",
+    signedOutLocal: "ログアウトしました。もう一度開くには、cpersona dashboard を実行してください。",
     searchHits: n => `${n.toLocaleString()} 件の結果`, searchMore: n => `ほかに ${n} 件あります。語を足して絞ってください`,
     sideSearchPh: "入力して検索を開始...", matchCase: "大文字と小文字を区別", searchSettings: "検索の設定", searchOptions: "検索オプション",
     searchOps: [["path:", "エージェント / プロジェクト / チャンネルに一致"], ["agent:", "エージェント名に一致"], ["tag:", "エンティティに言及している記憶を検索"],
@@ -206,6 +212,8 @@ const T = {
     today: "今日", yesterday: "昨日", readOnly: "読み取り専用",
     noToken: "表示されたアドレスから開き直すか、エージェントに新しいリンクを頼んでください。",
     linkUsed: "このリンクは使用済みか、期限が切れています。エージェントに、ダッシュボードを開き直すよう頼んでください。",
+    noTokenLocal: "ログインしていません。cpersona dashboard を実行するか、表示されたアドレスから開いてください。",
+    linkUsedLocal: "このリンクは使用済みか、期限が切れています。cpersona dashboard をもう一度実行してください。",
     graph: "記憶ネットワーク",
     graphLead: "このフォルダの記憶を、共通点の線で結んで表示します。",
     nGraph: (shown, total) => shown < total ? `${total.toLocaleString()} 件のうち、新しい ${shown.toLocaleString()} 件を表示しています` : `${total.toLocaleString()} 件の記憶`,
@@ -240,6 +248,10 @@ const $ = id => document.getElementById(id);
 // The token arrives after "#t=" and is never sent to the server in a URL. Keep it
 // for this tab, then take it out of the address bar so it is not shared by accident.
 const H0 = new URLSearchParams(location.hash.slice(1));
+// The remote page signs in only from an agent's link; the local one (127.0.0.1)
+// also from `cpersona dashboard`, so its sign-in messages say so.
+const LOCAL = !location.pathname.startsWith("/dashboard/");
+const signin = key => t(LOCAL ? key + "Local" : key);
 let token = H0.get("t") || "";
 try {
   if (token) sessionStorage.setItem("cp.token", token);
@@ -320,7 +332,7 @@ function levelLabel(level, key) {
 // remote server; there the session cookie, not a token, carries the access.
 async function api(path, params = {}) {
   const r = await fetch(path.replace(/^\//, "") + "?" + new URLSearchParams(params), token ? { headers: { Authorization: `Bearer ${token}` } } : {});
-  if (r.status === 401) throw new Error(t("noToken"));
+  if (r.status === 401) throw new Error(signin("noToken"));
   const body = await r.json();
   if (!r.ok) throw new Error(body.error || r.statusText);
   return body;
@@ -1001,7 +1013,7 @@ const NET_KEEP = 6;
 const netKept = new Map(); // request parameters -> the answer's text
 async function apiText(path, params) {
   const r = await fetch(path.replace(/^\//, "") + "?" + new URLSearchParams(params), token ? { headers: { Authorization: `Bearer ${token}` } } : {});
-  if (r.status === 401) throw new Error(t("noToken"));
+  if (r.status === 401) throw new Error(signin("noToken"));
   const text = await r.text();
   if (!r.ok) throw new Error(JSON.parse(text).error || r.statusText);
   return text;
@@ -1804,6 +1816,7 @@ function wire() {
 }
 
 (async () => {
+  if (LOCAL) for (const el of document.querySelectorAll('[data-t="signOutDesc"]')) el.dataset.t = "signOutDescLocal";
   wire();
   applyLang();
   try {
@@ -1813,11 +1826,11 @@ function wire() {
     if (code) {
       history.replaceState(null, "", location.pathname);
       const r = await fetch("api/session", { headers: { "X-Dashboard-Code": code } });
-      if (!r.ok) throw new Error(t("linkUsed"));
+      if (!r.ok) throw new Error(signin("linkUsed"));
     }
     overviewData = await api("/api/overview");
   } catch (e) {
-    return fail(H0.get("signedout") ? new Error(t("signedOut")) : e);
+    return fail(H0.get("signedout") ? new Error(signin("signedOut")) : e);
   }
   $("dbname").textContent = overviewData.db;
   for (const k of ["memories", "episodes", "entities", "profiles"]) $("n-" + k).textContent = overviewData.counts[k].toLocaleString();

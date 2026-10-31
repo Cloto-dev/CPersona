@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:5384229a048a49fee5df4fd89dc615a26e187abd -->
+<!-- i18n-source: docs/configuration.md@blob:d4d680ce0cc7544560b99350ee24c59473303918 -->
 
 # 設定リファレンス
 
@@ -37,6 +37,7 @@
 | `CPERSONA_DASHBOARD_REMOTE` | `false` | `true` で、HTTP のトランスポートが `/dashboard/` の下で[ダッシュボード](operations.md#the-dashboard)を配る。ページは、`open_dashboard` が認証を通ったクライアントに返す 1 回限りのリンクで開き、そのクライアントが読めるエージェントの分だけを見せる。`CPERSONA_DASHBOARD_PUBLIC_URL` が要る。stdio では効かない |
 | `CPERSONA_DASHBOARD_SESSION_KEY` | *(未設定)* | リモートのダッシュボードのセッションの Cookie に署名する秘密の値。未設定なら、初めて使う時に、サーバーがデータベースの横のファイル (`<名前>-dashboard.key`、所有者だけが読める) に作る。この値を変えるか、そのファイルを消すと、すべてのセッションが終わる |
 | `CPERSONA_DASHBOARD_PUBLIC_URL` | *(未設定)* | 人がこのサーバーに届くアドレス。リモートのダッシュボードのリンクはこのアドレスで始まる (例: `https://memory.example.com`)。ダッシュボードのセッションの Cookie は Secure なので、https か、localhost の http でなければならない |
+| `CPERSONA_DASHBOARD_STORES_PATH` | `~/.cpersona/` の `stores.json` | サーバーが起動した時に、開いたデータベースの場所を書き足す一覧。端末やショートカットから実行した `cpersona dashboard` は、ここから最後に使われたデータベースを開く。書くのはパスと時刻だけで、本人だけが読める。`~` は展開されます |
 | `CPERSONA_FOLDER_MAX_DEPTH` | `6` | project の下に置けるフォルダの段の数 (1〜16)。下げても、それより深いフォルダは読めるまま残る。上限より下への新しいフォルダと記録の出し入れは拒まれ、`folder_integrity` が上限を超えたフォルダを挙げる |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`)。後述 |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211)。超えた分の行はプレビュー階層に戻り (関連度の高い行から全文で残します、bug-214)、応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効にします。無効な階層へ降格すると本文が知らないうちに落ちるため、切り詰めをやめる選択は、どこでも切り詰めないという選択になります。`CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` と `CPERSONA_RECONSTRUCT_MAX_BUDGET` は、未設定ならこの大きさの抜粋 1 つ分まで引き上がります |

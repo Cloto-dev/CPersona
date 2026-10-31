@@ -12,6 +12,11 @@ Who can read it:
 - The Host header must name the loopback address and this port. A web page cannot
   then read the data by pointing its own host name at 127.0.0.1 (DNS rebinding).
 - Only GET is answered, and the page loads nothing from anywhere else (the CSP).
+- Started from the command line (``local``), it also signs a browser in the way the
+  remote dashboard does: a one-time code after the "#", sent once in a header, for
+  a session cookie, so the page opens again from a bookmark or a shortcut. Asking
+  the running dashboard for a code, or to stop, takes a proof made with the store's
+  key file, which only its owner can read.
 
 The page, its script and its style carry no data, so they are served without the token.
 """
@@ -20,12 +25,14 @@ import hmac
 import json
 import secrets
 import sqlite3
+import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from cpersona import __version__
 from cpersona.dashboard import graph, overall, store
 
 HOST = "127.0.0.1"
@@ -153,6 +160,7 @@ def make_handler(
     token: str,
     port_ref: list[int],
     health: Callable[[], dict] | None = None,
+    local=None,
 ) -> type[BaseHTTPRequestHandler]:
     """A request handler bound to one database and one token.
 
@@ -163,6 +171,10 @@ def make_handler(
     (whether a long record should have nodes depends on the embedding server's
     token counts, and whether a missing vector is wrong depends on its settings),
     so the dashboard started from a terminal has none and ``/api/health`` says so.
+
+    ``local`` (``local.Sessions``) is given when the command line started it: a
+    session cookie then stands in for the token, and the routes the command line
+    and the sign-in use are answered.
     """
     name = Path(db_path).name
 
@@ -178,6 +190,8 @@ def make_handler(
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             for k, v in _HEADERS.items():
+                self.send_header(k, v)
+            for k, v in getattr(self, "_extra", ()):
                 self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
@@ -196,7 +210,51 @@ def make_handler(
             given = self.headers.get("Authorization", "")
             return hmac.compare_digest(given.encode(), f"Bearer {token}".encode())
 
+        def _local(self, path: str) -> bool:
+            """Answer a route of the command line's dashboard; whether it was one."""
+            if path == "/api/instance":
+                # What a second command line needs to tell this dashboard from
+                # another program, and which store it shows: a digest, not the path.
+                self._json(200, {"app": local.app, "store": local.store, "version": __version__})
+                return True
+            if path in ("/api/code", "/api/stop"):
+                action = path.rsplit("/", 1)[1]
+                if not local.proof_ok(action, self.headers.get("X-Dashboard-Proof", "")):
+                    self._json(403, {"error": "Only the command line of this store's owner can ask this."})
+                    return True
+                if action == "code":
+                    self._json(200, {"code": local.issue()})
+                else:
+                    self._json(202, {"stopping": True})
+                    # Shut down from another thread: serve_forever waits for this one.
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return True
+            if path == "/api/session":
+                cookie = local.redeem(self.headers.get("X-Dashboard-Code", ""))
+                if cookie is None:
+                    self._json(410, {"error": "This link has been used or has expired."})
+                    return True
+                self._extra.append(("Set-Cookie", cookie))
+                self._send(204, b"", "text/plain")
+                return True
+            if path == "/api/logout":
+                self._extra.append(("Set-Cookie", local.logout()))
+                self._send(204, b"", "text/plain")
+                return True
+            return False
+
+        def _signed_in(self) -> bool:
+            if self._token_ok():
+                return True
+            if local is None:
+                return False
+            ok, renewed = local.check(self.headers.get("Cookie", ""))
+            if renewed:
+                self._extra.append(("Set-Cookie", renewed))
+            return ok
+
         def do_GET(self):  # noqa: N802 - the stdlib's name
+            self._extra = []
             if not self._host_ok():
                 return self._json(
                     421,
@@ -210,7 +268,9 @@ def make_handler(
                 return self._send(200, _static(file), ctype)
             if not url.path.startswith("/api/"):
                 return self._json(404, {"error": "not found"})
-            if not self._token_ok():
+            if local is not None and self._local(url.path):
+                return
+            if not self._signed_in():
                 return self._json(
                     401, {"error": "Open the dashboard from the address it printed."}
                 )
@@ -245,12 +305,13 @@ def make_server(
     port: int = 0,
     token: str | None = None,
     health: Callable[[], dict] | None = None,
+    local=None,
 ) -> tuple[ThreadingHTTPServer, str]:
     """Bind the dashboard; returns the server and the address to open (with its token)."""
     token = token or secrets.token_urlsafe(32)
     port_ref = [port]
     server = ThreadingHTTPServer(
-        (HOST, port), make_handler(db_path, token, port_ref, health)
+        (HOST, port), make_handler(db_path, token, port_ref, health, local)
     )
     server.daemon_threads = True
     port_ref[0] = server.server_address[1]

@@ -501,10 +501,21 @@ month and text, and each memory in full with how it is split into nodes and
 blocks.
 
 ```bash
+cpersona dashboard                                 # the database a CPersona server opened last
 cpersona dashboard --db ~/.claude/cpersona.db      # or: uvx cpersona dashboard --db …
-python -m cpersona.dashboard --db ~/.claude/cpersona.db
+cpersona dashboard --list                          # the databases CPersona servers have opened
+cpersona dashboard --stop                          # stop the dashboard of that database
 ```
 
+- **From a terminal or a shortcut**: `cpersona dashboard` opens the database
+  `--db` or `CPERSONA_DB_PATH` names, else the one a CPersona server opened last:
+  each server notes the database it opens in `~/.cpersona/stores.json` when it
+  starts (paths and times only, owner-only; `CPERSONA_DASHBOARD_STORES_PATH` moves
+  it). It listens on port 48700 and runs until `cpersona dashboard --stop`. Run
+  again for the same database, it starts nothing and opens the running one; a
+  port held by another database or program is reported, and `--port` picks
+  another. The browser signs in with a one-time code and keeps a session cookie
+  for 30 days, so a bookmark opens the page again.
 - **From your agent**: ask it to open the dashboard. Under the stdio transport the
   server registers `open_dashboard`, which opens the page for the database the
   server already uses and returns the address, so nobody has to look the path up.
@@ -560,12 +571,15 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   each page load reads the last committed state. A database whose schema this
   release does not know (newer, or older than schema 19) is refused with a
   message instead of being read.
-- **Who can see it**: it listens on 127.0.0.1 only, on a free port (`--port` to
-  choose one). The address it prints carries a token made for this start after
-  `#`, which the browser never sends in a request; the data is answered only to
-  requests carrying it, only for a Host header naming the loopback address, and
-  only to GET. Another user of the same machine can reach the port but not the
-  data. `--no-browser` prints the address without opening it.
+- **Who can see it**: it listens on 127.0.0.1 only: on port 48700 from the
+  command line, on a free port when an agent opens it. The address it prints
+  carries a token made for this start after `#`, which the browser never sends in
+  a request; the data is answered only to requests carrying it (or, from the
+  command line, the session cookie its one-time code opened), only for a Host
+  header naming the loopback address, and only to GET. Asking a running dashboard
+  for a code, or to stop, takes a proof made with the store's key file, which only
+  its owner can read. Another user of the same machine can reach the port but not
+  the data. `--no-browser` prints the address without opening it.
 - **How it is laid out**: two layouts, chosen in the settings (the gear at the
   foot of the side panel) and kept in the browser. *Standard*, the default, is
   one side panel of the views, grouped under headings (the overview; records:

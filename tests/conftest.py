@@ -37,6 +37,9 @@ os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
 # ~/.cpersona/operating-context.toml must not leak warnings/instructions into the
 # suite. Tests that exercise the feature opt back in per-test via monkeypatch.
 os.environ["CPERSONA_OPERATING_CONTEXT"] = "off"
+# A server the suite starts notes its database for the dashboard; that note goes to a
+# scratch file, never into a developer's ~/.cpersona/stores.json.
+os.environ["CPERSONA_DASHBOARD_STORES_PATH"] = os.path.join(tempfile.mkdtemp(), "stores.json")
 
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402

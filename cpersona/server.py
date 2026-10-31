@@ -4596,6 +4596,12 @@ async def main():
         # should not keep paying a row per update and delete.
         await vector_index.on_startup()
 
+        # Note the database for `cpersona dashboard`, which a terminal or a desktop
+        # shortcut runs without the MCP client's configuration (known_stores.py).
+        from cpersona import known_stores
+
+        known_stores.remember(config.DB_PATH)
+
         transport = config.transport()
         if transport == "stdio":
             await _run_stdio_server()
