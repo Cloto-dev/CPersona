@@ -318,7 +318,7 @@ function applyLang() {
   drawLayoutChoice();
   $("paletteInput").placeholder = t("palettePh");
   $("kbd").innerHTML = t("kbd").map(k => `<span>${esc(k)}</span>`).join("");
-  if (overviewData) $("schemaLine").textContent = `Schema ${overviewData.schema} · ${t("readOnly")}`;
+  if (overviewData) $("schemaLine").textContent = `${t("readOnly")} (Schema ${overviewData.schema})`;
 }
 
 // ---- Sidebar: the logical directory (agent / project / channel / year / month)
@@ -366,8 +366,8 @@ function renderOverview() {
     </div>
     <div class="block" id="healthBlock" hidden><h2>${t("health")}</h2><div id="health" class="hint">${t("healthChecking")}</div></div>
     <div class="block"><h2>${t("byMonth")}</h2><div class="hint">${t("byMonthHint")}</div>
-      <div class="hist">${o.months.map(m => `<button data-h="${Math.max(2, 100 * m.count / max)}" title="${m.month}: ${m.count}" aria-label="${m.month}: ${m.count}" data-month="${esc(m.month)}"></button>`).join("")}</div>
-      <div class="hist-axis"><span>${esc(o.months[0]?.month ?? "")}</span><span>${esc(o.months.at(-1)?.month ?? "")}</span></div>
+      <div class="hist">${o.months.map(m => `<button data-h="${Math.max(2, 100 * m.count / max)}" title="${m.month}: ${m.count}" aria-label="${m.month}: ${m.count}" data-month="${esc(m.month)}">${o.months.length <= 24 ? `<span class="hist-n" aria-hidden="true">${m.count.toLocaleString()}</span>` : ""}</button>`).join("")}</div>
+      <div class="hist-axis"><span>${esc(o.months[0]?.month ?? "")}</span>${o.months.length > 1 ? `<span>${esc(o.months.at(-1).month)}</span>` : ""}</div>
     </div>
     <div class="block"><h2>${t("byAgent")}</h2><div class="hint">${t("byAgentHint")}</div>
       <div class="bars">${o.agents.slice(0, 12).map(a => `<button data-agent="${esc(a.id)}" title="${esc(a.id)}">${esc(a.id)}</button>
@@ -399,7 +399,7 @@ async function renderHealth() {
   el.className = "";
   el.innerHTML = (serious.length
     ? serious.map(i => `<div class="issue"><b>${esc(t("sev")[i.severity] || i.severity)}</b>
-        <span><code>${esc(i.type || i.check)}</code>${i.count != null ? ` · ${esc(i.count)}` : ""}${i.hint ? `<br><span class="hint">${esc(i.hint)}</span>` : ""}</span></div>`).join("")
+        <span><code>${esc(i.type || i.check)}</code>${i.count != null ? ` (${esc(i.count)})` : ""}${i.hint ? `<br><span class="hint">${esc(i.hint)}</span>` : ""}</span></div>`).join("")
     : `<div class="ok">${t("healthOk")}</div>`) + (notes ? `<div class="hint">${t("healthInfo")(notes)}</div>` : "");
 }
 
@@ -553,7 +553,7 @@ function profileCard(p, max, { name = true, clamp = false } = {}) {
       <span class="profile-when">${esc(t("profileUpdated")(when(p.updated_at)))}</span></div>
     <div class="profile-text${clamp ? " clamp" : ""}">${esc(p.content)}</div>
     ${clamp ? `<button class="ref profile-more" hidden>${t("profileShowAll")}</button>` : ""}
-    <div class="hint">${t("profileLen")(p.length, max)} · ${p.in_recall ? t("profileSent") : t("profileNotInRecall")}</div></div>`;
+    <div class="hint parts"><span>${t("profileLen")(p.length, max)}</span><span>${p.in_recall ? t("profileSent") : t("profileNotInRecall")}</span></div></div>`;
 }
 function wireProfiles(el) {
   for (const b of el.querySelectorAll("[data-agent-go]"))
@@ -596,7 +596,7 @@ async function renderAgentProfile(agent) {
 const REF_KIND = { mem: "memory", ep: "episode", entity: "entity" };
 function refLink(x, self = 0) {
   if (x.kind === "entity" && x.id === self) return `<b>${esc(x.text)}</b>`;
-  if (x.missing) return `<span class="muted" title="${esc(t("notVisible"))}">${esc(t("kinds")[x.kind] || x.kind)} · ${t("notVisible")}</span>`;
+  if (x.missing) return `<span class="muted" title="${esc(t("notVisible"))}">${esc(t("kinds")[x.kind] || x.kind)}: ${t("notVisible")}</span>`;
   const label = x.kind === "entity" ? esc(x.text) : `<span class="muted">${esc(t("kinds")[x.kind] || x.kind)}</span> ${esc(x.text)}`;
   return `<button class="ref" data-ref-kind="${esc(x.kind)}" data-ref-id="${x.id}">${label}</button>`;
 }
@@ -610,12 +610,11 @@ function closeButton(d) {
 
 async function renderEpisode(id, d = $("page")) {
   const e = await api("/api/episode", { id });
-  const title = `${day(episodeTime(e))} · ${e.agent_id}`;
-  recTitles[`episode:${id}`] = title;
+  recTitles[`episode:${id}`] = `${day(episodeTime(e))} ${e.agent_id}`;
   renderTabs();
   const span = e.start_time || e.end_time ? `${when(e.start_time) || "?"} – ${when(e.end_time) || "?"}` : "—";
   d.innerHTML = `<article class="doc">
-    <div class="top"><h2>${esc(title)}</h2>${closeButton(d)}</div>
+    <div class="top"><h2>${esc(day(episodeTime(e)))}<span class="h-sub">${esc(e.agent_id)}</span></h2>${closeButton(d)}</div>
     <dl class="facts-list">
       <dt>${t("conversation")}</dt><dd>${esc(span)}</dd>
       <dt>${t("stored")}</dt><dd>${esc(when(e.created_at))} UTC</dd>
@@ -625,7 +624,7 @@ async function renderEpisode(id, d = $("page")) {
       ${e.keywords ? `<dt>${t("keywords")}</dt><dd>${mark(e.keywords, state.q)}</dd>` : ""}
       ${e.entities.length ? `<dt>${t("mentionsEnt")}</dt><dd class="refs">${e.entities.map(x => refLink({ kind: "entity", id: x.id, text: x.name })).join("")}</dd>` : ""}
     </dl>
-    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} · ep:${e.id}</button></div>
+    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (ep:${e.id})</button></div>
     <div class="content">${mark(e.summary, state.q)}</div>
     <details class="tech" ${techAlways ? "open" : ""}><summary>${t("tech")}</summary>
       <dl class="facts-list">
@@ -662,7 +661,7 @@ async function renderEntity(id, d = $("page")) {
       ${e.relations.length ? `<ul class="reflist">${e.relations.map(r => `<li class="rel">${refLink(r.subject, e.id)}<span class="pred">${esc(r.predicate)}</span>${refLink(r.object, e.id)}${r.anchor
         ? `<div class="hint">${t("anchorOn")}: ${refLink(r.anchor)}</div>` : ""}</li>`).join("")}</ul>` : `<p class="hint">${t("noRelationsYet")}</p>`}</section>
     <details class="tech" ${techAlways ? "open" : ""}><summary>${t("tech")}</summary>
-      <dl class="facts-list"><dt>${t("ids")}</dt><dd>entity ${e.id} · ${esc(e.normalized)}</dd></dl>
+      <dl class="facts-list"><dt>${t("ids")}</dt><dd>entity ${e.id}<br>${esc(e.normalized)}</dd></dl>
     </details></article>`;
   $("closeBtn")?.addEventListener("click", closeDetail);
   $("copyName").addEventListener("click", () => { navigator.clipboard?.writeText(e.name); toast(t("copied")(e.name)); });
@@ -705,14 +704,14 @@ const RENDER = { memory: (id, d) => renderDetail(id, d), episode: (id, d) => ren
 async function renderDetail(id, d = $("page")) {
   const m = await api("/api/memory", { id });
   let src = m.source;
-  try { const s = JSON.parse(m.source); src = [s.type, s.name || s.id].filter(Boolean).join(" · "); } catch {}
+  try { const s = JSON.parse(m.source); src = [s.type, s.name || s.id].filter(Boolean).join(" / "); } catch {}
   const total = Math.max(1, m.content.length);
   const nodes = m.nodes.map(n => ({ i: n.node_index, start: n.start_char, end: n.end_char }));
   const blocks = m.blocks.map(b => ({ i: b.block_index, start: b.start_char, end: b.end_char }));
-  memTitles[id] = `${day(m.timestamp)} · ${m.agent_id}`;
+  memTitles[id] = `${day(m.timestamp)} ${m.agent_id}`;
   renderTabs();
   d.innerHTML = `<article class="doc">
-    <div class="top"><h2>${esc(day(m.timestamp))} · ${esc(m.agent_id)}</h2>${d.id === "drawer" ? `<button class="x" id="closeBtn" aria-label="${t("close")}">×</button>` : ""}</div>
+    <div class="top"><h2>${esc(day(m.timestamp))}<span class="h-sub">${esc(m.agent_id)}</span></h2>${d.id === "drawer" ? `<button class="x" id="closeBtn" aria-label="${t("close")}">×</button>` : ""}</div>
     <dl class="facts-list">
       <dt>${t("when")}</dt><dd>${esc(when(m.timestamp))} UTC</dd>
       <dt>${t("who")}</dt><dd>${esc(m.agent_id)}</dd>
@@ -721,7 +720,7 @@ async function renderDetail(id, d = $("page")) {
       <dt>${t("used")}</dt><dd>${esc(t("usedN")(m.recall_count, when(m.last_recalled_at)))}</dd>
       <dt>${t("lockedQ")}</dt><dd>${m.locked ? t("yes") : t("no")}</dd>
     </dl>
-    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} · mem:${m.id}</button>
+    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (mem:${m.id})</button>
       ${m.has_embedding ? `<button class="btn" id="aroundBtn">${t("showAround")}</button>` : ""}</div>
     <div class="content" id="content">${mark(m.content, state.q)}</div>
     <details class="tech" ${techAlways ? "open" : ""}><summary>${t("tech")}</summary>
@@ -735,7 +734,7 @@ async function renderDetail(id, d = $("page")) {
         </dd>
         <dt>${t("vector")}</dt><dd>${m.has_embedding ? esc(m.embedding_model || "✓") : `<span class="muted">${t("vectorMissing")}</span>`}</dd>
         <dt>${t("length")}</dt><dd>${t("chars")(m.content.length)}</dd>
-        <dt>${t("ids")}</dt><dd>mem:${m.id}${m.msg_id ? " · " + esc(m.msg_id) : ""}</dd>
+        <dt>${t("ids")}</dt><dd>mem:${m.id}${m.msg_id ? "<br>" + esc(m.msg_id) : ""}</dd>
       </dl>
       <details><summary class="hint">${t("raw")}</summary><pre class="raw">${esc(JSON.stringify({ ...m, nodes: undefined, blocks: undefined }, null, 2))}</pre></details>
     </details></article>`;
@@ -947,7 +946,7 @@ async function renderGraph() {
   const hint = t("graphHint").split(" · ").map(h => `<span>${h}</span>`).join("");
   page.innerHTML = `<div class="graph whole" id="graphWrap"><canvas id="gc"></canvas>
     <div class="g-top">${head}</div>
-    <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet" aria-label="${t("display")}" title="${t("display")}"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></button>
+    <button class="g-gear" id="gGear" aria-expanded="false" aria-controls="gSet" aria-label="${t("display")}" title="${t("display")}"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg></button>
     <div class="g-panel g-set" id="gSet">
       ${G.nodes ? LAYERS[lens].map(k => layerRow(k, count(k), !startsHidden(k, G))).join("") : ""}
       ${G.nodes ? `<label class="layer"><input type="checkbox" id="byAgent"><svg width="34" height="10" aria-hidden="true"></svg><span>${t("colourByAgent")}</span></label>` : ""}
@@ -1335,7 +1334,7 @@ function startGraph(G, lens) {
         <div class="g-near">${esc(t("mentionsN")(mentions))}</div>`, mentions && n.entity ? [["gGo", t("openEntity")]] : []);
       $("gGo")?.addEventListener("click", () => go({ view: "graph", entity: n.entity }));
     } else {
-      card(`<div class="g-head"><span class="g-agent"><span class="g-dot"></span>${esc(n.agent)}</span><span>${esc(day(n.timestamp))} · mem:${n.mem}</span></div>
+      card(`<div class="g-head"><span class="g-agent"><span class="g-dot"></span>${esc(n.agent)}</span><span>${esc(day(n.timestamp))}</span><span>mem:${n.mem}</span></div>
         <p id="gText" class="g-loading">…</p><div class="g-near">${esc(t("similarN")(n.deg))}</div>`,
         n.hop === 0 ? [["gOpen", t("openMemory")]] : [["gOpen", t("openMemory")], ["gCenter", t("centerHere")]]);
       el.querySelector(".g-dot").style.background = tint(n);
@@ -1608,7 +1607,7 @@ async function sideSearch(q) {
     .filter(w => !w.startsWith("-")).map(w => w.replace(/["()]/g, "")).filter(Boolean);
   const hl = text => words.reduce((h, w) => h.replace(new RegExp(esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), sq.case ? "g" : "gi"), m => `<mark>${m}</mark>`), esc(text));
   out.innerHTML = `<div class="sq-count">${esc(t("searchHits")(res.total))}</div>` + (res.rows.length ? res.rows.map(r =>
-    `<div class="hit-group"><button class="hit-file" data-id="${r.id}"><span class="hit-name">${esc(day(r.timestamp))} · ${esc(r.agent_id)}${r.project_id ? " / " + esc(r.project_id) : ""}</span>${r.matches ? `<span class="hit-n">${r.matches}</span>` : ""}</button>
+    `<div class="hit-group"><button class="hit-file" data-id="${r.id}"><span class="hit-name">${esc(day(r.timestamp))}<span class="h-sub">${esc(r.agent_id)}${r.project_id ? " / " + esc(r.project_id) : ""}</span></span>${r.matches ? `<span class="hit-n">${r.matches}</span>` : ""}</button>
       ${sq.lines ? r.lines.map(l => `<button class="hit-line" data-id="${r.id}">${hl(l)}</button>`).join("") : ""}</div>`).join("")
     : `<div class="hint sq-note">${esc(t("noHits"))}</div>`) +
     (res.total > res.rows.length ? `<div class="hint sq-note">${esc(t("searchMore")(res.total - res.rows.length))}</div>` : "");
