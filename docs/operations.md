@@ -568,11 +568,14 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   one side panel of the views (overview, memories, network, episodes, entities,
   profiles) over the logical directory; a memory opens in a drawer beside the
   list, so the list does not move. The list behind the drawer is dimmed, and a
-  click on it closes the drawer. *Tabbed* puts a
+  click on it closes the drawer. Under the views, a line names the key that opens
+  the command palette: ⌘K on a Mac, Ctrl+K elsewhere. *Tabbed* puts a
   column of icons on the left, a side panel that browses the logical directory or
   searches, and tabs: each memory opens in a tab of its own, and each tab has its
   own back and forward (Alt+← / Alt+→). Switching keeps the memory that is open.
-  In both, Ctrl or ⌘ with K, O or P opens the command palette.
+  In both, Ctrl or ⌘ with K, O or P opens the command palette, and a record opens
+  with its text first: a line of when and where it was stored sits above the text,
+  and its other attributes follow it.
 - **Search**, in the tabbed layout's side panel, finds memories whose text holds every word typed,
   and shows the lines that matched. `"a phrase"` matches as written and `-word`
   leaves out memories holding the word. `path:` matches agent/project/channel,

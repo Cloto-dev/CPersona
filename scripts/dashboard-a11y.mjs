@@ -110,6 +110,10 @@ for (const scheme of ["light", "dark"]) {
       if (control) await evaluate(`document.getElementById("a11y-control").remove(); true`);
       const sideways = await evaluate(`document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth`);
       if (sideways > 0) failures.push(`${where}: the page scrolls sideways by ${sideways}px at 1024px`);
+      // A record's text comes before the table of its attributes.
+      const order = await evaluate(`(() => { const d = document.querySelector("#drawer.open .doc, #page .doc"); const c = d?.querySelector(".content"), f = d?.querySelector(".facts-list");
+        return !c || !f ? "n/a" : (c.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING) && c.getBoundingClientRect().top < f.getBoundingClientRect().top ? "ok" : "after"; })()`);
+      if (order === "after") failures.push(`${where}: the record's text comes after its attributes`);
       // With the drawer open the list behind it is covered by the scrim, and a click on
       // the scrim closes the drawer (run last: it changes the page).
       if (ready.startsWith("#drawer.open")) {
@@ -125,8 +129,28 @@ for (const scheme of ["light", "dark"]) {
     }
   }
 }
+const axeVersion = await evaluate("axe.version");
+// The palette's key is named as the keyboard has it: ⌘K on a Mac, Ctrl+K elsewhere,
+// in the hint under the classic layout's views and in the settings' list of keys.
+const { userAgent } = (await send("Browser.getVersion")).result;
+for (const [platform, key, other] of [["MacIntel", "⌘K", "Ctrl+K"], ["Win32", "Ctrl+K", "⌘K"]]) {
+  try {
+    await send("Emulation.setUserAgentOverride", { userAgent, platform });
+    for (const layout of ["classic", "tabs"]) {
+      await evaluate(`localStorage.setItem("cp.layoutMode", "${layout}"); true`);
+      await open("&view=overview&lang=ja");
+      const r = await evaluate(`(() => { const h = document.getElementById("cnavHint"); return { hint: h.textContent, shown: h.getClientRects().length > 0, keys: document.getElementById("kbd").textContent }; })()`);
+      const at = `${platform} ${layout}`;
+      if (!r.keys.includes(key) || r.keys.includes(other)) failures.push(`${at}: the settings name the palette's key as ${JSON.stringify(r.keys)}`);
+      if (layout === "classic" && (!r.shown || !r.hint.includes(key) || r.hint.includes(other))) failures.push(`${at}: the hint under the views reads ${JSON.stringify(r.hint)} (shown: ${r.shown})`);
+      if (layout === "tabs" && r.shown) failures.push(`${at}: the hint under the views shows in the tabbed layout, which has the palette's button`);
+    }
+  } catch (e) {
+    failures.push(`${platform}: ${e.message}`);
+  }
+}
 if (pageErrors.length) failures.push(...pageErrors.map(e => `script error: ${e}`));
-console.log(`checked ${checked} pages with axe-core ${await evaluate("axe.version")}`);
+console.log(`checked ${checked} pages with axe-core ${axeVersion}`);
 if (!controlCaught) { console.error("the planted low-contrast paragraph was not reported: axe's results cannot be trusted"); done(3); }
 if (failures.length) { console.error(failures.join("\n")); done(1); }
 console.log("no violations");

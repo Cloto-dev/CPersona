@@ -19,7 +19,8 @@ const T = {
     searchHelpNote: "Words are all required. \"Quote\" a phrase; -word leaves it out.",
     sortBy: "Sort", sorts: { new: "Newest first", old: "Oldest first", recalled: "Most recalled" }, showLines: "Show matching lines",
     noHits: "No memory matches.",
-    kbd: ["⌘K search", "/ find in list", "j/k move", "Enter open", "Esc close"],
+    kbd: key => [`${key} search`, "/ find in list", "j/k move", "Enter open", "Esc close"],
+    paletteHint: key => `${key} searches memories and commands`,
     overviewLead: "How many memories are stored, and when they were stored.",
     nMemories: "memories", nEpisodes: "episodes", nEntities: "entities", nAgents: "agents",
     spanOf: (a, b) => `from ${a} to ${b}`,
@@ -119,7 +120,8 @@ const T = {
     searchHelpNote: "語はすべて含むものを探します。\"語句\" で 1 つの語句、-語 で除外します。",
     sortBy: "並び順", sorts: { new: "新しい順", old: "古い順", recalled: "想起回数の多い順" }, showLines: "一致した行を表示",
     noHits: "一致する記憶はありません。",
-    kbd: ["⌘K 検索", "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
+    kbd: key => [`${key} 検索`, "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
+    paletteHint: key => `${key} で記憶とコマンドを検索`,
     overviewLead: "保存されている記憶の件数と、保存された時期を確認できます。",
     nMemories: "件の記憶", nEpisodes: "件のエピソード", nEntities: "件の実体", nAgents: "エージェント",
     spanOf: (a, b) => `${a} から ${b} まで`,
@@ -248,6 +250,9 @@ try { techAlways = localStorage.getItem("cp.tech") === "1"; } catch {}
 if (H0.get("tech") === "1") techAlways = true;
 
 const t = k => T[state.lang][k];
+// The palette opens with ⌘ on a Mac and Ctrl elsewhere, and the hints name the one
+// this keyboard has.
+const PALETTE_KEY = /^(Mac|iPhone|iPad)/.test(navigator.platform || "") ? "⌘K" : "Ctrl+K";
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const day = ts => (ts || "").slice(0, 10);
 const when = ts => (ts || "").replace("T", " ").slice(0, 16);
@@ -317,7 +322,8 @@ function applyLang() {
   for (const b of document.querySelectorAll("[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang));
   drawLayoutChoice();
   $("paletteInput").placeholder = t("palettePh");
-  $("kbd").innerHTML = t("kbd").map(k => `<span>${esc(k)}</span>`).join("");
+  $("kbd").innerHTML = t("kbd")(PALETTE_KEY).map(k => `<span>${esc(k)}</span>`).join("");
+  $("cnavHint").textContent = t("paletteHint")(PALETTE_KEY);
   if (overviewData) $("schemaLine").textContent = `${t("readOnly")} (Schema ${overviewData.schema})`;
 }
 
@@ -615,17 +621,15 @@ async function renderEpisode(id, d = $("page")) {
   const span = e.start_time || e.end_time ? `${when(e.start_time) || "?"} – ${when(e.end_time) || "?"}` : "—";
   d.innerHTML = `<article class="doc">
     <div class="top"><h2>${esc(day(episodeTime(e)))}<span class="h-sub">${esc(e.agent_id)}</span></h2>${closeButton(d)}</div>
+    <p class="doc-meta"><span>${esc(span)}</span><span>${esc(levelLabel("project", e.project_id))} / ${esc(levelLabel("channel", e.channel))}</span></p>
+    <div class="content">${mark(e.summary, state.q)}</div>
+    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (ep:${e.id})</button></div>
     <dl class="facts-list">
-      <dt>${t("conversation")}</dt><dd>${esc(span)}</dd>
       <dt>${t("stored")}</dt><dd>${esc(when(e.created_at))} UTC</dd>
-      <dt>${t("who")}</dt><dd>${esc(e.agent_id)}</dd>
-      <dt>${t("where")}</dt><dd>${esc(levelLabel("project", e.project_id))} / ${esc(levelLabel("channel", e.channel))}</dd>
       <dt>${t("resolvedQ")}</dt><dd>${e.resolved ? t("resolvedYes") : t("resolvedNo")}</dd>
       ${e.keywords ? `<dt>${t("keywords")}</dt><dd>${mark(e.keywords, state.q)}</dd>` : ""}
       ${e.entities.length ? `<dt>${t("mentionsEnt")}</dt><dd class="refs">${e.entities.map(x => refLink({ kind: "entity", id: x.id, text: x.name })).join("")}</dd>` : ""}
     </dl>
-    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (ep:${e.id})</button></div>
-    <div class="content">${mark(e.summary, state.q)}</div>
     <details class="tech" ${techAlways ? "open" : ""}><summary>${t("tech")}</summary>
       <dl class="facts-list">
         <dt>${t("vector")}</dt><dd>${e.has_embedding ? esc(e.embedding_model || "✓") : `<span class="muted">${t("vectorMissing")}</span>`}</dd>
@@ -713,17 +717,15 @@ async function renderDetail(id, d = $("page")) {
   renderTabs();
   d.innerHTML = `<article class="doc">
     <div class="top"><h2>${esc(day(m.timestamp))}<span class="h-sub">${esc(m.agent_id)}</span></h2>${d.id === "drawer" ? `<button class="x" id="closeBtn" aria-label="${t("close")}">×</button>` : ""}</div>
+    <p class="doc-meta"><span>${esc(when(m.timestamp))} UTC</span><span>${esc(levelLabel("project", m.project_id))} / ${esc(levelLabel("channel", m.channel))}</span></p>
+    <div class="content" id="content">${mark(m.content, state.q)}</div>
+    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (mem:${m.id})</button>
+      ${m.has_embedding ? `<button class="btn" id="aroundBtn">${t("showAround")}</button>` : ""}</div>
     <dl class="facts-list">
-      <dt>${t("when")}</dt><dd>${esc(when(m.timestamp))} UTC</dd>
-      <dt>${t("who")}</dt><dd>${esc(m.agent_id)}</dd>
-      <dt>${t("where")}</dt><dd>${esc(levelLabel("project", m.project_id))} / ${esc(levelLabel("channel", m.channel))}</dd>
       <dt>${t("from")}</dt><dd>${esc(src)}</dd>
       <dt>${t("used")}</dt><dd>${esc(t("usedN")(m.recall_count, when(m.last_recalled_at)))}</dd>
       <dt>${t("lockedQ")}</dt><dd>${m.locked ? t("yes") : t("no")}</dd>
     </dl>
-    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (mem:${m.id})</button>
-      ${m.has_embedding ? `<button class="btn" id="aroundBtn">${t("showAround")}</button>` : ""}</div>
-    <div class="content" id="content">${mark(m.content, state.q)}</div>
     <details class="tech" ${techAlways ? "open" : ""}><summary>${t("tech")}</summary>
       <dl class="facts-list">
         <dt>${t("split")}</dt><dd>
@@ -1239,7 +1241,7 @@ function startGraph(G, lens) {
         if (l.kind !== kind) continue;
         if (focus && (l.a === focus || l.b === focus)) { hot.moveTo(l.a.x, l.a.y); hot.lineTo(l.b.x, l.b.y); anyHot = true; continue; }
         // How similar two memories are shows as how strong their line is.
-        let alpha = kind === "structure" ? 0.08 : kind === "declared" ? 0.55
+        let alpha = kind === "structure" ? 0.45 : kind === "declared" ? 0.55
           : kind === "similar" || kind === "near" ? 0.04 + 0.3 * Math.max(0, Math.min(1, (l.w - 0.55) / 0.35)) : 0.22;
         if (focus) alpha *= 0.35;
         const step = Math.round(alpha * 100) / 100;
@@ -1675,7 +1677,7 @@ function wire() {
   });
   $("paletteBg").addEventListener("click", e => { if (e.target.id === "paletteBg") closePalette(); });
   document.addEventListener("keydown", e => {
-    // ⌘K, and ⌘O / ⌘P as in a notes app, all open the same search.
+    // ⌘K (Ctrl+K off a Mac), and ⌘O / ⌘P as in a notes app, all open the same search.
     if ((e.metaKey || e.ctrlKey) && ["k", "o", "p"].includes(e.key.toLowerCase())) { e.preventDefault(); openPalette(); return; }
     if ((e.altKey) && e.key === "ArrowLeft") { e.preventDefault(); step(-1); return; }
     if ((e.altKey) && e.key === "ArrowRight") { e.preventDefault(); step(1); return; }
