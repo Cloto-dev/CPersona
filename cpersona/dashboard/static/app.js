@@ -21,6 +21,7 @@ const T = {
     noHits: "No memory matches.",
     kbd: key => [`${key} search`, "/ find in list", "j/k move", "Enter open", "Esc close"],
     paletteHint: key => `${key} searches memories and commands`,
+    tzNote: zone => `Times are shown in ${zone}.`,
     overviewLead: "How many memories are stored, and when they were stored.",
     nMemories: "memories", nEpisodes: "episodes", nEntities: "entities", nAgents: "agents",
     spanOf: (a, b) => `from ${a} to ${b}`,
@@ -46,7 +47,7 @@ const T = {
     blocks: "Blocks", blocksN: n => `${n} block${n === 1 ? "" : "s"}`,
     blocksHint: "Shorter spans, so search can find text deep inside a long memory.",
     splitHint: "Click a part to highlight it in the text and scroll to it. Click it again to clear.",
-    vector: "Search vector", vectorMissing: "None stored", ids: "Identifiers", raw: "Original memory",
+    vector: "Search vector", vectorMissing: "None stored", ids: "Identifiers", raw: "Raw data (JSON)",
     emptyEpisodes: "No episodes yet",
     emptyEpisodesP: "An episode is the summary of one conversation. Your agent stores one when a session ends.",
     emptyEntities: "No entities yet",
@@ -104,7 +105,7 @@ const T = {
     openMemory: "Open", centerHere: "Center on this memory", showAround: "See it in the network",
   },
   ja: {
-    overview: "概要", memories: "記憶", episodes: "エピソード", entities: "実体", profiles: "プロフィール", browse: "たどる",
+    overview: "概要", memories: "記憶", episodes: "エピソード", entities: "エンティティ", profiles: "プロフィール", browse: "フォルダ",
     techAlways: "詳細情報を常に開く",
     calmDots: "集合体回避モード", calmDotsHint: "点の集まりを目立たせず、線で描きます。",
     sideSearch: "検索", settings: "設定", back: "戻る", forward: "進む", newTab: "新しいタブ", closeTab: "タブを閉じる",
@@ -115,17 +116,18 @@ const T = {
     signedOut: "ログアウトしました。もう一度開くには、エージェントに新しいリンクを頼んでください。",
     searchHits: n => `${n.toLocaleString()} 件の結果`, searchMore: n => `ほかに ${n} 件あります。語を足して絞ってください`,
     sideSearchPh: "入力して検索を開始...", matchCase: "大文字と小文字を区別", searchSettings: "検索の設定", searchOptions: "検索オプション",
-    searchOps: [["path:", "エージェント / プロジェクト / チャンネルに一致"], ["agent:", "エージェント名に一致"], ["tag:", "実体に言及している記憶を検索"],
+    searchOps: [["path:", "エージェント / プロジェクト / チャンネルに一致"], ["agent:", "エージェント名に一致"], ["tag:", "エンティティに言及している記憶を検索"],
       ["line:", "同一の行でキーワードを検索"], ["month:", "記録した月に一致 (2026-10)"], ["[property]", "属性に一致: [locked] [recalled] [vector] [project:x]"]],
     searchHelpNote: "語はすべて含むものを探します。\"語句\" で 1 つの語句、-語 で除外します。",
     sortBy: "並び順", sorts: { new: "新しい順", old: "古い順", recalled: "想起回数の多い順" }, showLines: "一致した行を表示",
     noHits: "一致する記憶はありません。",
     kbd: key => [`${key} 検索`, "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
     paletteHint: key => `${key} で記憶とコマンドを検索`,
+    tzNote: zone => `時刻は ${zone} で表示しています。`,
     overviewLead: "保存されている記憶の件数と、保存された時期を確認できます。",
-    nMemories: "件の記憶", nEpisodes: "件のエピソード", nEntities: "件の実体", nAgents: "エージェント",
+    nMemories: "記憶", nEpisodes: "エピソード", nEntities: "エンティティ", nAgents: "エージェント",
     spanOf: (a, b) => `${a} から ${b} まで`,
-    byMonth: "月間記憶グラフ", byMonthHint: "棒を選ぶと、その月に保存された記憶の一覧を開きます。",
+    byMonth: "月別の記憶数", byMonthHint: "棒を選ぶと、その月に保存された記憶の一覧を開きます。",
     byAgent: "エージェントごと", byAgentHint: "記憶はエージェントごとに分かれています。名前を選ぶと、そのエージェントの記憶の一覧を開きます。",
     health: "データベースの状態", healthChecking: "確認しています…", healthOk: "問題は見つかりませんでした。",
     healthInfo: n => `お知らせ ${n} 件`, sev: { critical: "重大", warn: "注意", info: "お知らせ" },
@@ -147,22 +149,22 @@ const T = {
     blocks: "ブロック", blocksN: n => `${n} 個のブロック`,
     blocksHint: "長い記憶の途中まで検索が届くように、さらに細かく分けた区間です。",
     splitHint: "区間をクリックすると、本文の該当箇所へ移動して強調表示します。もう一度クリックすると解除します。",
-    vector: "検索用のベクトル", vectorMissing: "保存されていません", ids: "識別子", raw: "原記憶",
+    vector: "検索用のベクトル", vectorMissing: "保存されていません", ids: "識別子", raw: "元のデータ (JSON)",
     emptyEpisodes: "エピソードはまだありません",
     emptyEpisodesP: "エピソードは、1 回の会話の要約です。セッションの終わりにエージェントが保存します。",
-    emptyEntities: "実体はまだありません",
-    emptyEntitiesP: "実体は、エージェントが宣言する人・プロジェクト・場所などの名前です。同じものについての記憶をつなぐのに使います。",
+    emptyEntities: "エンティティはまだありません",
+    emptyEntitiesP: "エンティティは、エージェントが宣言する人・プロジェクト・場所などの名前です。同じものについての記憶をつなぐのに使います。",
     episodesLead: "会話ごとの要約です。新しい会話から順に並びます。",
     entitiesLead: "エージェントが宣言した名前 (人・プロジェクト・場所など) です。言及の多い順に並びます。",
     searchEpisodesPh: "要約とキーワードを検索", searchEntitiesPh: "名前と別名を検索",
-    noEpisodeMatch: "その語を含むエピソードはありません。", noEntityMatch: "その名前の実体はありません。", noMatchShort: "語を短くしてください。",
+    noEpisodeMatch: "その語を含むエピソードはありません。", noEntityMatch: "その名前のエンティティはありません。", noMatchShort: "語を短くしてください。",
     conversation: "会話の時間", stored: "保存日時", keywords: "キーワード",
     resolvedQ: "話題の決着", resolvedYes: "決着した", resolvedNo: "決着していない", resolvedTag: "決着",
-    mentionsEnt: "言及している実体", aliases: "別名", declaredBy: "宣言元", declaredAt: "宣言日時",
+    mentionsEnt: "言及しているエンティティ", aliases: "別名", declaredBy: "宣言元", declaredAt: "宣言日時",
     mentionedIn: "言及している記録", relationsH: "関係",
-    noMentionsYet: "この実体に言及していると宣言された記憶・エピソードはありません。", noRelationsYet: "宣言された関係はありません。",
+    noMentionsYet: "このエンティティに言及していると宣言された記憶・エピソードはありません。", noRelationsYet: "宣言された関係はありません。",
     notVisible: "見つかりません (削除されたか、表示できる範囲の外です)", anchorOn: "根拠",
-    kinds: { mem: "記憶", ep: "エピソード", entity: "実体" },
+    kinds: { mem: "記憶", ep: "エピソード", entity: "エンティティ" },
     nMentions: n => `言及 ${n.toLocaleString()} 件`, nRelations: n => `関係 ${n.toLocaleString()} 件`,
     copyName: "名前をコピー",
     profilesLead: "エージェントが利用者についてまとめた要約です。想起のたびに答えに付くので、ここに書かれたことがすべての返答に届きます。",
@@ -192,7 +194,7 @@ const T = {
     colourByAgent: "エージェントで色分け", display: "表示",
     layerNote: {
       memories: "「内容が似ている」線は、保存された埋め込みから計算したつながりです。エージェントが宣言した関係ではありません。",
-      entities: "実体は、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
+      entities: "エンティティは、エージェントが宣言した名前です。「同じ記憶で言及」線は、1 件の記憶が両方に言及していることを表します。線が太いほど、そうした記憶が多くあります。",
       clusters: "まとまりは、保存された埋め込みから計算したものです。エージェントが分けたものではありません。記憶が増えると、分け方が変わることがあります。",
     },
     networkLead: "記憶を点にして、エージェントのまわりに集めています。線は、内容が似ている記憶どうしを結んでいます。",
@@ -254,8 +256,28 @@ const t = k => T[state.lang][k];
 // this keyboard has.
 const PALETTE_KEY = /^(Mac|iPhone|iPad)/.test(navigator.platform || "") ? "⌘K" : "Ctrl+K";
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const day = ts => (ts || "").slice(0, 10);
-const when = ts => (ts || "").replace("T", " ").slice(0, 16);
+// Times are stored as ISO 8601 text, with an offset or without one (SQLite's own
+// stamps, which are UTC), and an agent may store its own clock's time. Each is read
+// as the moment it names and shown in the viewer's time zone; text that does not
+// parse is shown as stored.
+const pad = n => String(n).padStart(2, "0");
+function moment(ts) {
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(ts || "")) return null;
+  const s = ts.replace(" ", "T");
+  const d = new Date(/(Z|[+-]\d{2}:\d{2})$/.test(s) ? s : s + "Z");
+  return isNaN(d) ? null : d;
+}
+const localDay = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const day = ts => { const d = moment(ts); return d ? localDay(d) : (ts || "").slice(0, 10); };
+const when = ts => { const d = moment(ts); return d ? `${localDay(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}` : (ts || "").replace("T", " ").slice(0, 16); };
+const yesterday = now => localDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+// The zone the times are shown in, for the note under the settings: "Asia/Tokyo (UTC+9)".
+function zoneName() {
+  const m = -new Date().getTimezoneOffset(), a = Math.abs(m);
+  const off = m ? `UTC${m > 0 ? "+" : "-"}${Math.floor(a / 60)}${a % 60 ? ":" + pad(a % 60) : ""}` : "UTC";
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return zone && zone !== "UTC" ? `${zone} (${off})` : off;
+}
 const mark = (text, q) => {
   const e = esc(text);
   if (!q) return e;
@@ -324,6 +346,7 @@ function applyLang() {
   $("paletteInput").placeholder = t("palettePh");
   $("kbd").innerHTML = t("kbd")(PALETTE_KEY).map(k => `<span>${esc(k)}</span>`).join("");
   $("cnavHint").textContent = t("paletteHint")(PALETTE_KEY);
+  $("tzLine").textContent = t("tzNote")(zoneName());
   if (overviewData) $("schemaLine").textContent = `${t("readOnly")} (Schema ${overviewData.schema})`;
 }
 
@@ -455,7 +478,7 @@ async function renderMemories(append = false) {
     return;
   }
   const now = new Date();
-  const today = now.toISOString().slice(0, 10), yday = new Date(now - 864e5).toISOString().slice(0, 10);
+  const today = localDay(now), yday = yesterday(now);
   let html = "", last = "";
   for (const r of listRows) {
     const d = day(r.timestamp);
@@ -486,7 +509,7 @@ const DETAIL_LIST = { memory: "memories", episode: "episodes", entity: "entities
 const drawerKind = () => state.kind || LIST_DETAIL[state.view] || "memory";
 const dayLabel = d => {
   const now = new Date();
-  return d === now.toISOString().slice(0, 10) ? t("today") : d === new Date(now - 864e5).toISOString().slice(0, 10) ? t("yesterday") : esc(d);
+  return d === localDay(now) ? t("today") : d === yesterday(now) ? t("yesterday") : esc(d);
 };
 const episodeTime = r => r.end_time || r.start_time || r.created_at;
 
@@ -625,7 +648,7 @@ async function renderEpisode(id, d = $("page")) {
     <div class="content">${mark(e.summary, state.q)}</div>
     <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (ep:${e.id})</button></div>
     <dl class="facts-list">
-      <dt>${t("stored")}</dt><dd>${esc(when(e.created_at))} UTC</dd>
+      <dt>${t("stored")}</dt><dd>${esc(when(e.created_at))}</dd>
       <dt>${t("resolvedQ")}</dt><dd>${e.resolved ? t("resolvedYes") : t("resolvedNo")}</dd>
       ${e.keywords ? `<dt>${t("keywords")}</dt><dd>${mark(e.keywords, state.q)}</dd>` : ""}
       ${e.entities.length ? `<dt>${t("mentionsEnt")}</dt><dd class="refs">${e.entities.map(x => refLink({ kind: "entity", id: x.id, text: x.name })).join("")}</dd>` : ""}
@@ -717,7 +740,7 @@ async function renderDetail(id, d = $("page")) {
   renderTabs();
   d.innerHTML = `<article class="doc">
     <div class="top"><h2>${esc(day(m.timestamp))}<span class="h-sub">${esc(m.agent_id)}</span></h2>${d.id === "drawer" ? `<button class="x" id="closeBtn" aria-label="${t("close")}">×</button>` : ""}</div>
-    <p class="doc-meta"><span>${esc(when(m.timestamp))} UTC</span><span>${esc(levelLabel("project", m.project_id))} / ${esc(levelLabel("channel", m.channel))}</span></p>
+    <p class="doc-meta"><span>${esc(when(m.timestamp))}</span><span>${esc(levelLabel("project", m.project_id))} / ${esc(levelLabel("channel", m.channel))}</span></p>
     <div class="content" id="content">${mark(m.content, state.q)}</div>
     <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (mem:${m.id})</button>
       ${m.has_embedding ? `<button class="btn" id="aroundBtn">${t("showAround")}</button>` : ""}</div>

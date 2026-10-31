@@ -576,6 +576,10 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   In both, Ctrl or ⌘ with K, O or P opens the command palette, and a record opens
   with its text first: a line of when and where it was stored sits above the text,
   and its other attributes follow it.
+- **Times** are shown in the viewer's time zone, which the settings name at
+  their foot. A stored time is read as the moment it names, with its own offset;
+  one stored without an offset is read as UTC. *Today* and *Yesterday* over the
+  list are the viewer's days.
 - **Search**, in the tabbed layout's side panel, finds memories whose text holds every word typed,
   and shows the lines that matched. `"a phrase"` matches as written and `-word`
   leaves out memories holding the word. `path:` matches agent/project/channel,

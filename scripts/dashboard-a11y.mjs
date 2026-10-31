@@ -149,6 +149,28 @@ for (const [platform, key, other] of [["MacIntel", "⌘K", "Ctrl+K"], ["Win32", 
     failures.push(`${platform}: ${e.message}`);
   }
 }
+await send("Emulation.setUserAgentOverride", { userAgent });
+// Times are shown in the viewer's zone: a stored time is read with its own offset,
+// and one without an offset as UTC. The fixture's first memory is 09:12 UTC.
+for (const [zone, memory, tokyo, sqlite, note] of [
+  ["Asia/Tokyo", "2026-10-28 18:12", "2026-06-12 20:07", "2026-10-31 11:40", "Asia/Tokyo (UTC+9)"],
+  ["UTC", "2026-10-28 09:12", "2026-06-12 11:07", "2026-10-31 02:40", "UTC"],
+]) {
+  try {
+    await send("Emulation.setTimezoneOverride", { timezoneId: zone });
+    await evaluate(`localStorage.setItem("cp.layoutMode", "classic"); true`);
+    await open("&view=memories&id=1&lang=ja");
+    await waitFor(`!!document.querySelector("#drawer.open .doc-meta")`);
+    const r = await evaluate(`({ meta: document.querySelector("#drawer .doc-meta span").textContent, tokyo: when("2026-06-12T20:07:30+09:00"),
+      sqlite: when("2026-10-31 02:40:00"), note: document.getElementById("tzLine").textContent })`);
+    if (r.meta !== memory) failures.push(`${zone}: the memory stored at 09:12 UTC shows as ${JSON.stringify(r.meta)}, not ${memory}`);
+    if (r.tokyo !== tokyo) failures.push(`${zone}: a time stored with +09:00 shows as ${JSON.stringify(r.tokyo)}, not ${tokyo}`);
+    if (r.sqlite !== sqlite) failures.push(`${zone}: a time stored without an offset shows as ${JSON.stringify(r.sqlite)}, not ${sqlite}`);
+    if (!r.note.includes(note)) failures.push(`${zone}: the settings name the zone as ${JSON.stringify(r.note)}`);
+  } catch (e) {
+    failures.push(`${zone}: ${e.message}`);
+  }
+}
 if (pageErrors.length) failures.push(...pageErrors.map(e => `script error: ${e}`));
 console.log(`checked ${checked} pages with axe-core ${axeVersion}`);
 if (!controlCaught) { console.error("the planted low-contrast paragraph was not reported: axe's results cannot be trusted"); done(3); }
