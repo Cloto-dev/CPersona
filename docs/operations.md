@@ -567,7 +567,8 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   foot of the side panel) and kept in the browser. *Standard*, the default, is
   one side panel of the views (overview, memories, network, episodes, entities,
   profiles) over the logical directory; a memory opens in a drawer beside the
-  list, so the list does not move. *Tabbed* puts a
+  list, so the list does not move. The list behind the drawer is dimmed, and a
+  click on it closes the drawer. *Tabbed* puts a
   column of icons on the left, a side panel that browses the logical directory or
   searches, and tabs: each memory opens in a tab of its own, and each tab has its
   own back and forward (Alt+← / Alt+→). Switching keeps the memory that is open.

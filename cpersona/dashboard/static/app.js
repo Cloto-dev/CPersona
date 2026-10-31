@@ -692,6 +692,7 @@ async function openDetail(id, kind = "memory") {
     for (const b of document.querySelectorAll(".row")) b.classList.toggle("sel", !state.kind && Number(b.dataset.id) === id);
     await RENDER[kind](id, $("drawer"));
     $("drawer").classList.add("open");
+    document.body.classList.add("drawer-open");
     return;
   }
   const at = tabs.findIndex(tb => { const c = tb.hist[tb.pos]; return c.view === kind && c.id === id; });
@@ -769,6 +770,7 @@ function closeDetail() {
   for (const b of document.querySelectorAll(".row.sel")) b.classList.remove("sel");
   if (!$("drawer").classList.contains("open")) return;
   $("drawer").classList.remove("open");
+  document.body.classList.remove("drawer-open");
   state.id = 0;
   state.kind = "";
   saveHash();
@@ -1634,6 +1636,7 @@ function wire() {
   $("backBtnTab").addEventListener("click", () => step(-1));
   $("fwdBtnTab").addEventListener("click", () => step(1));
   $("paletteBtn").addEventListener("click", () => openPalette());
+  $("scrim").addEventListener("click", closeDetail);
   $("setBtn").addEventListener("click", openSettings);
   $("setClose").addEventListener("click", closeSettings);
   $("settingsBg").addEventListener("click", e => { if (e.target.id === "settingsBg") closeSettings(); });

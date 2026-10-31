@@ -110,6 +110,15 @@ for (const scheme of ["light", "dark"]) {
       if (control) await evaluate(`document.getElementById("a11y-control").remove(); true`);
       const sideways = await evaluate(`document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth`);
       if (sideways > 0) failures.push(`${where}: the page scrolls sideways by ${sideways}px at 1024px`);
+      // With the drawer open the list behind it is covered by the scrim, and a click on
+      // the scrim closes the drawer (run last: it changes the page).
+      if (ready.startsWith("#drawer.open")) {
+        const covered = await evaluate(`(() => { const r = document.querySelector("#list .row").getBoundingClientRect(); return document.elementFromPoint(r.left + 8, r.top + 8)?.id === "scrim"; })()`);
+        if (!covered) failures.push(`${where}: the list beside the open drawer is not covered by the scrim`);
+        await evaluate(`document.getElementById("scrim").click(); true`);
+        const closed = await evaluate(`!document.getElementById("drawer").classList.contains("open") && !document.body.classList.contains("drawer-open")`);
+        if (!closed) failures.push(`${where}: a click on the scrim did not close the drawer`);
+      }
       checked++;
     } catch (e) {
       failures.push(`${where}: ${e.message}`);

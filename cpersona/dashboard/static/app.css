@@ -7,6 +7,7 @@
     /* Bars carry a count, so they hold 3:1 against the card and the track (WCAG 1.4.11);
        search matches have a colour of their own, apart from the selection's. */
     --bar: #808994; --mark: #f9d65c;
+    --scrim: rgba(0,0,0,.24);
     /* How a memory is split: nodes blue, blocks a soft blue-green (not the green of "ok"). */
     --node: #5b8def; --node-soft: #dfe9fc; --block: #8fc4b3; --block-soft: #e2f2ec;
     color-scheme: light;
@@ -22,6 +23,7 @@
   }
   @media (prefers-color-scheme: dark) {
     :root {
+      --scrim: rgba(0,0,0,.55);
       --base: #121417; --recessed: #0d0f11; --raised: #1a1d21; --line: #2b3036; --line-soft: #23272c;
       --text: #e5e8ec; --muted: #a2aab3; --faint: #8a929b;
       --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f;
@@ -129,6 +131,11 @@
   }
   .drawer:not(.open) { visibility: hidden; box-shadow: none; }
   .drawer.open { transform: none; }
+  /* The drawer covers part of the list. The list behind it is dimmed, and a click on
+     it closes the drawer, so what is covered reads as out of reach rather than cut off.
+     The list itself does not move. */
+  .scrim { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 19; }
+  body[data-layout="classic"].drawer-open .scrim { display: block; }
   @media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
   body[data-layout="classic"] { grid-template-columns: 260px minmax(0, 1fr); }
   body[data-layout="classic"] .ribbon, body[data-layout="classic"] .side-tabs,
@@ -285,7 +292,7 @@
   #schemaLine { color: var(--faint); }
 
   /* Command palette */
-  .palette-bg { position: fixed; inset: 0; background: rgba(0,0,0,.28); display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+  .palette-bg { position: fixed; inset: 0; background: rgba(0,0,0,.28); z-index: 30; display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; }
   .palette-bg.open { display: flex; }
   .palette { width: min(620px, 92vw); background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 20px 48px rgba(0,0,0,.25); overflow: hidden; }
   .palette input { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); font: inherit; font-size: 16px; padding: 14px 16px; outline: none; }
