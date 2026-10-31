@@ -2,8 +2,11 @@
 
 Labels that read as literal translations or coinages were replaced: an entity is
 エンティティ, the tree is フォルダ, and a count is not split from its counter word
-across two lines. The Japanese pages and the Japanese docs that describe them are
-read here, so a retired word put back in either is caught.
+across two lines. A later pass replaced words that read as made up for the page
+(関門 for the fusion gate, 決着 for a resolved topic) and took the full stop off the
+empty-state headings, which are headings like the others. The Japanese pages and
+the Japanese docs that describe them are read here, so a retired word put back in
+either is caught.
 """
 
 from __future__ import annotations
@@ -28,6 +31,12 @@ RETIRED = {
     '"件の記憶"': '"記憶"',
     '"件のエピソード"': '"エピソード"',
     '"件の実体"': '"エンティティ"',
+    "関門": "ゲート",
+    "決着": "解決",
+    "点をつまんで": "点をドラッグで動かす",
+    "書き込み待ちのログ": "WAL ファイル",
+    "入力して検索を開": "検索語を入力",
+    "短く表示": "折りたたむ",
 }
 
 
@@ -55,3 +64,27 @@ def test_the_japanese_docs_call_an_entity_by_the_same_word():
         for p in DOCS.glob("*.ja.md")
     }
     assert not {k: v for k, v in found.items() if v}, found
+
+
+def _ja(key):
+    m = re.search(rf"\b{key}: (?:\"([^\"]*)\"|[^,]*?=> `([^`]*)`)", JA)
+    assert m, key
+    return m.group(1) or m.group(2)
+
+
+def test_the_empty_state_headings_have_no_full_stop():
+    # Every heading of an empty page: the ones written as <h2>${t("...")}, and the
+    # lists' "none" and "empty" headings that the list view puts in an <h2>.
+    keys = set(re.findall(r'<div class="empty"><h2>\$\{t\("(\w+)"\)\}', SCRIPT))
+    keys |= set(re.findall(r'none: "(\w+)"', SCRIPT))
+    keys |= set(re.findall(r'empty: \["(\w+)"', SCRIPT))
+    assert {"noMemories", "noMatch", "noEpisodeMatch", "noEntityMatch", "emptyProfiles"} <= keys
+    ended = {k: _ja(k) for k in keys if _ja(k).endswith("。")}
+    assert not ended, ended
+
+
+def test_the_japanese_dashboard_docs_use_the_same_words():
+    text = (DOCS / "operations.ja.md").read_text(encoding="utf-8")
+    section = text[text.index("## ダッシュボード") :]
+    found = [w for w in ("関門", "決着", "ベクトルで探す経路") if w in section]
+    assert not found, found
