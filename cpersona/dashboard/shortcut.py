@@ -19,6 +19,7 @@ Reinstalling CPersona somewhere else moves the interpreter: run
 ``--install-shortcut`` again, which replaces the shortcut.
 """
 
+import base64
 import os
 import plistlib
 import shlex
@@ -78,6 +79,8 @@ def windows_script(db_path: str, port: int = local.DEFAULT_PORT, remove: bool = 
     file = _name(db_path) + ".lnk"
     lines = [
         "$ErrorActionPreference = 'Stop'",
+        "$ProgressPreference = 'SilentlyContinue'",
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
         f"$paths = @((Join-Path ([Environment]::GetFolderPath('Desktop')) {_ps(file)}), "
         f"(Join-Path ([Environment]::GetFolderPath('Programs')) {_ps(file)}))",
     ]
@@ -102,9 +105,16 @@ def windows_script(db_path: str, port: int = local.DEFAULT_PORT, remove: bool = 
 
 
 def _run_powershell(script: str) -> list[str]:
+    """Run ``script`` and return the lines it prints (the shortcuts' paths).
+
+    The script goes as -EncodedCommand, not on standard input: Windows PowerShell
+    5.1 reading ``-Command -`` runs each line as typed and never finishes a block
+    that spans lines, so the foreach that makes the shortcuts did nothing and the
+    run still exited 0. Encoded, the whole script is one command."""
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     done = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", "-"],
-        input=script, capture_output=True, text=True, check=True,
+        ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return [line for line in done.stdout.splitlines() if line.strip()]
 

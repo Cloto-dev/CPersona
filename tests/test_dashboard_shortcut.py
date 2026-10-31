@@ -100,6 +100,32 @@ def test_the_windows_script_uses_the_windowless_python_and_quotes_every_path(tmp
     assert "Remove-Item -LiteralPath $p" in removal and "CreateShortcut" not in removal
 
 
+def test_the_windows_script_is_sent_whole_not_on_standard_input(monkeypatch):
+    import base64
+    import subprocess
+
+    seen = {}
+
+    def run(argv, **kw):
+        seen["argv"], seen["kw"] = argv, kw
+        return subprocess.CompletedProcess(argv, 0, stdout="C:\\Users\\a\\Desktop\\x.lnk\r\n\r\n", stderr="")
+
+    monkeypatch.setattr(shortcut.subprocess, "run", run)
+    script = "foreach ($p in @('a', 'b')) {\n  $p\n}\n"
+    assert shortcut._run_powershell(script) == ["C:\\Users\\a\\Desktop\\x.lnk"]
+    argv = seen["argv"]
+    # A block spanning lines read from "-Command -" never runs in Windows PowerShell 5.1.
+    assert "-Command" not in argv and "input" not in seen["kw"]
+    assert base64.b64decode(argv[argv.index("-EncodedCommand") + 1]).decode("utf-16-le") == script
+    assert seen["kw"]["encoding"] == "utf-8" and seen["kw"]["check"] is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="runs Windows PowerShell")
+def test_a_block_spanning_lines_runs_in_windows_powershell():
+    # What the shortcut script relies on: under "-Command -" this printed nothing.
+    assert shortcut._run_powershell("foreach ($i in 1..2) {\n  \"line$i\"\n}\n") == ["line1", "line2"]
+
+
 def test_the_command_line_makes_the_shortcut_and_starts_no_dashboard(tmp_path, monkeypatch, capsys):
     import sqlite3
 
