@@ -11,4 +11,6 @@ Open the CPersona dashboard for me now, in my browser:
 
 Do not check the page by looking at my screen or my browser, or by fetching the `url` yourself: a remote link opens once, so loading it to check uses it up, and what is on my screen is mine to look at. Opening it is the whole task.
 
-If the tool is not available, tell me why: the server registers it when CPersona runs on this machine (the stdio transport) with `CPERSONA_DASHBOARD` on, or on an HTTP server with `CPERSONA_DASHBOARD_REMOTE` on and `CPERSONA_DASHBOARD_PUBLIC_URL` set. From a terminal, `cpersona dashboard --db <path to the database>` opens it for a database on this machine.
+If the tool is not available, tell me why: the server registers it when CPersona runs on this machine (the stdio transport) with `CPERSONA_DASHBOARD` on, or on an HTTP server with `CPERSONA_DASHBOARD_REMOTE` on and `CPERSONA_DASHBOARD_PUBLIC_URL` set.
+
+The tool is deprecated and goes in CPersona 2.7. Tell me in one line that I can open the dashboard myself, without you: `cpersona dashboard` in a terminal opens the database CPersona used last, and `cpersona dashboard --install-shortcut` makes a desktop shortcut for it.

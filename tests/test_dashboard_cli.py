@@ -208,3 +208,21 @@ def test_stop_from_the_command_line_stops_only_this_stores_dashboard(served, tmp
     assert dashboard_main(["--db", db, "--port", str(port), "--stop"]) == 0
     thread.join(timeout=5)
     assert not thread.is_alive()
+
+
+# ---- open_dashboard, deprecated in 2.6.16
+
+
+@pytest.mark.asyncio
+async def test_open_dashboard_says_it_is_deprecated_and_what_replaces_it():
+    from cpersona import server
+    from cpersona.dashboard import embedded
+
+    for description in (server._OPEN_DASHBOARD_DESCRIPTION, server._OPEN_REMOTE_DASHBOARD_DESCRIPTION):
+        assert description.startswith("Deprecated, removed in CPersona 2.7")
+    assert "cpersona dashboard" in server._OPEN_DASHBOARD_DESCRIPTION
+    try:
+        out = await server.do_open_dashboard()
+    finally:
+        embedded.stop_all()
+    assert out["ok"] and "2.7" in out["deprecated"] and "cpersona dashboard" in out["deprecated"]

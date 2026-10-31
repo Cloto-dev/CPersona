@@ -3137,7 +3137,16 @@ if config.DECLARED_FOLDERS:
     _enable_declared_folders(registry)
 
 
+# open_dashboard is deprecated in 2.6.16 and goes in 2.7: the dashboard opens without
+# an agent from `cpersona dashboard` (a fixed port, a cookie sign-in, a desktop
+# shortcut). Both descriptions and both answers say so, so an agent can tell the person.
+_DEPRECATED = (
+    "Deprecated: open_dashboard is removed in CPersona 2.7. The person can open the dashboard "
+    "without an agent by running `cpersona dashboard` (and make a desktop shortcut with "
+    "`cpersona dashboard --install-shortcut`)."
+)
 _OPEN_DASHBOARD_DESCRIPTION = (
+    "Deprecated, removed in CPersona 2.7: the person can run `cpersona dashboard` instead. "
     "Open the read-only dashboard of this memory store and return its address, for "
     "the person to view in a browser: what is stored and when, the logical directory, "
     "each memory in full with how it is split, and the store's health. It runs on "
@@ -3145,6 +3154,7 @@ _OPEN_DASHBOARD_DESCRIPTION = (
     "the person; open_browser=true also opens it on this machine."
 )
 _OPEN_REMOTE_DASHBOARD_DESCRIPTION = (
+    "Deprecated, removed in CPersona 2.7. "
     "Make a link to the read-only dashboard of this memory store, for the person to "
     "open in a browser: what is stored and when, the logical directory, and each "
     "memory in full with how it is split. It shows only the agents this connection "
@@ -3188,6 +3198,7 @@ async def do_open_dashboard(open_browser: bool = False) -> dict:
         "read_only": True,
         "opened": opened,
         "hint": "Give this address to the person. It opens only on this machine and stops when the server stops.",
+        "deprecated": _DEPRECATED,
     }
 
 
@@ -3223,6 +3234,7 @@ def _open_remote_dashboard() -> dict:
             "give it to them. It opens once, within ten minutes, signs the browser in "
             "for 30 days, and shows only the agents this connection can read."
         ),
+        "deprecated": "Deprecated: open_dashboard is removed in CPersona 2.7.",
     }
 
 

@@ -527,7 +527,8 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   `uvx` runs from a cache that can be cleared. The page can also be installed
   from the browser as an app (Chrome and Edge; Safari's Add to Dock); its service
   worker passes every request through and keeps nothing in the browser.
-- **From your agent**: ask it to open the dashboard. Under the stdio transport the
+- **From your agent** (deprecated; `open_dashboard` is removed in 2.7, and
+  `cpersona dashboard` above opens the dashboard without an agent): ask it to open the dashboard. Under the stdio transport the
   server registers `open_dashboard`, which opens the page for the database the
   server already uses and returns the address, so nobody has to look the path up.
   Opened this way the store's status page also shows the server's check, the

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:d4d680ce0cc7544560b99350ee24c59473303918 -->
+<!-- i18n-source: docs/configuration.md@blob:07e1d7c44f7ead9c80cdbede7d5af38f14c3ef04 -->
 
 # 設定リファレンス
 
@@ -33,7 +33,7 @@
 | `CPERSONA_FTS_ENABLED` | `true` | 起動時に全文 (キーワード) 索引を作る。`false` では索引を持たないデータベースに索引を作らないため、その上の recall にはキーワード経路がありません。`true` に戻すと、次の起動で索引を作り、保存済みの行から埋めます。すでにある索引を消すことはありません |
 | `CPERSONA_LOGICAL_DIRECTORY` | `false` | 2.6 系での試験。`true` にすると、`list_memories` が `path` を受け取り、記録を読み取り専用のフォルダの階層として 1 段ずつ返す。階層は エージェント、project、channel、記録の時刻の UTC の年と月の順で、各フォルダに記憶とエピソードの件数を、月のフォルダに ref を出す。保存も移動も絞り込みもせず、想起は変わらない。`false` ではツールの定義も応答も今までどおり |
 | `CPERSONA_DECLARED_FOLDERS` | `false` | `true` にすると、エージェントが project の下にフォルダを宣言し、各記憶とエピソードをそのどれか 1 つに入れられる。`store` が `folder` を受け取り、`organize_folders` ツールがフォルダの作成・名前の変更・移動・削除と、記録の出し入れをする。`list_memories` は `view: "folders"` で、`path` ([エージェント, project, フォルダ, ...]) のフォルダを開く。`recall` と `reconstruct` は `include_folders: true` で各記録のフォルダを返す。フォルダは答えを切り詰めた後で足し、mode の上限の外に置く (`folder_tokens`)。フォルダは分類するだけで絞り込まない。どの検索もフォルダを読まず、記録の行は書き換えないので、ロックした記録も入れられる。`check_health` に `folder_unfiled` (info) と `folder_integrity` が加わる。`false` ではどのツールの定義も応答も今までどおりで、2 つのテーブルはどちらでも作られ、空のまま |
-| `CPERSONA_DASHBOARD` | `true` | `open_dashboard` ツールを登録する。エージェントはこのツールで、このサーバーが使っているデータベースの読み取り専用の[ダッシュボード](operations.md#the-dashboard)を開き、人にアドレスを渡す。既定では stdio のトランスポートの時だけ登録する。HTTP ではページがサーバー自身のループバックで開き、人の手が届かないので、`CPERSONA_DASHBOARD_REMOTE` が on の時だけ登録する。`false` でツールの定義を消す。`cpersona dashboard --db <path>` はどちらでも使える |
+| `CPERSONA_DASHBOARD` | `true` | ツールとともに非推奨で、ツールは 2.7 で外す (`cpersona dashboard` なら、エージェントなしでダッシュボードを開ける)。`open_dashboard` ツールを登録する。エージェントはこのツールで、このサーバーが使っているデータベースの読み取り専用の[ダッシュボード](operations.md#the-dashboard)を開き、人にアドレスを渡す。既定では stdio のトランスポートの時だけ登録する。HTTP ではページがサーバー自身のループバックで開き、人の手が届かないので、`CPERSONA_DASHBOARD_REMOTE` が on の時だけ登録する。`false` でツールの定義を消す。`cpersona dashboard --db <path>` はどちらでも使える |
 | `CPERSONA_DASHBOARD_REMOTE` | `false` | `true` で、HTTP のトランスポートが `/dashboard/` の下で[ダッシュボード](operations.md#the-dashboard)を配る。ページは、`open_dashboard` が認証を通ったクライアントに返す 1 回限りのリンクで開き、そのクライアントが読めるエージェントの分だけを見せる。`CPERSONA_DASHBOARD_PUBLIC_URL` が要る。stdio では効かない |
 | `CPERSONA_DASHBOARD_SESSION_KEY` | *(未設定)* | リモートのダッシュボードのセッションの Cookie に署名する秘密の値。未設定なら、初めて使う時に、サーバーがデータベースの横のファイル (`<名前>-dashboard.key`、所有者だけが読める) に作る。この値を変えるか、そのファイルを消すと、すべてのセッションが終わる |
 | `CPERSONA_DASHBOARD_PUBLIC_URL` | *(未設定)* | 人がこのサーバーに届くアドレス。リモートのダッシュボードのリンクはこのアドレスで始まる (例: `https://memory.example.com`)。ダッシュボードのセッションの Cookie は Secure なので、https か、localhost の http でなければならない |
