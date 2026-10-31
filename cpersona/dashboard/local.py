@@ -4,13 +4,22 @@ It listens on a fixed port on 127.0.0.1, so a shortcut, a bookmark or an install
 web app finds it again, and it keeps running until it is stopped. A browser signs
 in the way the remote dashboard's does (``remote``): a one-time code after the "#"
 is sent once, in a header, for a signed session cookie, so the page opens again
-without a new address.
+without a new address while this dashboard runs.
 
 A second ``cpersona dashboard`` for the same store starts nothing: it asks the
 running one for a code and opens the browser on it. That request, and the one that
 stops the dashboard, carry a proof made with the store's session key, a file only
 its owner can read, so another user of the machine can reach the port but can do
 neither.
+
+Cookies are not kept apart by port (RFC 6265 section 8.5): a browser sends this
+one to every program listening on 127.0.0.1. So the session is signed with a key
+made when this dashboard starts, not with the store's key file, and ends when it
+stops: a program that takes the port after a stop gets a cookie that opens nothing.
+While the dashboard runs, a page the person opens from another program on
+127.0.0.1 is still sent the cookie, and that program could use it here until the
+dashboard stops. On a machine other people log in to, stop the dashboard when it
+is not in use.
 """
 
 import base64
@@ -19,6 +28,7 @@ import hmac
 import http.client
 import json
 import os
+import secrets
 import socket
 import time
 
@@ -62,7 +72,8 @@ class Sessions:
 
     The cookie is named for the store: cookies are kept per host, not per port, so
     two stores' dashboards on two ports would otherwise overwrite each other's.
-    It cannot be Secure (the page is plain HTTP on the loopback address)."""
+    It cannot be Secure (the page is plain HTTP on the loopback address). It is
+    signed with a key made for this process, so it ends when the process does."""
 
     app = APP
 
@@ -70,6 +81,7 @@ class Sessions:
         self.db_path = db_path
         self.store = store_id(db_path)
         self.cookie = f"cp_dash_{self.store[:12]}"
+        self.key = secrets.token_bytes(32)
 
     def proof_ok(self, action: str, value: str) -> bool:
         return proof_ok(self.db_path, action, value)
@@ -82,7 +94,7 @@ class Sessions:
 
     def redeem(self, code: str) -> str | None:
         """The Set-Cookie header a code opens, or None for one used, unknown or expired."""
-        value = remote.redeem(code, self.db_path)
+        value = remote.redeem(code, self.db_path, key=self.key)
         return None if value is None else self._set_cookie(value, remote.SESSION_SECONDS)
 
     def logout(self) -> str:
@@ -94,7 +106,7 @@ class Sessions:
         for part in cookie_header.split(";"):
             name, _, value = part.strip().partition("=")
             if name == self.cookie and value:
-                held = remote.session(value, self.db_path)
+                held = remote.session(value, self.db_path, key=self.key)
                 if held is not None:
                     renewed = held[1]
                     return True, None if renewed is None else self._set_cookie(renewed, remote.SESSION_SECONDS)

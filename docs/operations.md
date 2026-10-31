@@ -515,8 +515,13 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   it). It listens on port 48700 and runs until `cpersona dashboard --stop`. Run
   again for the same database, it starts nothing and opens the running one; a
   port held by another database or program is reported, and `--port` picks
-  another. The browser signs in with a one-time code and keeps a session cookie
-  for 30 days, so a bookmark opens the page again.
+  another. The browser signs in with a one-time code for a session cookie, so a
+  bookmark or the installed app opens the page again while the dashboard runs.
+  The session ends when the dashboard stops; after a restart, open it from the
+  shortcut or `cpersona dashboard`, which signs the browser in again. A browser
+  sends the cookie to every program on 127.0.0.1, whatever its port, so on a
+  machine other people log in to, stop the dashboard when you are not using it.
+  `CPERSONA_DASHBOARD_STORES=false` stops the servers' notes.
 - **A shortcut, and an app**: `cpersona dashboard --install-shortcut` makes a
   shortcut that opens that database's dashboard with a double-click: on Windows
   on the desktop and in the Start menu (pin it to the taskbar from there), on
@@ -550,7 +555,9 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   30 days and is renewed once half of it has passed, so a bookmark of the page
   keeps working for as long as it is used.
   The address must be https, or plain http on localhost; a browser drops a Secure
-  cookie from any other http address, so the tool refuses one.
+  cookie from any other http address, so the tool refuses one. Over HTTP the
+  deprecated `open_dashboard` is, for now, the only way to sign in; a way that
+  does not need it comes before 2.7, which removes the tool.
   - **Who sees what**: only the agents the client's grants let it read. Memories,
     episodes, entities and blocks of any other agent are left out, and so is a
     mention, relation, alias or node that names one of them, so no id of a hidden

@@ -5,7 +5,9 @@ the requests only the store's owner can make.
 Each check is made against the wrong answer it guards: a store list read in the
 order it was written, an instance check that names the path, a code or a stop
 granted without a proof, a code that opens two sessions, a cookie of one store
-taken by another's dashboard.
+taken by another's dashboard, a cookie that outlives the dashboard that signed it
+(a browser sends it to whatever program holds the port next), a note written with
+the notes turned off.
 """
 
 import http.client
@@ -100,6 +102,19 @@ def test_a_note_that_cannot_be_written_never_stops_the_server(tmp_path, monkeypa
     assert stores.known() == []
 
 
+def test_turned_off_no_note_is_written_but_the_list_is_still_read(tmp_path, monkeypatch):
+    from cpersona import config
+
+    first, second = _db(tmp_path, "a.db"), _db(tmp_path, "b.db")
+    stores.remember(first)
+    monkeypatch.setattr(config, "DASHBOARD_STORES", False)
+    stores.remember(second)
+    assert [r["path"] for r in stores.known()] == [first]
+    monkeypatch.setattr(config, "DASHBOARD_STORES", True)
+    stores.remember(second)
+    assert [r["path"] for r in stores.known()] == [second, first]
+
+
 def test_a_relative_path_is_noted_as_the_file_the_server_opens(tmp_path, monkeypatch):
     db = _db(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -152,6 +167,25 @@ def test_a_code_signs_in_once_and_the_cookie_reads_the_data(served):
     assert _get(port, "/api/overview", {"Authorization": "Bearer tok"})[0] == 200
     # Signing out clears the cookie.
     assert "Max-Age=0" in _get(port, "/api/logout", {"Cookie": pair})[2]
+
+
+def test_a_session_ends_with_the_dashboard_that_signed_it(served):
+    db, port, sessions, _t = served
+    code = local.ask(port, "code", db)[1]["code"]
+    pair = _get(port, "/api/session", {"X-Dashboard-Code": code})[2].split(";")[0]
+    value = pair.split("=", 1)[1]
+    assert sessions.check(pair) == (True, None)
+    # The next dashboard of the same store, as after a restart, or a program that
+    # took the port in between, cannot use it.
+    assert local.Sessions(db).check(pair) == (False, None)
+    # Nor is the store's key file what signs it: a session signed with that key, as
+    # the remote dashboard's are, does not open this one.
+    other = remote.redeem(remote.issue_link(""), db)
+    assert other and other != value
+    assert sessions.check(f"{sessions.cookie}={other}") == (False, None)
+    # The proofs the command line makes still use the key file, so a second run
+    # still gets a code from this dashboard.
+    assert local.ask(port, "code", db)[0] == 200
 
 
 def test_a_stop_with_the_proof_stops_the_dashboard(served):
@@ -226,3 +260,7 @@ async def test_open_dashboard_says_it_is_deprecated_and_what_replaces_it():
     finally:
         embedded.stop_all()
     assert out["ok"] and "2.7" in out["deprecated"] and "cpersona dashboard" in out["deprecated"]
+    # Over HTTP nothing replaces it yet, and `cpersona dashboard` (loopback only)
+    # would not reach that server, so the remote notice does not point at it.
+    for text in (server._REMOTE_DEPRECATED, server._OPEN_REMOTE_DASHBOARD_DESCRIPTION):
+        assert "only way to sign in" in text and "before 2.7" in text and "cpersona dashboard" not in text

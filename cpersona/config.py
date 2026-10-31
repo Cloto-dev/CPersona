@@ -741,6 +741,9 @@ DASHBOARD_PUBLIC_URL = os.environ.get("CPERSONA_DASHBOARD_PUBLIC_URL", "").strip
 # file beside the store (<name>-dashboard.key, owner-only) on first use; deleting the
 # file, or changing this value, ends every session.
 DASHBOARD_SESSION_KEY = os.environ.get("CPERSONA_DASHBOARD_SESSION_KEY", "")
+# Whether a server notes the database it opens in the list `cpersona dashboard`
+# reads (known_stores.py). Off, nothing is written; a list already there is still read.
+DASHBOARD_STORES = _parse_bool("CPERSONA_DASHBOARD_STORES", True)
 
 # How deep a folder may sit below its project (the project itself is depth 0).
 # Lowering it leaves deeper folders readable; it refuses new folders and filings

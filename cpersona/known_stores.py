@@ -9,6 +9,7 @@ opens the one used last.
 
 The list is ``~/.cpersona/stores.json`` (``CPERSONA_DASHBOARD_STORES_PATH`` moves
 it), owner-only, and holds paths and times only: nothing read from a store.
+``CPERSONA_DASHBOARD_STORES=false`` stops the notes; a list already there is still read.
 """
 
 import json
@@ -42,7 +43,9 @@ def _read(file: str) -> list[dict]:
 def remember(db_path: str) -> None:
     """Note that a server opens ``db_path`` now. Never raises: a server starts
     whether or not the note can be written."""
-    if not db_path or db_path == ":memory:" or db_path.startswith("file:"):
+    from cpersona import config  # noqa: PLC0415 - read when called, so a test can turn it off
+
+    if not config.DASHBOARD_STORES or not db_path or db_path == ":memory:" or db_path.startswith("file:"):
         return
     try:
         full = os.path.abspath(db_path)

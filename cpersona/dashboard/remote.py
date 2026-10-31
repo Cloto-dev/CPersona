@@ -148,25 +148,27 @@ def _mac(key: bytes, owner: str, until: int, credential: bytes) -> str:
     return _b64(hmac.new(key, material, hashlib.sha256).digest())
 
 
-def _sign(db_path: str, owner: str, until: int, bearer: str) -> str | None:
+def _sign(db_path: str, owner: str, until: int, bearer: str, key: bytes | None = None) -> str | None:
     credential = _credential(owner, bearer)
     if credential is None:
         return None
-    return f"{_VERSION}.{_b64(owner.encode())}.{until}.{_mac(_signing_key(db_path), owner, until, credential)}"
+    key = key or _signing_key(db_path)
+    return f"{_VERSION}.{_b64(owner.encode())}.{until}.{_mac(key, owner, until, credential)}"
 
 
-def redeem(code: str, db_path: str, bearer: str = "") -> str | None:
+def redeem(code: str, db_path: str, bearer: str = "", key: bytes | None = None) -> str | None:
     """The session cookie value a code opens, or None for a code unknown, used or
-    expired, or for a client that may no longer open one."""
+    expired, or for a client that may no longer open one. ``key`` signs it instead
+    of the store's key (the local dashboard's sessions end with its process)."""
     now = time.time()
     with _lock:
         held = _links.pop(code, None)
     if held is None or held[0] <= now:
         return None
-    return _sign(db_path, held[1], int(now) + SESSION_SECONDS, bearer)
+    return _sign(db_path, held[1], int(now) + SESSION_SECONDS, bearer, key)
 
 
-def session(value: str, db_path: str, bearer: str = "") -> tuple[Scope, str | None] | None:
+def session(value: str, db_path: str, bearer: str = "", key: bytes | None = None) -> tuple[Scope, str | None] | None:
     """The viewer a cookie stands for, and a renewed cookie value once half of it
     has passed (else None); None for a cookie that is forged, expired, or bound to a
     token or a client that is gone."""
@@ -181,14 +183,14 @@ def session(value: str, db_path: str, bearer: str = "") -> tuple[Scope, str | No
     credential = _credential(owner, bearer)
     if credential is None:
         return None
-    if not hmac.compare_digest(mac.encode(), _mac(_signing_key(db_path), owner, until, credential).encode()):
+    if not hmac.compare_digest(mac.encode(), _mac(key or _signing_key(db_path), owner, until, credential).encode()):
         return None
     now = time.time()
     if until <= now:
         return None
     renewed = None
     if until - now < SESSION_SECONDS / 2:
-        renewed = _sign(db_path, owner, int(now) + SESSION_SECONDS, bearer)
+        renewed = _sign(db_path, owner, int(now) + SESSION_SECONDS, bearer, key)
     return _viewer(owner), renewed
 
 

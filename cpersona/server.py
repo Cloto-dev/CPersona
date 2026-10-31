@@ -3153,8 +3153,15 @@ _OPEN_DASHBOARD_DESCRIPTION = (
     "127.0.0.1 behind a per-start token and writes nothing. Give the returned url to "
     "the person; open_browser=true also opens it on this machine."
 )
+# Over HTTP nothing replaces the tool yet, so its notice says so instead of
+# pointing at `cpersona dashboard`, which listens on the person's own machine.
+_REMOTE_DEPRECATED = (
+    "Deprecated: open_dashboard is removed in CPersona 2.7. Over HTTP it is, for now, the "
+    "only way to sign in to the dashboard; a way that does not need it comes before 2.7."
+)
 _OPEN_REMOTE_DASHBOARD_DESCRIPTION = (
-    "Deprecated, removed in CPersona 2.7. "
+    "Deprecated, removed in CPersona 2.7; over HTTP it is, for now, the only way to sign in "
+    "to the dashboard, and a way that does not need it comes before 2.7. "
     "Make a link to the read-only dashboard of this memory store, for the person to "
     "open in a browser: what is stored and when, the logical directory, and each "
     "memory in full with how it is split. It shows only the agents this connection "
@@ -3234,7 +3241,7 @@ def _open_remote_dashboard() -> dict:
             "give it to them. It opens once, within ten minutes, signs the browser in "
             "for 30 days, and shows only the agents this connection can read."
         ),
-        "deprecated": "Deprecated: open_dashboard is removed in CPersona 2.7.",
+        "deprecated": _REMOTE_DEPRECATED,
     }
 
 

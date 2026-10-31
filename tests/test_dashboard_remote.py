@@ -343,6 +343,7 @@ async def test_the_tool_needs_a_public_address_and_returns_a_one_time_link(db, m
     assert out["ok"] and out["url"].startswith("https://memory.example.com/dashboard/#c=")
     code = out["url"].split("#c=", 1)[1]
     assert remote.redeem(code, database.DB_PATH) is not None
+    assert out["deprecated"] == server._REMOTE_DEPRECATED
 
 
 @pytest.mark.asyncio

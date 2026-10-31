@@ -14,7 +14,8 @@ Who can read it:
 - Only GET is answered, and the page loads nothing from anywhere else (the CSP).
 - Started from the command line (``local``), it also signs a browser in the way the
   remote dashboard does: a one-time code after the "#", sent once in a header, for
-  a session cookie, so the page opens again from a bookmark or a shortcut. Asking
+  a session cookie, so the page opens again from a bookmark or a shortcut while
+  the dashboard runs (the cookie ends when it stops, see ``local``). Asking
   the running dashboard for a code, or to stop, takes a proof made with the store's
   key file, which only its owner can read.
 
