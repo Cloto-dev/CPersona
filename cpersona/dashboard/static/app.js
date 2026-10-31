@@ -341,7 +341,7 @@ async function growTree(container, path, depth) {
     const label = k.key ? k.label : levelLabel(k.level, k.key);
     node.innerHTML = `<button role="treeitem" class="${on ? "on" : ""}" ${leaf ? "" : `aria-expanded="${open}"`}
         title="${esc(t("lvl")[k.level])}: ${esc(levelLabel(k.level, k.key))}">
-      <span class="caret">${leaf ? "" : open ? "▾" : "▸"}</span>
+      <span class="caret">${leaf ? "" : `<svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg>`}</span>
       <span class="label">${esc(label)}</span><span class="n">${k.count}</span></button><div class="kids"></div>`;
     node.firstElementChild.addEventListener("click", () => go({ view: state.view === "graph" ? "graph" : "memories", path: p, q: "", month: "" }));
     container.appendChild(node);
@@ -419,11 +419,15 @@ async function renderMemories(append = false) {
   listRows = listRows.concat(res.rows);
   listOffset += 40;
   if (!append) {
-    const crumbs = [`<button data-depth="0">${t("allMemories")}</button>`].concat(state.path.map((k, i) =>
-      `<span class="sep">›</span><button data-depth="${i + 1}" title="${esc(t("lvl")[LEVELS[i]])}">${esc(levelLabel(LEVELS[i], k))}</button>`)).join("");
+    const here = state.month ? -1 : state.path.length;
+    const crumb = (depth, label, title = "") => depth === here
+      ? `<span aria-current="page"${title ? ` title="${title}"` : ""}>${label}</span>`
+      : `<button data-depth="${depth}"${title ? ` title="${title}"` : ""}>${label}</button>`;
+    const crumbs = [crumb(0, t("allMemories"))].concat(state.path.map((k, i) =>
+      `<span class="sep">›</span>${crumb(i + 1, esc(levelLabel(LEVELS[i], k)), esc(t("lvl")[LEVELS[i]]))}`)).join("");
     page.innerHTML = `
       <h1>${t("memories")}</h1>
-      <div class="crumbs">${crumbs}${state.month ? `<span class="sep">›</span><span>${esc(state.month)}</span>` : ""}</div>
+      <div class="crumbs">${crumbs}${state.month ? `<span class="sep">›</span><span aria-current="page">${esc(state.month)}</span>` : ""}</div>
       <div id="agentProfile"></div>
       <div class="toolbar"><label class="search">
         <svg aria-hidden="true" class="icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>
@@ -785,7 +789,7 @@ function closeSettings() {
   settingsFrom?.focus?.();
 }
 function drawLayoutChoice() {
-  for (const b of document.querySelectorAll("[data-layout]")) b.setAttribute("aria-pressed", String(b.dataset.layout === layout));
+  for (const b of document.querySelectorAll("#layoutSeg [data-layout]")) b.setAttribute("aria-pressed", String(b.dataset.layout === layout));
   $("layoutSeg").setAttribute("aria-label", t("layout"));
 }
 // Switching keeps what is open: a memory in a tab moves to the drawer over its list,
@@ -823,6 +827,8 @@ const PALETTE = {
 };
 const FRICTION = 0.86, HUB_FRICTION = 0.4;
 // The lines each kind of picture can show, in the order the legend lists them.
+// The kind of line each lens's note explains.
+const NOTE_KIND = { memories: "similar", entities: "co", clusters: "near" };
 const LAYERS = {
   memories: ["declared", "similar", "structure"],
   tree: ["part"],
@@ -933,7 +939,7 @@ async function renderGraph() {
   else if (memoryView) head = `<h1>${t("graph")}</h1><p class="lead">${t("graphLead")}<br>${shown}</p>${back}`;
   else head = `<h1>${t("graph")}</h1><p class="lead">${t("networkLead")}<br>${shown}</p>`;
   const count = k => G.links ? G.links.filter(l => l.kind === k).length : 0;
-  const note = t("layerNote")[lens];
+  const note = count(NOTE_KIND[lens]) ? t("layerNote")[lens] : "";
   // The picture takes the whole pane; what to show sits behind the gear at the top
   // right, as in a notes app's graph view, and what the lines mean stays on screen.
   const keyRows = G.nodes ? LAYERS[lens].filter(k => count(k)).map(k =>
@@ -1478,8 +1484,8 @@ function renderTabs() {
   const bar = $("tabbar");
   bar.innerHTML = tabs.map((tb, i) => {
     const c = tb.hist[tb.pos];
-    return `<div class="tab ${i === active ? "on" : ""}" role="tab" aria-selected="${i === active}" data-i="${i}" draggable="true">
-      <button class="tab-go" data-i="${i}" title="${esc(tabTitle(c))}">${esc(tabTitle(c))}</button>
+    return `<div class="tab ${i === active ? "on" : ""}" data-i="${i}" draggable="true">
+      <button class="tab-go" data-i="${i}" title="${esc(tabTitle(c))}"${i === active ? ' aria-current="page"' : ""}>${esc(tabTitle(c))}</button>
       <button class="tab-x" data-x="${i}" aria-label="${t("closeTab")}">×</button></div>`;
   }).join("") + `<button class="tab-new" id="tabNew" aria-label="${t("newTab")}" title="${t("newTab")}">+</button>`;
   for (const b of bar.querySelectorAll(".tab-go")) b.addEventListener("click", () => switchTab(Number(b.dataset.i)));
@@ -1640,7 +1646,7 @@ function wire() {
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
-  for (const b of document.querySelectorAll("[data-layout]")) b.addEventListener("click", () => setLayout(b.dataset.layout).catch(fail));
+  for (const b of document.querySelectorAll("#layoutSeg [data-layout]")) b.addEventListener("click", () => setLayout(b.dataset.layout).catch(fail));
   // Signing out is for a remote server's page, which a session cookie opens; the page
   // on this machine opens with the token in its address instead.
   $("signOutRow").hidden = Boolean(token);

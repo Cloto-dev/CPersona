@@ -2,19 +2,30 @@
      only what can be acted on or is selected; warn marks only a problem. */
   :root {
     --base: #f5f6f8; --recessed: #eceef1; --raised: #ffffff; --line: #dfe2e6; --line-soft: #ebedf0;
-    --text: #1a1d21; --muted: #59616b; --faint: #868e97;
-    --accent: #2b67d1; --accent-soft: #e6eefb; --warn: #9a5b0b; --warn-soft: #fbf1e3;
-    --bar: #c9ced5;
+    --text: #1a1d21; --muted: #59616b; --faint: #646c75;
+    --accent: #2b67d1; --accent-soft: #e6eefb; --on-accent: #ffffff; --warn: #9a5b0b; --warn-soft: #fbf1e3;
+    /* Bars carry a count, so they hold 3:1 against the card and the track (WCAG 1.4.11);
+       search matches have a colour of their own, apart from the selection's. */
+    --bar: #808994; --mark: #f9d65c;
     /* How a memory is split: nodes blue, blocks a soft blue-green (not the green of "ok"). */
     --node: #5b8def; --node-soft: #dfe9fc; --block: #8fc4b3; --block-soft: #e2f2ec;
     color-scheme: light;
   }
+  /* The network is drawn on a dark ground in both themes (NIGHT in app.js), so the
+     heading, legend, hints and panels over it take the dark tokens too. */
+  .graph.whole {
+    --base: #121417; --recessed: #0d0f11; --raised: #1a1d21; --line: #2b3036; --line-soft: #23272c;
+    --text: #e5e8ec; --muted: #a2aab3; --faint: #8a929b;
+    --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f;
+    --bar: #6b747f; --mark: #5c4b0f;
+    color-scheme: dark; color: var(--text);
+  }
   @media (prefers-color-scheme: dark) {
     :root {
       --base: #121417; --recessed: #0d0f11; --raised: #1a1d21; --line: #2b3036; --line-soft: #23272c;
-      --text: #e5e8ec; --muted: #a2aab3; --faint: #737c86;
-      --accent: #6b9ef2; --accent-soft: #1c2a42; --warn: #e3a857; --warn-soft: #33270f;
-      --bar: #3b424a;
+      --text: #e5e8ec; --muted: #a2aab3; --faint: #8a929b;
+      --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f;
+      --bar: #6b747f; --mark: #5c4b0f;
       --node: #6b9ef2; --node-soft: #1f2d47; --block: #5f9c88; --block-soft: #1c3029;
       color-scheme: dark;
     }
@@ -108,7 +119,7 @@
     padding: 7px 10px; border: 0; background: none; border-radius: 6px; color: var(--muted); cursor: pointer; text-align: left;
   }
   .cnav .nav:hover { background: var(--line-soft); }
-  .cnav .nav[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .cnav .nav[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
   .cnav .nav .n { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
   .cnav .nav[aria-current="page"] .n { color: var(--accent); }
   .drawer {
@@ -132,7 +143,7 @@
   .tab:hover { background: var(--line-soft); }
   .tab.on { background: var(--base); color: var(--text); border-color: var(--line); }
   .tab-go { flex: 1; min-width: 0; border: 0; background: none; cursor: pointer; text-align: left; padding: 0 4px 0 12px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; height: 100%; }
-  .tab-x { border: 0; background: none; width: 22px; height: 22px; margin-right: 4px; border-radius: 4px; color: var(--faint); cursor: pointer; font-size: 15px; line-height: 1; visibility: hidden; }
+  .tab-x { border: 0; background: none; width: 24px; height: 24px; margin-right: 3px; border-radius: 4px; color: var(--faint); cursor: pointer; font-size: 15px; line-height: 1; visibility: hidden; }
   .tab:hover .tab-x, .tab.on .tab-x { visibility: visible; }
   .tab-x:hover { background: var(--line); color: var(--text); }
   .tab-new { border: 0; background: none; width: 28px; height: 28px; margin: 0 0 3px 2px; border-radius: 6px; color: var(--faint); cursor: pointer; font-size: 18px; flex: none; }
@@ -155,15 +166,18 @@
     padding: 4px 8px; border-radius: 5px; color: var(--text); text-align: left;
   }
   .node > button:hover { background: var(--recessed); }
-  .node > button.on { background: var(--accent-soft); color: var(--accent); }
-  .node .caret { width: 10px; color: var(--faint); flex: none; font-size: 10px; }
+  .node > button.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+  .node .caret { width: 12px; height: 12px; color: var(--muted); flex: none; display: grid; place-items: center; }
+  .node .caret svg { transition: transform 120ms ease-out; }
+  .node > button[aria-expanded="true"] .caret svg { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) { .node .caret svg { transition: none; } }
   .node .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .node .label .lvl { color: var(--faint); }
   .node .n { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
   .node .kids { margin-left: 12px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .seg button { border: 0; background: none; padding: 2px 10px; cursor: pointer; color: var(--muted); }
-  .seg button[aria-pressed="true"] { background: var(--recessed); color: var(--text); font-weight: 600; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .kbd { color: var(--faint); display: flex; flex-wrap: wrap; gap: 2px 10px; }
   .kbd span { white-space: nowrap; }
 
@@ -175,6 +189,7 @@
   .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; margin: 2px 0 16px; }
   .crumbs button { border: 0; background: none; cursor: pointer; color: var(--accent); padding: 0 2px; }
   .crumbs .sep { color: var(--faint); }
+  .crumbs [aria-current="page"] { color: var(--text); padding: 0 2px; }
 
   /* Overview */
   .facts { display: flex; gap: 40px; margin: 4px 0 24px; flex-wrap: wrap; }
@@ -214,7 +229,7 @@
   .row.sel, .row:focus-visible { border-color: var(--accent); box-shadow: none; outline: none; }
   .row .text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .row .meta { display: flex; gap: 14px; font-size: 12px; color: var(--faint); margin-top: 4px; }
-  .row mark, .content mark, .palette mark, .hit-line mark { background: var(--accent-soft); color: inherit; border-radius: 2px; padding: 0 1px; }
+  .row mark, .content mark, .palette mark, .hit-line mark { background: var(--mark); color: var(--text); border-radius: 2px; padding: 0 1px; }
   .more { margin: 12px 0; }
   .btn { border: 1px solid var(--line); background: var(--raised); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
   .btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -315,15 +330,15 @@
   .graph.whole .g-set { top: 48px; right: 16px; width: min(320px, calc(100% - 32px)); display: none; }
   .graph.whole .g-set.open { display: block; }
   .graph.whole .g-set .lead { font-size: 13px; margin: 0 0 10px; color: var(--muted); }
-  .graph.whole .g-hint { opacity: 0.7; }
   .g-hint { display: flex; flex-wrap: wrap; gap: 4px 16px; right: 16px; }
   .g-key { position: absolute; left: 16px; bottom: 44px; max-width: min(380px, calc(100% - 32px)); font-size: 12px; color: var(--muted); display: grid; gap: 4px; }
   .g-key p { margin: 2px 0 0; color: var(--faint); }
   .k-row { display: flex; align-items: center; gap: 8px; }
   .k-row line { stroke-width: 1.5; }
   .k-similar, .k-near { stroke: #9fb6e6; }
-  .k-structure, .k-part { stroke: var(--faint); }
-  .k-declared, .k-co { stroke: var(--accent); }
+  .k-declared { stroke: #ffd9ef; }
+  .k-co, .k-part { stroke: #aac8ff; stroke-opacity: .7; }
+  .k-structure { stroke: #aac8ff; stroke-opacity: .5; }
   .l-part { stroke: currentColor; stroke-opacity: .5; stroke-width: 1.2; }
   .l-co { stroke: var(--accent); stroke-opacity: .5; stroke-width: 2; }
   .l-near { stroke: url(#lg-near); }
