@@ -508,8 +508,8 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
 - **From your agent**: ask it to open the dashboard. Under the stdio transport the
   server registers `open_dashboard`, which opens the page for the database the
   server already uses and returns the address, so nobody has to look the path up.
-  Opened this way the overview also shows the store's health, from the same
-  checks as `check_health` without repairs. The page runs until the server stops.
+  Opened this way the store's status page also shows the server's check, the
+  same checks as `check_health` without repairs. The page runs until the server stops.
   `CPERSONA_DASHBOARD=false` removes the tool. Over HTTP it is registered only with
   the remote dashboard on (next item). With the agent plugin, `/cpersona:dashboard`
   asks the agent to open it in your browser: on this machine through the tool's
@@ -531,8 +531,9 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   - **Who sees what**: only the agents the client's grants let it read. Memories,
     episodes, entities and blocks of any other agent are left out, and so is a
     mention, relation, alias or node that names one of them, so no id of a hidden
-    record reaches the page. Store health is shown only to a client that reads
-    every agent. Without an ACL the holder of the one token sees everything. A
+    record reaches the page. The server's check, the store's files and the
+    calibration values for every agent are shown only to a client that reads
+    every agent; an agent's own calibration values to a client that reads it. Without an ACL the holder of the one token sees everything. A
     per-subject connection cannot open it yet.
   - **What it answers**: GET and HEAD only. Everything outside `/dashboard/`,
     the bare `/dashboard` included, still needs the bearer token.
@@ -567,12 +568,13 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   data. `--no-browser` prints the address without opening it.
 - **How it is laid out**: two layouts, chosen in the settings (the gear at the
   foot of the side panel) and kept in the browser. *Standard*, the default, is
-  one side panel of the views (overview, memories, network, episodes, entities,
-  profiles) over the logical directory; a memory opens in a drawer beside the
+  one side panel of the views, grouped under headings (the overview; records:
+  memories, episodes and profiles; connections: entities and the network; and
+  the store's status), over the logical directory; a memory opens in a drawer beside the
   list, so the list does not move. The list behind the drawer is dimmed, and a
   click on it closes the drawer. Under the views, a line names the key that opens
   the command palette: ⌘K on a Mac, Ctrl+K elsewhere. *Tabbed* puts a
-  column of icons on the left, a side panel that browses the logical directory or
+  column of icons on the left (the same views in the same groups), a side panel that browses the logical directory or
   searches, and tabs: each memory opens in a tab of its own, and each tab has its
   own back and forward (Alt+← / Alt+→). Switching keeps the memory that is open.
   In both, Ctrl or ⌘ with K, O or P opens the command palette, and a record opens
@@ -653,8 +655,14 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   recall sends an agent's own profile with every answer; one written for a named
   user is marked as not sent. Choosing an agent in the memory list shows that
   agent's profile above its memories.
-- Recall traces are not shown yet, and nothing is edited from the page. Store
-  health appears only when an agent opened the page: started from a terminal,
+- **Store status**: what the store's own files say, read without the server: how
+  many memories and episodes have no embedding (a vector search cannot reach
+  them), the schema, the file's size and last write, whether each index file is
+  there, and the calibration file's values (the threshold and gates for every
+  agent and for each; a gate stored without a value is marked). Opened by an
+  agent, it adds the server's check, notes included.
+- Recall traces are not shown yet, and nothing is edited from the page. The
+  server's check appears only when an agent opened the page: started from a terminal,
   the dashboard cannot judge it from the file alone.
 
 ## Maintenance cadence

@@ -13,22 +13,30 @@
      a strip of view icons and tabs over the work area, as in a notes app. -->
 <div class="ribbon" role="toolbar" aria-orientation="vertical" aria-label="Views">
   <button class="nav" data-view="overview" data-title-t="overview"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg><span class="n" id="n-overview" hidden></span></button>
+  <span class="ribbon-sep" aria-hidden="true"></span>
   <button class="nav" data-view="memories" data-title-t="memories"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h8"/></svg><span class="n" id="n-memories" hidden></span></button>
-  <button class="nav" data-view="graph" data-title-t="graph"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="14" r="2"/><circle cx="15" cy="14" r="2"/><circle cx="10" cy="5" r="2"/><path d="M6.2 12.4 8.9 6.7M13.8 12.4 11.1 6.7M7 14h6"/></svg></button>
   <button class="nav" data-view="episodes" data-title-t="episodes"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg><span class="n" id="n-episodes" hidden></span></button>
-  <button class="nav" data-view="entities" data-title-t="entities"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5V4h6.5l7.5 7.5-6.5 6.5z"/><circle cx="6.5" cy="7.5" r="1"/></svg><span class="n" id="n-entities" hidden></span></button>
   <button class="nav" data-view="profiles" data-title-t="profiles"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="3"/><path d="M4 17c.8-3.2 3.2-5 6-5s5.2 1.8 6 5"/></svg><span class="n" id="n-profiles" hidden></span></button>
+  <span class="ribbon-sep" aria-hidden="true"></span>
+  <button class="nav" data-view="entities" data-title-t="entities"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5V4h6.5l7.5 7.5-6.5 6.5z"/><circle cx="6.5" cy="7.5" r="1"/></svg><span class="n" id="n-entities" hidden></span></button>
+  <button class="nav" data-view="graph" data-title-t="graph"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="14" r="2"/><circle cx="15" cy="14" r="2"/><circle cx="10" cy="5" r="2"/><path d="M6.2 12.4 8.9 6.7M13.8 12.4 11.1 6.7M7 14h6"/></svg></button>
+  <span class="ribbon-sep" aria-hidden="true"></span>
+  <button class="nav" data-view="store" data-title-t="store"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10h3.5l2-5 4 10 2-5H18"/></svg></button>
   <span class="ribbon-gap"></span>
   <button class="rb" id="paletteBtn" data-title-t="palettePh"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3H5a2 2 0 0 0-2 2v2M13 3h2a2 2 0 0 1 2 2v2M7 17H5a2 2 0 0 1-2-2v-2M13 17h2a2 2 0 0 0 2-2v-2M7 10h6"/></svg></button>
 </div>
 <aside class="side">
   <nav class="cnav" aria-label="Views">
-    <button class="nav" data-view="overview"><span data-t="overview"></span></button>
-    <button class="nav" data-view="memories"><span data-t="memories"></span><span class="n" data-n="memories"></span></button>
-    <button class="nav" data-view="graph"><span data-t="graph"></span></button>
-    <button class="nav" data-view="episodes"><span data-t="episodes"></span><span class="n" data-n="episodes"></span></button>
-    <button class="nav" data-view="entities"><span data-t="entities"></span><span class="n" data-n="entities"></span></button>
-    <button class="nav" data-view="profiles"><span data-t="profiles"></span><span class="n" data-n="profiles"></span></button>
+    <button class="nav" data-view="overview"><span class="nav-l"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg><span data-t="overview"></span></span></button>
+    <div class="cnav-h" data-t="navRecords"></div>
+    <button class="nav" data-view="memories"><span class="nav-l"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h8"/></svg><span data-t="memories"></span></span><span class="n" data-n="memories"></span></button>
+    <button class="nav" data-view="episodes"><span class="nav-l"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg><span data-t="episodes"></span></span><span class="n" data-n="episodes"></span></button>
+    <button class="nav" data-view="profiles"><span class="nav-l"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="3"/><path d="M4 17c.8-3.2 3.2-5 6-5s5.2 1.8 6 5"/></svg><span data-t="profiles"></span></span><span class="n" data-n="profiles"></span></button>
+    <div class="cnav-h" data-t="navLinks"></div>
+    <button class="nav" data-view="entities"><span class="nav-l"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5V4h6.5l7.5 7.5-6.5 6.5z"/><circle cx="6.5" cy="7.5" r="1"/></svg><span data-t="entities"></span></span><span class="n" data-n="entities"></span></button>
+    <button class="nav" data-view="graph"><span class="nav-l"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="14" r="2"/><circle cx="15" cy="14" r="2"/><circle cx="10" cy="5" r="2"/><path d="M6.2 12.4 8.9 6.7M13.8 12.4 11.1 6.7M7 14h6"/></svg><span data-t="graph"></span></span></button>
+    <div class="cnav-h" data-t="navManage"></div>
+    <button class="nav" data-view="store"><span class="nav-l"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10h3.5l2-5 4 10 2-5H18"/></svg><span data-t="store"></span></span></button>
     <p class="cnav-hint" id="cnavHint"></p>
   </nav>
   <div class="side-tabs" role="tablist">
@@ -61,7 +69,7 @@
     <button class="rb" id="fwdBtnTab" data-title-t="forward"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m8 4 6 6-6 6"/></svg></button>
     <span class="nav-title" id="navTitle"></span>
   </div>
-  <main id="main"><div class="page" id="page"></div></main>
+  <main id="main" tabindex="0"><div class="page" id="page"></div></main>
 </div>
 <div class="scrim" id="scrim"></div>
 <section class="drawer" id="drawer" aria-label="Memory detail"></section>

@@ -114,3 +114,15 @@ def test_the_legend_draws_each_line_as_the_canvas_does_and_visibly():
         assert legend[kind][0] == ink, kind
     for kind, (colour, alpha) in legend.items():
         assert ratio(over(colour, alpha, NIGHT), NIGHT) >= 3, (kind, colour, alpha)
+
+
+@pytest.mark.parametrize("theme_name", ["light", "dark"])
+def test_the_side_panels_headings_read_on_the_side_panel(theme_name):
+    # The group headings and the folder tree's heading are quieter than the views
+    # under them, but still text: 4.5:1 on the side panel they sit on. In the light
+    # theme there is no room below the faint token, so the label may not be lighter.
+    theme = LIGHT if theme_name == "light" else DARK
+    assert ratio(theme["label"], theme["recessed"]) >= 4.5
+    assert ratio(theme["label"], theme["recessed"]) <= ratio(theme["muted"], theme["recessed"])
+    assert re.search(r"\.cnav-h \{[^}]*color: var\(--label\)", CSS)
+    assert re.search(r"\.section-label \{[^}]*color: var\(--label\)", CSS)

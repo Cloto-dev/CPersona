@@ -79,11 +79,13 @@ const views = [
   ["classic", "view=episodes&id=1", "#drawer.open .doc"],
   ["classic", "view=entities&id=1", "#drawer.open .reflist"],
   ["classic", "view=profiles", "#page .profile"],
+  ["classic", "view=store", "#page .st-table"],
   ["classic", 'view=memories&path=["claude-code"]', "#agentProfile .profile"],
   ["tabs", "view=episode&id=1", "#page .doc h2"],
   ["tabs", "view=entity&id=1", "#page .reflist"],
   ["tabs", "view=memory&id=1", "#page .doc h2"],
   ["tabs", "view=memories&side=search&sq=garden", "#sideResults .hit-file"],
+  ["tabs", "view=store", "#page .st-table"],
 ];
 const TAGS = JSON.stringify(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]);
 const failures = [];
@@ -131,6 +133,27 @@ for (const scheme of ["light", "dark"]) {
   }
 }
 const axeVersion = await evaluate("axe.version");
+// The side panel's views sit in three headed groups, the tabbed layout's icons in the
+// same order, and the store's page, opened from a terminal with no server to ask,
+// says when the server's check is shown instead of showing nothing.
+try {
+  await evaluate(`localStorage.setItem("cp.layoutMode", "classic"); true`);
+  await open("&view=store&lang=ja");
+  await waitFor(`!!document.querySelector("#page .st-table") && document.getElementById("health").textContent !== "確認しています…"`);
+  const r = await evaluate(`({ heads: [...document.querySelectorAll(".cnav .cnav-h")].map(h => h.textContent),
+    side: [...document.querySelectorAll(".cnav .nav")].map(b => b.dataset.view), ribbon: [...document.querySelectorAll(".ribbon .nav")].map(b => b.dataset.view),
+    icons: document.querySelectorAll(".cnav .nav .nav-l svg").length, health: document.getElementById("health").textContent,
+    warn: [...document.querySelectorAll("#page .st-s")].filter(s => s.textContent).length })`);
+  const order = "overview,memories,episodes,profiles,entities,graph,store";
+  if (r.heads.join() !== "記録,つながり,管理") failures.push(`store: the side panel's group headings are ${JSON.stringify(r.heads)}`);
+  if (r.side.join() !== order || r.ribbon.join() !== order) failures.push(`store: the views are ordered ${r.side} in the side panel and ${r.ribbon} in the icons`);
+  if (r.icons !== 7) failures.push(`store: ${r.icons} of the side panel's 7 views carry an icon`);
+  if (!r.health.startsWith("エージェントから開いた")) failures.push(`store: the server's check reads ${JSON.stringify(r.health)} with no server to ask`);
+  // The fixture leaves memories without embeddings and the gate for every agent without a value.
+  if (r.warn !== 3) failures.push(`store: ${r.warn} rows carry a warning, where the fixture has three (memories, episodes, the gate)`);
+} catch (e) {
+  failures.push(`store: ${e.message}`);
+}
 // A row of the overview's short lists opens its memory, as a row of the list does.
 try {
   await evaluate(`localStorage.setItem("cp.layoutMode", "classic"); true`);

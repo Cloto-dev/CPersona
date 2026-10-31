@@ -3,7 +3,7 @@
   :root {
     --base: #f5f6f8; --recessed: #eceef1; --raised: #ffffff; --line: #dfe2e6; --line-soft: #ebedf0;
     --text: #1a1d21; --muted: #59616b; --faint: #646c75;
-    --accent: #2b67d1; --accent-soft: #e6eefb; --on-accent: #ffffff; --warn: #9a5b0b; --warn-soft: #fbf1e3;
+    --accent: #2b67d1; --accent-soft: #e6eefb; --on-accent: #ffffff; --warn: #9a5b0b; --warn-soft: #fbf1e3; --label: #646c75;
     /* Bars carry a count, so they hold 3:1 against the card and the track (WCAG 1.4.11);
        search matches have a colour of their own, apart from the selection's. */
     --bar: #808994; --mark: #f9d65c;
@@ -17,7 +17,7 @@
   .graph.whole {
     --base: #121417; --recessed: #0d0f11; --raised: #1a1d21; --line: #2b3036; --line-soft: #23272c;
     --text: #e5e8ec; --muted: #a2aab3; --faint: #8a929b;
-    --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f;
+    --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f; --label: #767d85;
     --bar: #6b747f; --mark: #5c4b0f;
     color-scheme: dark; color: var(--text);
   }
@@ -26,7 +26,7 @@
       --scrim: rgba(0,0,0,.55);
       --base: #121417; --recessed: #0d0f11; --raised: #1a1d21; --line: #2b3036; --line-soft: #23272c;
       --text: #e5e8ec; --muted: #a2aab3; --faint: #8a929b;
-      --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f;
+      --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f; --label: #767d85;
       --bar: #6b747f; --mark: #5c4b0f;
       --node: #6b9ef2; --node-soft: #1f2d47; --block: #5f9c88; --block-soft: #1c3029;
       color-scheme: dark;
@@ -48,6 +48,7 @@
      is the base, so the tabs read as cut out of it. */
   .ribbon { background: var(--recessed); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0; }
   .ribbon-gap { flex: 1; }
+  .ribbon-sep { width: 18px; height: 1px; background: var(--line); margin: 5px 0; flex: none; }
   .ribbon .nav, .rb {
     width: 32px; height: 32px; display: grid; place-items: center; border: 0; background: none; border-radius: 6px; color: var(--faint); cursor: pointer; padding: 0;
   }
@@ -121,6 +122,11 @@
     padding: 7px 10px; border: 0; background: none; border-radius: 6px; color: var(--muted); cursor: pointer; text-align: left;
   }
   .cnav .nav:hover { background: var(--line-soft); }
+  /* A group's heading, like the folder tree's: smaller and quieter than the views under it. */
+  .cnav-h { font-size: 11px; color: var(--label); padding: 14px 10px 4px; }
+  .cnav .nav-l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .cnav .nav-l svg { flex: none; color: var(--faint); }
+  .cnav .nav[aria-current="page"] .nav-l svg { color: var(--accent); }
   .cnav .nav[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
   .cnav .nav .n { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
   .cnav .nav[aria-current="page"] .n { color: var(--accent); }
@@ -170,7 +176,7 @@
     /* Without room for the side bar, the classic layout keeps the view icons. */
     body[data-layout="classic"] .ribbon { display: flex; }
   }
-  .section-label { font-size: 12px; color: var(--faint); padding: 18px 18px 6px; }
+  .section-label { font-size: 11px; color: var(--label); padding: 18px 18px 6px; }
   .tree { overflow: auto; padding: 0 8px 8px; flex: 1; min-height: 0; font-size: 13px; }
   .node > button {
     display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; cursor: pointer;
@@ -226,6 +232,21 @@
   .issue { display: flex; gap: 10px; padding: 10px 12px; background: var(--warn-soft); border-radius: 6px; margin-top: 8px; }
   .issue > b { color: var(--warn); flex: none; }
   .issue code { font: inherit; font-weight: 600; }
+  /* The page scrolls in main, which takes the keyboard's focus so a page with nothing
+     to press (the store's state) can still be scrolled by keys. */
+  #main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .issue.is-info { background: var(--recessed); }
+  .issue.is-info > b { color: var(--muted); }
+  /* The store's state: a fact per row, a status word only where something can be wrong. */
+  .st-row { display: grid; grid-template-columns: minmax(9em, 1fr) auto 4em; gap: 2px 16px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); align-items: baseline; }
+  .st-row:last-child { border-bottom: 0; }
+  .st-k { color: var(--muted); }
+  .st-v { font-variant-numeric: tabular-nums; text-align: right; }
+  .st-s { color: var(--warn); font-size: 12px; font-weight: 600; text-align: right; }
+  .st-n { grid-column: 1 / -1; margin: 0; }
+  .st-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  .st-table th { text-align: left; color: var(--muted); font-weight: 400; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .st-table td { padding: 6px 0; border-bottom: 1px solid var(--line-soft); font-variant-numeric: tabular-nums; }
 
   /* Memory list */
   .toolbar { display: flex; gap: 8px; margin-bottom: 16px; }

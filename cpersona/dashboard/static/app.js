@@ -22,13 +22,26 @@ const T = {
     kbd: key => [`${key} search`, "/ find in list", "j/k move", "Enter open", "Esc close"],
     paletteHint: key => `${key} searches memories and commands`,
     tzNote: zone => `Times are shown in ${zone}.`,
+    store: "Store status", navRecords: "Records", navLinks: "Connections", navManage: "Manage",
+    storeLead: name => `${name}, read without writing. The server's check appears when an agent opens the dashboard.`,
+    stRecords: "Records", stMemNoEmb: "Memories without an embedding", stEpNoEmb: "Episodes without an embedding",
+    stOf: (n, total) => `${n.toLocaleString()} of ${total.toLocaleString()}`, stUnreachable: "A vector search cannot reach them.",
+    stFiles: "Files", stFilesHidden: "Shown to a viewer who reads every agent.", stSchema: "Schema", stSchemaV: v => `version ${v}`,
+    stSize: "Size", stWal: size => `${size} in the write-ahead log`, stLastWrite: "Last written",
+    stIndex: { memories: "Memory index file", episodes: "Episode index file", blocks: "Block index file" }, stNone: "None",
+    stCal: "Calibration", stCalHint: "The thresholds and gates recall uses, as stored.", stCalNone: "Nothing has been measured yet.",
+    stCalBad: "The calibration file could not be read.", stCalAt: "Measured", stThreshold: "Threshold, all agents",
+    stGate: "Fused gate, all agents", stNoValue: "None", stGateNone: "No value is stored for the gate.", stScoring: "Scoring version",
+    stAgent: "Agent", stThr: "Threshold", stGateCol: "Fused gate", stInherit: "As for all agents",
+    stHealth: "Server check", stHealthHint: "check_health, run without repairs.",
     overviewSum: (m, e, n, a, from, to) => `${m} memories, ${e} episodes, ${n} entities and ${a} agents, stored from ${from} to ${to}.`,
     recentH: "Latest memories", recentHint: n => `The ${n} stored most recently.`,
     recalledH: "Recalled most", recalledHint: n => `The ${n} recalled most often.`, noRecalled: "No memory has been recalled yet.",
     byMonth: "Memories by month", byMonthHint: "Select a bar to list the memories stored that month.",
     byAgent: "By agent", byAgentHint: "Memories are kept per agent. Select a name to list that agent's memories.",
-    health: "Store health", healthChecking: "Checking…", healthOk: "No problems found.",
-    healthInfo: n => `${n} note${n === 1 ? "" : "s"} for information`, sev: { critical: "Critical", warn: "Warning", info: "Note" },
+    healthChecking: "Checking…", healthOk: "No problems found.",
+    healthAbsent: "Shown when an agent opens the dashboard, to a viewer who reads every agent.",
+    sev: { critical: "Critical", warn: "Warning", info: "Note" },
     allMemories: "All memories", searchPh: "Search memory text", shown: (a, b) => `${a} of ${b}`, loadMore: "Show more",
     noMatch: "No memory contains that text.", noMatchHint: "Shorten the word, or clear the folder filter.",
     noMemories: "No memories yet",
@@ -124,13 +137,26 @@ const T = {
     kbd: key => [`${key} 検索`, "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
     paletteHint: key => `${key} で記憶とコマンドを検索`,
     tzNote: zone => `時刻は ${zone} で表示しています。`,
+    store: "記録先の状態", navRecords: "記録", navLinks: "つながり", navManage: "管理",
+    storeLead: name => `${name} を読み取り専用で開いて数えています。サーバーの点検は、エージェントから開いた時だけ出ます。`,
+    stRecords: "記録", stMemNoEmb: "埋め込みのない記憶", stEpNoEmb: "埋め込みのないエピソード",
+    stOf: (n, total) => `${n.toLocaleString()} 件 / ${total.toLocaleString()} 件`, stUnreachable: "ベクトルで探す経路からは見えません。",
+    stFiles: "ファイル", stFilesHidden: "全エージェントを読める閲覧者にだけ表示します。", stSchema: "スキーマ", stSchemaV: v => `バージョン ${v}`,
+    stSize: "ファイルの大きさ", stWal: size => `書き込み待ちのログ ${size}`, stLastWrite: "最後の書き込み",
+    stIndex: { memories: "記憶の索引ファイル", episodes: "エピソードの索引ファイル", blocks: "ブロックの索引ファイル" }, stNone: "ありません",
+    stCal: "較正", stCalHint: "想起の閾値と関門の、保存されている値です。", stCalNone: "まだ測っていません。",
+    stCalBad: "較正ファイルを読めませんでした。", stCalAt: "計測日時", stThreshold: "全体の閾値",
+    stGate: "全体の融合の関門", stNoValue: "値なし", stGateNone: "関門の値が保存されていません。", stScoring: "スコアのバージョン",
+    stAgent: "エージェント", stThr: "閾値", stGateCol: "融合の関門", stInherit: "全体の値",
+    stHealth: "サーバーの点検", stHealthHint: "check_health を修復なしで走らせた結果です。",
     overviewSum: (m, e, n, a, from, to) => `記憶 ${m} 件、エピソード ${e} 件、エンティティ ${n} 件、エージェント ${a} (${from} から ${to} に保存)`,
     recentH: "最近の記憶", recentHint: n => `新しく保存された ${n} 件です。`,
     recalledH: "よく想起される記憶", recalledHint: n => `想起された回数の多い ${n} 件です。`, noRecalled: "まだ想起された記憶はありません。",
     byMonth: "月別の記憶数", byMonthHint: "棒を選ぶと、その月に保存された記憶の一覧を開きます。",
     byAgent: "エージェントごと", byAgentHint: "記憶はエージェントごとに分かれています。名前を選ぶと、そのエージェントの記憶の一覧を開きます。",
-    health: "データベースの状態", healthChecking: "確認しています…", healthOk: "問題は見つかりませんでした。",
-    healthInfo: n => `お知らせ ${n} 件`, sev: { critical: "重大", warn: "注意", info: "お知らせ" },
+    healthChecking: "確認しています…", healthOk: "問題は見つかりませんでした。",
+    healthAbsent: "エージェントから開いたダッシュボードで、全エージェントを読める閲覧者にだけ出ます。",
+    sev: { critical: "重大", warn: "注意", info: "お知らせ" },
     allMemories: "すべての記憶", searchPh: "記憶の本文を検索", shown: (a, b) => `${b} 件中 ${a} 件`, loadMore: "さらに表示",
     noMatch: "その語を含む記憶はありません。", noMatchHint: "語を短くするか、フォルダでの絞り込みを外してください。",
     noMemories: "記憶はまだありません",
@@ -395,7 +421,6 @@ function renderOverview() {
   page.innerHTML = `
     <h1>${t("overview")}</h1>
     <p class="lead">${esc(t("overviewSum")(n(o.counts.memories), n(o.counts.episodes), n(o.counts.entities), n(o.agents.length), day(o.span[0]), day(o.span[1])))}</p>
-    <div class="block" id="healthBlock" hidden><h2>${t("health")}</h2><div id="health" class="hint">${t("healthChecking")}</div></div>
     <div class="ov-cols">
       <section class="block" id="ovRecent"><h2>${t("recentH")}</h2><div class="hint">${t("recentHint")(o.recent.length)}</div>${overviewRows(o.recent)}</section>
       <section class="block" id="ovRecalled"><h2>${t("recalledH")}</h2>${o.recalled.length
@@ -413,6 +438,52 @@ function renderOverview() {
   for (const b of page.querySelectorAll(".ov-cols .row")) b.addEventListener("click", () => openDetail(Number(b.dataset.id)).catch(fail));
   for (const b of page.querySelectorAll("[data-month]")) b.addEventListener("click", () => go({ view: "memories", path: [], q: "", month: b.dataset.month }));
   for (const b of page.querySelectorAll("[data-agent]")) b.addEventListener("click", () => go({ view: "memories", path: [b.dataset.agent], q: "", month: "" }));
+}
+
+// ---- The store's state: what its own files say, read without the server, and the
+// server's check when an agent opened the page. A status word marks only what can be
+// wrong (records a vector search cannot reach, a gate with no value); the rest are facts.
+const bytes = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+function stRow(label, value, { note = "", warn = false } = {}) {
+  return `<div class="st-row"><span class="st-k">${label}</span><span class="st-v">${value}</span>`
+    + `<span class="st-s">${warn ? esc(t("sev").warn) : ""}</span>${note ? `<span class="st-n hint">${note}</span>` : ""}</div>`;
+}
+function stCount(label, c) {
+  return stRow(label, esc(t("stOf")(c.without_embedding, c.total)), { note: c.without_embedding ? t("stUnreachable") : "", warn: c.without_embedding > 0 });
+}
+function stFiles(f) {
+  if (!f) return `<p class="hint">${t("stFilesHidden")}</p>`;
+  return stRow(t("stSize"), esc(f.size == null ? t("stNone") : bytes(f.size)), { note: f.wal ? esc(t("stWal")(bytes(f.wal))) : "" })
+    + stRow(t("stLastWrite"), esc(when(f.last_write) || "—"))
+    + Object.entries(f.indexes).map(([k, size]) => stRow(t("stIndex")[k], esc(size == null ? t("stNone") : bytes(size)))).join("");
+}
+function stCalibration(c) {
+  if (!c) return `<p class="hint">${t("stCalNone")}</p>`;
+  if (c.unreadable) return `<p class="hint">${t("stCalBad")}</p>`;
+  const num = v => v == null ? t("stNoValue") : Number(v).toFixed(3);
+  let html = "";
+  if ("calibrated_at" in c) {
+    html += stRow(t("stCalAt"), esc(when(c.calibrated_at) || "—"), { note: c.embedding_model ? esc(`${c.embedding_model}${c.embedding_dim ? ` (${c.embedding_dim})` : ""}`) : "" })
+      + stRow(t("stThreshold"), esc(num(c.global_threshold)))
+      + stRow(t("stGate"), esc(num(c.global_fused_gate)), { note: c.global_fused_gate == null ? t("stGateNone") : "", warn: c.global_fused_gate == null })
+      + stRow(t("stScoring"), `<code>${esc(c.scoring_version ?? "—")}</code>`);
+  }
+  if (c.agents.length) {
+    const cell = v => v == null ? `<span class="muted">${t("stInherit")}</span>` : esc(Number(v).toFixed(3));
+    html += `<table class="st-table"><thead><tr><th>${t("stAgent")}</th><th>${t("stThr")}</th><th>${t("stGateCol")}</th></tr></thead><tbody>`
+      + c.agents.map(a => `<tr><td>${esc(a.agent)}</td><td>${cell(a.threshold)}</td><td>${cell(a.fused_gate)}</td></tr>`).join("") + "</tbody></table>";
+  }
+  return html;
+}
+async function renderStore() {
+  const s = await api("/api/state");
+  $("page").innerHTML = `<h1>${t("store")}</h1><p class="lead">${esc(t("storeLead")(overviewData.db))}</p>
+    <div class="ov-cols">
+      <section class="block"><h2>${t("stRecords")}</h2>${stCount(t("stMemNoEmb"), s.memories)}${stCount(t("stEpNoEmb"), s.episodes)}</section>
+      <section class="block"><h2>${t("stFiles")}</h2>${stRow(t("stSchema"), esc(t("stSchemaV")(s.schema)))}${stFiles(s.files)}</section>
+    </div>
+    <section class="block"><h2>${t("stCal")}</h2><div class="hint">${t("stCalHint")}</div>${stCalibration(s.calibration)}</section>
+    <section class="block" id="healthBlock"><h2>${t("stHealth")}</h2><div class="hint">${t("stHealthHint")}</div><div id="health" class="hint">${t("healthChecking")}</div></section>`;
   renderHealth();
 }
 
@@ -427,17 +498,16 @@ async function renderHealth() {
     health = { status: r.status, ok: r.ok, body: await r.json().catch(() => ({})) };
   }
   const block = $("healthBlock"), el = $("health");
-  if (health.status === 404 || !block || !el) return;
-  block.hidden = false;
+  if (!block || !el || state.view !== "store") return;
+  // 404: opened from a terminal (no server to ask) or by a viewer of some agents only.
+  if (health.status === 404) { el.textContent = t("healthAbsent"); return; }
   if (!health.ok) { el.textContent = health.body.error || String(health.status); return; }
+  // Every finding is listed, notes included: this page is where they are read.
   const issues = health.body.issues || [];
-  const serious = issues.filter(i => i.severity === "critical" || i.severity === "warn");
-  const notes = issues.length - serious.length;
+  const serious = issues.some(i => i.severity === "critical" || i.severity === "warn");
   el.className = "";
-  el.innerHTML = (serious.length
-    ? serious.map(i => `<div class="issue"><b>${esc(t("sev")[i.severity] || i.severity)}</b>
-        <span><code>${esc(i.type || i.check)}</code>${i.count != null ? ` (${esc(i.count)})` : ""}${i.hint ? `<br><span class="hint">${esc(i.hint)}</span>` : ""}</span></div>`).join("")
-    : `<div class="ok">${t("healthOk")}</div>`) + (notes ? `<div class="hint">${t("healthInfo")(notes)}</div>` : "");
+  el.innerHTML = (serious ? "" : `<div class="ok">${t("healthOk")}</div>`) + issues.map(i => `<div class="issue ${i.severity === "info" ? "is-info" : ""}"><b>${esc(t("sev")[i.severity] || i.severity)}</b>
+        <span><code>${esc(i.type || i.check)}</code>${i.count != null ? ` (${esc(i.count)})` : ""}${i.hint ? `<br><span class="hint">${esc(i.hint)}</span>` : ""}</span></div>`).join("");
 }
 
 function renderEmptyMemories() {
@@ -1461,7 +1531,7 @@ async function openPalette(text = "") {
 async function fillPalette(text) {
   const q = text.trim();
   const cmds = [
-    ...["overview", "memories", "graph", "episodes", "entities", "profiles"].map(v => ({ label: t("cmdGo")(t(v)), side: t("cmd"), run: () => go({ view: v, path: [], q: "", month: "" }) })),
+    ...["overview", "memories", "episodes", "profiles", "entities", "graph", "store"].map(v => ({ label: t("cmdGo")(t(v)), side: t("cmd"), run: () => go({ view: v, path: [], q: "", month: "" }) })),
     { label: t("cmdLang"), side: t("cmd"), run: () => setLang(state.lang === "en" ? "ja" : "en") },
   ].filter(c => !q || c.label.toLowerCase().includes(q.toLowerCase()));
   let found = [];
@@ -1595,6 +1665,7 @@ async function route() {
   else if (state.view === "graph") await renderGraph();
   else if (state.view in LISTS) await renderList(state.view);
   else if (state.view === "profiles") await renderProfiles();
+  else if (state.view === "store") await renderStore();
   else if (state.view in RENDER) await RENDER[state.view](state.id);
 }
 

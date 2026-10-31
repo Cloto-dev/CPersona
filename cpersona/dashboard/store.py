@@ -18,9 +18,11 @@ connection, so a schema migration made while the dashboard is open is seen (and
 refused, if it leaves the supported range) on the next request.
 """
 
+import json
 import os
 import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cpersona.config import MAX_PROFILE_LENGTH
@@ -169,6 +171,74 @@ def snippet(content: str, query: str = "") -> str:
                 + (" …" if end < len(text) else "")
             )
     return text[:SNIPPET_CHARS] + ("…" if len(text) > SNIPPET_CHARS else "")
+
+
+#: The files a recall reads beside the store, by what they index.
+INDEX_FILES = (("memories", ".memories.vecindex"), ("episodes", ".episodes.vecindex"), ("blocks", ".blocks.blockindex"))
+#: What the store-status page shows of the calibration file's values for every agent.
+CALIBRATION_KEYS = (
+    "embedding_model", "embedding_dim", "scoring_version", "global_threshold",
+    "global_fused_gate", "fused_gate_signal", "calibrated_at",
+)
+
+
+def _size(path: str) -> int | None:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
+def _calibration(db_path: str, scope) -> dict | None:
+    """The calibration file beside the store, or None when nothing was measured.
+
+    Its values for every agent are shown only to a viewer who reads every agent;
+    each agent's own values only to a viewer who reads that agent."""
+    try:
+        with open(db_path + ".calibration.json", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return {"unreadable": True}
+    if not isinstance(data, dict):
+        return {"unreadable": True}
+    readable = (lambda a: True) if scope is None else scope.readable
+    thresholds, gates = data.get("agent_thresholds") or {}, data.get("agent_fused_gates") or {}
+    out = {k: data.get(k) for k in CALIBRATION_KEYS} if scope is None or scope.everything else {}
+    out["agents"] = [
+        {"agent": a, "threshold": thresholds.get(a), "fused_gate": gates.get(a)}
+        for a in sorted(set(thresholds) | set(gates)) if readable(a)
+    ]
+    return out
+
+
+def state(conn: sqlite3.Connection, db_path: str, scope=None) -> dict:
+    """What the store says about itself, read without the server: the records a
+    vector search cannot reach (no embedding), the files beside it, and the
+    calibration it keeps. The counts follow the viewer's narrowing; the files, which
+    describe every agent's records at once, are shown only to a viewer who reads
+    every agent."""
+
+    def missing(table: str) -> dict:
+        total, without = conn.execute(f"SELECT count(*), count(*) - count(embedding) FROM {table}").fetchone()
+        return {"total": total, "without_embedding": without}
+
+    out = {
+        "memories": missing("memories"),
+        "episodes": missing("episodes"),
+        "schema": conn.execute("SELECT max(version) FROM schema_version").fetchone()[0],
+        "calibration": _calibration(db_path, scope),
+    }
+    if scope is None or scope.everything:
+        written = [os.path.getmtime(p) for p in (db_path, db_path + "-wal") if os.path.exists(p)]
+        out["files"] = {
+            "size": _size(db_path),
+            "wal": _size(db_path + "-wal"),
+            "last_write": datetime.fromtimestamp(max(written), timezone.utc).isoformat() if written else None,
+            "indexes": {kind: _size(db_path + suffix) for kind, suffix in INDEX_FILES},
+        }
+    return out
 
 
 #: How many memories the overview lists as the latest stored and the most recalled.

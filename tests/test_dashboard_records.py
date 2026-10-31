@@ -7,6 +7,7 @@ each other, so a view that leaked one row of the hidden agent fails.
 """
 
 import json
+import os
 
 import numpy as np
 import pytest
@@ -329,3 +330,71 @@ async def test_a_viewer_sees_only_their_agents_memories_in_the_overview(db):
     # With both readable, b's memory leads both lists: the checks above can fail.
     both = _answer("/api/overview", Scope({"*": acl.PERM_READ}))[1]
     assert both["recent"][0]["agent_id"] == "b" and both["recalled"][0]["agent_id"] == "b"
+
+
+# ---- The store's state
+
+
+def _write(path, text):
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+@pytest.mark.asyncio
+async def test_the_store_state_counts_what_a_vector_search_cannot_reach_and_reads_the_calibration(db):
+    blob = np.ones(4, dtype=np.float32).tobytes()
+    for agent, content, emb in (("a", "with a vector", blob), ("a", "without one", None), ("b", "bravo without", None)):
+        await db.execute("INSERT INTO memories (agent_id, content, timestamp, embedding) VALUES (?, ?, '2026-10-01T00:00:00+00:00', ?)", (agent, content, emb))
+    await db.commit()
+    await _episode(db, "a", "a conversation", embedding=blob)
+    await _episode(db, "b", "another", embedding=None)
+    out = store.state(_read(), database.DB_PATH)
+    assert out["memories"] == {"total": 3, "without_embedding": 2}
+    assert out["episodes"] == {"total": 2, "without_embedding": 1}
+    assert out["schema"] == database.SCHEMA_VERSION
+    assert out["files"]["size"] > 0 and out["files"]["last_write"].endswith("+00:00")
+    assert set(out["files"]["indexes"]) == {"memories", "episodes", "blocks"}
+    side = database.DB_PATH + ".calibration.json"
+    assert out["calibration"] is None  # nothing measured yet
+    try:
+        _write(side, "{not json")
+        assert store.state(_read(), database.DB_PATH)["calibration"] == {"unreadable": True}
+        _write(side, json.dumps({
+            "embedding_model": "bge-m3", "embedding_dim": 1024, "scoring_version": "v9", "global_threshold": 0.55,
+            "global_fused_gate": None, "fused_gate_signal": "confidence", "calibrated_at": "2026-10-30T22:14:05+00:00",
+            "agent_thresholds": {"a": 0.6, "b": 0.5}, "agent_fused_gates": {"a": 0.05}, "agent_betas": {"a": 1},
+        }))
+        cal = store.state(_read(), database.DB_PATH)["calibration"]
+        assert cal["global_threshold"] == 0.55 and cal["global_fused_gate"] is None and cal["scoring_version"] == "v9"
+        assert cal["agents"] == [{"agent": "a", "threshold": 0.6, "fused_gate": 0.05}, {"agent": "b", "threshold": 0.5, "fused_gate": None}]
+        # Only the keys the page shows: the betas are not sent.
+        assert "agent_betas" not in cal
+    finally:
+        if os.path.exists(side):
+            os.remove(side)
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_of_some_agents_sees_their_counts_and_calibration_but_not_the_whole_store(db):
+    await db.execute("INSERT INTO memories (agent_id, content, timestamp) VALUES ('a', 'alpha', '2026-10-01T00:00:00+00:00')")
+    await db.execute("INSERT INTO memories (agent_id, content, timestamp) VALUES ('b', 'bravo', '2026-10-01T00:00:00+00:00')")
+    await db.execute("INSERT INTO memories (agent_id, content, timestamp) VALUES ('b', 'bravo two', '2026-10-01T00:00:00+00:00')")
+    await db.commit()
+    side = database.DB_PATH + ".calibration.json"
+    try:
+        _write(side, json.dumps({"global_threshold": 0.55, "calibrated_at": "2026-10-30T22:14:05+00:00",
+                                 "agent_thresholds": {"a": 0.6, "b": 0.5}, "agent_fused_gates": {"b": 0.07}}))
+        only_a = Scope({"a": acl.PERM_READ})
+        code, out = _answer("/api/state", only_a)
+        assert code == 200
+        assert out["memories"] == {"total": 1, "without_embedding": 1}
+        # The files and the values for every agent describe the whole store.
+        assert "files" not in out and "global_threshold" not in out["calibration"]
+        assert out["calibration"]["agents"] == [{"agent": "a", "threshold": 0.6, "fused_gate": None}]
+        # With every agent readable, all of it is there: the checks above can fail.
+        everyone = _answer("/api/state", Scope({"*": acl.PERM_READ}))[1]
+        assert everyone["memories"]["total"] == 3 and "files" in everyone
+        assert everyone["calibration"]["global_threshold"] == 0.55 and len(everyone["calibration"]["agents"]) == 2
+    finally:
+        if os.path.exists(side):
+            os.remove(side)

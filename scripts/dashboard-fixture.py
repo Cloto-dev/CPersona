@@ -1,11 +1,13 @@
 """Build a small store for checking the dashboard's pages: a few memories, episodes,
-entities with aliases, mentions and relations, and profiles (one of them written for
-a named user), so every view has something to draw.
+entities with aliases, mentions and relations, profiles (one of them written for a
+named user), and a calibration file with one gate left without a value, so every
+view has something to draw.
 
 Usage: python scripts/dashboard-fixture.py <path to a new .db>
 """
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -75,6 +77,12 @@ def main() -> None:
     # Read when cpersona's config is first imported, so set before the import.
     os.environ["CPERSONA_DB_PATH"] = str(path)
     asyncio.run(build())
+    path.with_name(path.name + ".calibration.json").write_text(json.dumps({
+        "embedding_model": "bge-m3", "embedding_dim": 1024, "scoring_version": "sample", "global_threshold": 0.553,
+        "agent_thresholds": {"claude-code": 0.597, "codex": 0.517}, "global_fused_gate": None,
+        "agent_fused_gates": {"claude-code": 0.05}, "fused_gate_signal": "confidence", "agent_betas": {},
+        "calibrated_at": "2026-10-30T22:14:05+00:00",
+    }), encoding="utf-8")
     print(f"sample store: {path}")
 
 
