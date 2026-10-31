@@ -203,13 +203,13 @@
   .crumbs [aria-current="page"] { color: var(--text); padding: 0 2px; }
 
   /* Overview */
-  .facts { display: flex; gap: 40px; margin: 4px 0 24px; flex-wrap: wrap; }
-  .fact .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .fact .k { color: var(--muted); font-size: 13px; }
-  .fact .k small { color: var(--faint); }
   .block { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; margin-bottom: 16px; }
   .block h2 { font-size: 16px; font-weight: 650; margin: 0 0 2px; }
   .block .hint { margin-bottom: 12px; }
+  .ov-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .ov-cols .block { margin-bottom: 0; }
+  .block .row { padding-left: 0; padding-right: 0; }
+  .block .row:last-child { border-bottom: 0; }
   .hint { font-size: 12px; color: var(--faint); }
   .hist { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding-top: 18px; }
   .hist button { position: relative; flex: 0 1 28px; max-width: 28px; border: 0; padding: 0; background: var(--bar); border-radius: 2px 2px 0 0; cursor: pointer; min-height: 2px; }

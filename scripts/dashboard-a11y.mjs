@@ -6,7 +6,8 @@
 //        --axe <path to axe.min.js> --chrome <path to Chrome or Chromium>
 //
 // The address carries the page's token, so it is read from the file and never printed.
-// On the first page a low-contrast paragraph is planted, and the run fails unless axe
+// At the top of the first page (in view, where axe can read what is behind it) a
+// low-contrast paragraph is planted, and the run fails unless axe
 // reports it: an axe that never ran, or whose results were lost, would otherwise
 // report every page clean.
 import { spawn } from "node:child_process";
@@ -71,7 +72,7 @@ async function open(hash) {
 }
 
 const views = [
-  ["classic", "view=overview", "#page h1"],
+  ["classic", "view=overview", "#ovRecent .row ~ .row, #ovRecalled .row"],
   ["classic", "view=memories", "#list .row"],
   ["classic", "view=memories&id=1", "#drawer.open .doc"],
   ["classic", "view=graph", "#graphWrap canvas"],
@@ -99,7 +100,7 @@ for (const scheme of ["light", "dark"]) {
       await waitFor(`!!document.querySelector(${JSON.stringify(ready)})`);
       await sleep(view.includes("graph") ? 1200 : 300); // the drawer's slide and the first frame
       const control = checked === 0;
-      if (control) await evaluate(`(() => { const p = document.createElement("p"); p.id = "a11y-control"; p.textContent = "planted low-contrast text"; p.style.color = "#cccccc"; p.style.background = "#ffffff"; document.getElementById("page").appendChild(p); return true; })()`);
+      if (control) await evaluate(`(() => { const p = document.createElement("p"); p.id = "a11y-control"; p.textContent = "planted low-contrast text"; p.style.color = "#cccccc"; p.style.background = "#ffffff"; document.getElementById("page").prepend(p); return true; })()`);
       await evaluate(AXE + ";true");
       const found = JSON.parse(await evaluate(`axe.run(document, { runOnly: { type: "tag", values: ${TAGS} } }).then(r => JSON.stringify(r.violations.map(v => ({ id: v.id, impact: v.impact, targets: v.nodes.map(n => n.target.join(" ")) }))))`));
       for (const v of found) {
@@ -130,6 +131,20 @@ for (const scheme of ["light", "dark"]) {
   }
 }
 const axeVersion = await evaluate("axe.version");
+// A row of the overview's short lists opens its memory, as a row of the list does.
+try {
+  await evaluate(`localStorage.setItem("cp.layoutMode", "classic"); true`);
+  await open("&view=overview&lang=ja");
+  await waitFor(`!!document.querySelector("#ovRecalled .row")`);
+  const recalled = await evaluate(`document.querySelectorAll("#ovRecalled .row").length`);
+  if (recalled !== 1) failures.push(`overview: ${recalled} rows under the most recalled, where the fixture has one recalled memory`);
+  await evaluate(`document.querySelector("#ovRecalled .row").click(); true`);
+  await waitFor(`!!document.querySelector("#drawer.open .content")`);
+  const opened = await evaluate(`document.querySelector("#drawer .content").textContent`);
+  if (!opened.startsWith("The garden plan")) failures.push(`overview: the recalled row opened ${JSON.stringify(opened.slice(0, 40))}`);
+} catch (e) {
+  failures.push(`overview: ${e.message}`);
+}
 // The palette's key is named as the keyboard has it: ⌘K on a Mac, Ctrl+K elsewhere,
 // in the hint under the classic layout's views and in the settings' list of keys.
 const { userAgent } = (await send("Browser.getVersion")).result;

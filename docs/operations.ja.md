@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:78dd99310485dad779d33a6c81bb0612285bcf49 -->
+<!-- i18n-source: docs/operations.md@blob:7bb5cf3e4944c1abf74815641dcf490f0c112b22 -->
 
 # 運用 Runbook
 
@@ -458,7 +458,7 @@ python -m cpersona.block_index --db /path/to/cpersona.db status
 
 ## ダッシュボード { #the-dashboard }
 
-`cpersona dashboard` は、記憶のデータベースを読み取り専用のページとしてブラウザで開きます。ページには、保存されている記憶の件数と時期の概要、論理ディレクトリの木 (エージェント・プロジェクト・チャンネル・年・月)、フォルダ・月・本文で絞り込める一覧、各記憶の全文とノード・ブロックへの分割を表示します。
+`cpersona dashboard` は、記憶のデータベースを読み取り専用のページとしてブラウザで開きます。ページには、保存されている記憶の件数と時期の概要 (最後に保存された 5 件と、想起された回数の多い 5 件を含みます。一度も想起されていない記憶は、後者に入りません)、論理ディレクトリの木 (エージェント・プロジェクト・チャンネル・年・月)、フォルダ・月・本文で絞り込める一覧、各記憶の全文とノード・ブロックへの分割を表示します。
 
 ```bash
 cpersona dashboard --db ~/.claude/cpersona.db      # または: uvx cpersona dashboard --db …

@@ -22,9 +22,9 @@ const T = {
     kbd: key => [`${key} search`, "/ find in list", "j/k move", "Enter open", "Esc close"],
     paletteHint: key => `${key} searches memories and commands`,
     tzNote: zone => `Times are shown in ${zone}.`,
-    overviewLead: "How many memories are stored, and when they were stored.",
-    nMemories: "memories", nEpisodes: "episodes", nEntities: "entities", nAgents: "agents",
-    spanOf: (a, b) => `from ${a} to ${b}`,
+    overviewSum: (m, e, n, a, from, to) => `${m} memories, ${e} episodes, ${n} entities and ${a} agents, stored from ${from} to ${to}.`,
+    recentH: "Latest memories", recentHint: n => `The ${n} stored most recently.`,
+    recalledH: "Recalled most", recalledHint: n => `The ${n} recalled most often.`, noRecalled: "No memory has been recalled yet.",
     byMonth: "Memories by month", byMonthHint: "Select a bar to list the memories stored that month.",
     byAgent: "By agent", byAgentHint: "Memories are kept per agent. Select a name to list that agent's memories.",
     health: "Store health", healthChecking: "Checking…", healthOk: "No problems found.",
@@ -124,9 +124,9 @@ const T = {
     kbd: key => [`${key} 検索`, "/ 一覧を検索", "j/k 移動", "Enter 開く", "Esc 閉じる"],
     paletteHint: key => `${key} で記憶とコマンドを検索`,
     tzNote: zone => `時刻は ${zone} で表示しています。`,
-    overviewLead: "保存されている記憶の件数と、保存された時期を確認できます。",
-    nMemories: "記憶", nEpisodes: "エピソード", nEntities: "エンティティ", nAgents: "エージェント",
-    spanOf: (a, b) => `${a} から ${b} まで`,
+    overviewSum: (m, e, n, a, from, to) => `記憶 ${m} 件、エピソード ${e} 件、エンティティ ${n} 件、エージェント ${a} (${from} から ${to} に保存)`,
+    recentH: "最近の記憶", recentHint: n => `新しく保存された ${n} 件です。`,
+    recalledH: "よく想起される記憶", recalledHint: n => `想起された回数の多い ${n} 件です。`, noRecalled: "まだ想起された記憶はありません。",
     byMonth: "月別の記憶数", byMonthHint: "棒を選ぶと、その月に保存された記憶の一覧を開きます。",
     byAgent: "エージェントごと", byAgentHint: "記憶はエージェントごとに分かれています。名前を選ぶと、そのエージェントの記憶の一覧を開きます。",
     health: "データベースの状態", healthChecking: "確認しています…", healthOk: "問題は見つかりませんでした。",
@@ -379,30 +379,38 @@ async function growTree(container, path, depth) {
 }
 
 // ---- Overview
+// The overview's short lists use the memory list's rows, with the full date since
+// they are not grouped by day.
+function overviewRows(rows) {
+  return rows.map(r => `<button class="row" data-id="${r.id}"><div class="text">${esc(r.snippet)}</div><div class="meta"><span>${esc(r.agent_id)}</span>`
+    + `<span>${esc(when(r.timestamp))}</span>${r.recall_count ? `<span>${t("recalled")(r.recall_count)}</span>` : ""}</div></button>`).join("");
+}
 function renderOverview() {
   const o = overviewData;
   const page = $("page");
   if (!o.counts.memories) return renderEmptyMemories();
   const max = Math.max(...o.months.map(m => m.count), 1);
   const maxA = Math.max(...o.agents.map(a => a.count), 1);
+  const n = x => x.toLocaleString();
   page.innerHTML = `
-    <h1>${t("overview")}</h1><p class="lead">${t("overviewLead")}</p>
-    <div class="facts">
-      <div class="fact"><div class="v">${o.counts.memories.toLocaleString()}</div><div class="k">${t("nMemories")}<br><small>${esc(t("spanOf")(day(o.span[0]), day(o.span[1])))}</small></div></div>
-      <div class="fact"><div class="v">${o.counts.episodes.toLocaleString()}</div><div class="k">${t("nEpisodes")}</div></div>
-      <div class="fact"><div class="v">${o.counts.entities.toLocaleString()}</div><div class="k">${t("nEntities")}</div></div>
-      <div class="fact"><div class="v">${o.agents.length}</div><div class="k">${t("nAgents")}</div></div>
-    </div>
+    <h1>${t("overview")}</h1>
+    <p class="lead">${esc(t("overviewSum")(n(o.counts.memories), n(o.counts.episodes), n(o.counts.entities), n(o.agents.length), day(o.span[0]), day(o.span[1])))}</p>
     <div class="block" id="healthBlock" hidden><h2>${t("health")}</h2><div id="health" class="hint">${t("healthChecking")}</div></div>
-    <div class="block"><h2>${t("byMonth")}</h2><div class="hint">${t("byMonthHint")}</div>
-      <div class="hist">${o.months.map(m => `<button data-h="${Math.max(2, 100 * m.count / max)}" title="${m.month}: ${m.count}" aria-label="${m.month}: ${m.count}" data-month="${esc(m.month)}">${o.months.length <= 24 ? `<span class="hist-n" aria-hidden="true">${m.count.toLocaleString()}</span>` : ""}</button>`).join("")}</div>
-      <div class="hist-axis"><span>${esc(o.months[0]?.month ?? "")}</span>${o.months.length > 1 ? `<span>${esc(o.months.at(-1).month)}</span>` : ""}</div>
+    <div class="ov-cols">
+      <section class="block" id="ovRecent"><h2>${t("recentH")}</h2><div class="hint">${t("recentHint")(o.recent.length)}</div>${overviewRows(o.recent)}</section>
+      <section class="block" id="ovRecalled"><h2>${t("recalledH")}</h2>${o.recalled.length
+        ? `<div class="hint">${t("recalledHint")(o.recalled.length)}</div>${overviewRows(o.recalled)}` : `<p class="hint">${t("noRecalled")}</p>`}</section>
     </div>
     <div class="block"><h2>${t("byAgent")}</h2><div class="hint">${t("byAgentHint")}</div>
       <div class="bars">${o.agents.slice(0, 12).map(a => `<button data-agent="${esc(a.id)}" title="${esc(a.id)}">${esc(a.id)}</button>
         <div class="track"><div class="fill" data-w="${100 * a.count / maxA}"></div></div><div class="num">${a.count}</div>`).join("")}</div>
+    </div>
+    <div class="block"><h2>${t("byMonth")}</h2><div class="hint">${t("byMonthHint")}</div>
+      <div class="hist">${o.months.map(m => `<button data-h="${Math.max(2, 100 * m.count / max)}" title="${m.month}: ${m.count}" aria-label="${m.month}: ${m.count}" data-month="${esc(m.month)}">${o.months.length <= 24 ? `<span class="hist-n" aria-hidden="true">${m.count.toLocaleString()}</span>` : ""}</button>`).join("")}</div>
+      <div class="hist-axis"><span>${esc(o.months[0]?.month ?? "")}</span>${o.months.length > 1 ? `<span>${esc(o.months.at(-1).month)}</span>` : ""}</div>
     </div>`;
   sizes(page);
+  for (const b of page.querySelectorAll(".ov-cols .row")) b.addEventListener("click", () => openDetail(Number(b.dataset.id)).catch(fail));
   for (const b of page.querySelectorAll("[data-month]")) b.addEventListener("click", () => go({ view: "memories", path: [], q: "", month: b.dataset.month }));
   for (const b of page.querySelectorAll("[data-agent]")) b.addEventListener("click", () => go({ view: "memories", path: [b.dataset.agent], q: "", month: "" }));
   renderHealth();

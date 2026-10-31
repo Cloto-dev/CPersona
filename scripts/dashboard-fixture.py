@@ -16,12 +16,14 @@ async def build() -> None:
 
     db = await get_db()
     mem = {}
-    for key, agent, text, ts in (
-        ("move", "claude-code", "Caroline moved to Sweden last spring and now works at a design studio in Malmö.", "2026-10-28T09:12:00+00:00"),
-        ("garden", "claude-code", "The garden plan: tomatoes along the south fence, herbs by the kitchen door.", "2026-10-29T14:03:00+00:00"),
-        ("trip", "codex", "Booked the train to Gothenburg for the visit on 14 November.", "2026-10-30T08:40:00+00:00"),
+    for key, agent, text, ts, recalled in (
+        ("move", "claude-code", "Caroline moved to Sweden last spring and now works at a design studio in Malmö.", "2026-10-28T09:12:00+00:00", 0),
+        ("garden", "claude-code", "The garden plan: tomatoes along the south fence, herbs by the kitchen door.", "2026-10-29T14:03:00+00:00", 3),
+        ("trip", "codex", "Booked the train to Gothenburg for the visit on 14 November.", "2026-10-30T08:40:00+00:00", 0),
     ):
-        cur = await db.execute("INSERT INTO memories (agent_id, content, timestamp) VALUES (?, ?, ?)", (agent, text, ts))
+        cur = await db.execute(
+            "INSERT INTO memories (agent_id, content, timestamp, recall_count) VALUES (?, ?, ?, ?)", (agent, text, ts, recalled)
+        )
         mem[key] = cur.lastrowid
     ep = {}
     for key, agent, summary, keywords, start, end, resolved in (

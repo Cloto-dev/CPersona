@@ -171,8 +171,28 @@ def snippet(content: str, query: str = "") -> str:
     return text[:SNIPPET_CHARS] + ("…" if len(text) > SNIPPET_CHARS else "")
 
 
+#: How many memories the overview lists as the latest stored and the most recalled.
+OVERVIEW_ROWS = 5
+
+
+def _overview_rows(conn: sqlite3.Connection, where: str, order: str) -> list[dict]:
+    """A few memories for the overview. The ids are chosen first and only theirs are
+    read in full, so a large store does not load every row's text to keep five."""
+    outer = ", ".join("m." + part.strip() for part in order.split(","))
+    rows = conn.execute(
+        "SELECT m.id, m.agent_id, m.timestamp, m.content, m.recall_count FROM memories m"
+        f" JOIN (SELECT id FROM memories {where} ORDER BY {order} LIMIT ?) t ON t.id = m.id ORDER BY {outer}",
+        (OVERVIEW_ROWS,),
+    ).fetchall()
+    return [
+        {"id": r["id"], "agent_id": r["agent_id"], "timestamp": r["timestamp"], "recall_count": r["recall_count"], "snippet": snippet(r["content"])}
+        for r in rows
+    ]
+
+
 def overview(conn: sqlite3.Connection, name: str) -> dict:
-    """What the store holds and when it was written."""
+    """What the store holds and when it was written, with the latest memories and
+    the ones recalled most."""
     span = conn.execute(
         "SELECT min(timestamp), max(timestamp) FROM memories"
     ).fetchone()
@@ -196,6 +216,9 @@ def overview(conn: sqlite3.Connection, name: str) -> dict:
         "agents": [
             {"id": r["agent_id"], "count": r["n"], "last": r["last"]} for r in agents
         ],
+        "recent": _overview_rows(conn, "", "timestamp DESC, id DESC"),
+        # A memory never recalled is not "recalled most", however few have been.
+        "recalled": _overview_rows(conn, "WHERE recall_count > 0", "recall_count DESC, timestamp DESC, id DESC"),
     }
 
 

@@ -493,7 +493,9 @@ the server with the setting off.
 ## The dashboard
 
 `cpersona dashboard` opens a read-only page of a store in the browser: an
-overview of what it holds and when it was written, the logical directory as a
+overview of what it holds and when it was written, with the five memories stored
+last and the five recalled most (a memory never recalled is not listed there),
+the logical directory as a
 tree (agent, project, channel, year, month), a list you can narrow by folder,
 month and text, and each memory in full with how it is split into nodes and
 blocks.

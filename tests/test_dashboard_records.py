@@ -285,3 +285,47 @@ async def test_a_viewer_sees_only_their_agents_profiles(db):
     # With both readable, b's profile is there: the checks above can fail.
     both = Scope({"*": acl.PERM_READ})
     assert "bravo secret" in json.dumps(_answer("/api/profiles", both)[1])
+
+
+# ---- The overview's short lists
+
+
+async def _memory_at(conn, agent, content, ts, recalled=0):
+    cur = await conn.execute(
+        "INSERT INTO memories (agent_id, content, timestamp, recall_count) VALUES (?, ?, ?, ?)", (agent, content, ts, recalled)
+    )
+    await conn.commit()
+    return cur.lastrowid
+
+
+@pytest.mark.asyncio
+async def test_the_overview_lists_the_latest_memories_and_the_most_recalled(db):
+    # Stored out of order, so a list in id order or in insertion order fails; of the
+    # two recalled nine times, the later (day 3) is stored first, so it has the lower id.
+    ids = {}
+    for day, recalled in ((5, 2), (3, 9), (7, 0), (1, 9), (6, 4), (2, 1), (4, 0)):
+        ids[day] = await _memory_at(db, "a", f"note of day {day}", f"2026-10-0{day}T12:00:00+00:00", recalled)
+    out = store.overview(_read(), "t.db")
+    assert store.OVERVIEW_ROWS == 5
+    assert [r["id"] for r in out["recent"]] == [ids[d] for d in (7, 6, 5, 4, 3)]
+    # Most recalled first, a tie broken by the later memory, and one never recalled
+    # is left out even though fewer than five were recalled more.
+    assert [r["id"] for r in out["recalled"]] == [ids[d] for d in (3, 1, 6, 5, 2)]
+    first = out["recalled"][0]
+    assert first == {"id": ids[3], "agent_id": "a", "timestamp": "2026-10-03T12:00:00+00:00", "recall_count": 9, "snippet": "note of day 3"}
+    await db.execute("UPDATE memories SET recall_count = 0")
+    await db.commit()
+    assert store.overview(_read(), "t.db")["recalled"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_sees_only_their_agents_memories_in_the_overview(db):
+    await _memory_at(db, "a", "alpha note", "2026-10-01T00:00:00+00:00", 1)
+    await _memory_at(db, "b", "bravo secret", "2026-10-02T00:00:00+00:00", 5)
+    only_a = Scope({"a": acl.PERM_READ})
+    code, out = _answer("/api/overview", only_a)
+    assert code == 200
+    assert [r["agent_id"] for r in out["recent"]] == ["a"] and [r["agent_id"] for r in out["recalled"]] == ["a"]
+    # With both readable, b's memory leads both lists: the checks above can fail.
+    both = _answer("/api/overview", Scope({"*": acl.PERM_READ}))[1]
+    assert both["recent"][0]["agent_id"] == "b" and both["recalled"][0]["agent_id"] == "b"

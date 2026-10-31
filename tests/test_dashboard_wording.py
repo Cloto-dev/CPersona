@@ -45,9 +45,8 @@ def test_the_replacements_are_used():
     assert 'browse: "フォルダ"' in JA
     assert 'byMonth: "月別の記憶数"' in JA
     assert 'raw: "元のデータ (JSON)"' in JA
-    assert re.search(
-        r'nMemories: "記憶", nEpisodes: "エピソード", nEntities: "エンティティ"', JA
-    )
+    # The overview's counts sit in one sentence, each beside its counter word.
+    assert re.search(r"記憶 \$\{m\} 件、エピソード \$\{e\} 件、エンティティ \$\{n\} 件", JA)
 
 
 def test_the_japanese_docs_call_an_entity_by_the_same_word():
