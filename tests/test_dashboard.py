@@ -315,8 +315,10 @@ async def test_a_write_by_the_server_is_seen_on_the_next_request(db, served):
 # ---- how it starts
 
 
-def test_no_database_named_is_an_error_not_a_guess(monkeypatch, capsys):
+def test_no_database_named_is_an_error_not_a_guess(monkeypatch, capsys, tmp_path):
     monkeypatch.delenv("CPERSONA_DB_PATH", raising=False)
+    # No server has noted a database either (the suite's own servers note theirs).
+    monkeypatch.setenv("CPERSONA_DASHBOARD_STORES_PATH", str(tmp_path / "stores.json"))
     assert dashboard_main(["--no-browser"]) == 2
     assert "CPERSONA_DB_PATH" in capsys.readouterr().err
 
@@ -341,9 +343,10 @@ def test_cpersona_dashboard_opens_the_dashboard_not_the_server(monkeypatch):
     assert seen["argv"] == ["--db", "x.db"]
 
 
-def test_config_db_path_is_not_used_as_a_fallback(monkeypatch, capsys):
+def test_config_db_path_is_not_used_as_a_fallback(monkeypatch, capsys, tmp_path):
     # The server's relative default would resolve against the terminal's directory.
     monkeypatch.delenv("CPERSONA_DB_PATH", raising=False)
+    monkeypatch.setenv("CPERSONA_DASHBOARD_STORES_PATH", str(tmp_path / "stores.json"))
     monkeypatch.setattr(config, "DB_PATH", _path())
     assert dashboard_main(["--no-browser"]) == 2
 
