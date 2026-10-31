@@ -47,7 +47,7 @@ recorded as done, so it is retried on the next start.
 | 20 | 2.6.11a2 | `vector_log_clock`, `record_vector_changes`: the log of which rows held by the vector index files changed, kept only while one of those files exists ([design §5](CONTIGUOUS_INDEX_DESIGN.md#5-freshness-the-watermark)) | **Yes, if you build the vector index**: build it again ([below](#build-the-vector-index-again)) |
 | 21 | 2.6.14a1 | `folders`, `folder_members`: declared folders and the one folder each filed record sits in, used only with `CPERSONA_DECLARED_FOLDERS` on ([configuration](configuration.md)) | No: the tables stay empty until something is filed |
 
-2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1, 2.6.7, 2.6.8a1, 2.6.8, 2.6.9a1, 2.6.9, 2.6.10a1, 2.6.10a2, 2.6.10a3, 2.6.10a4, 2.6.10, 2.6.11a1, 2.6.11a3, 2.6.11a4, 2.6.11a5, 2.6.11a6, 2.6.11, 2.6.12a1, 2.6.12, 2.6.13a1, 2.6.13a2, 2.6.13, 2.6.14, 2.6.15a1, 2.6.15, 2.6.16a1 and 2.6.16a2 changed no schema.
+2.6.0a1, 2.6.0a2, 2.6.0a7, 2.6.0a8, 2.6.0b1, 2.6.0b2, 2.6.0, 2.6.1, 2.6.2, 2.6.4a1, 2.6.4a2, 2.6.4, 2.6.5a1, 2.6.5a2, 2.6.5a3, 2.6.5, 2.6.6a1, 2.6.6, 2.6.7a1, 2.6.7, 2.6.8a1, 2.6.8, 2.6.9a1, 2.6.9, 2.6.10a1, 2.6.10a2, 2.6.10a3, 2.6.10a4, 2.6.10, 2.6.11a1, 2.6.11a3, 2.6.11a4, 2.6.11a5, 2.6.11a6, 2.6.11, 2.6.12a1, 2.6.12, 2.6.13a1, 2.6.13a2, 2.6.13, 2.6.14, 2.6.15a1, 2.6.15, 2.6.16a1, 2.6.16a2 and 2.6.16a3 changed no schema.
 
 Going back from 2.6.14 or 2.6.14a1 to 2.6.13 needs no restore. 2.6.13 opens a schema 21 database with a
 warning that it is newer, reads and writes it as before, and the triggers schema 21 added stay in
@@ -311,12 +311,16 @@ Check these against what your deployment relies on. Each is off, or equal to
   (owner-only; `CPERSONA_DASHBOARD_STORES_PATH` moves it), so `cpersona dashboard`
   opens that database without being told. Nothing read from the store is written
   there, and a note that cannot be written does not stop the server.
+  `CPERSONA_DASHBOARD_STORES=false` stops the notes (2.6.16a3).
 
 - **`open_dashboard` is deprecated** (2.6.16a2) and is removed in 2.7. Its descriptions
   say so and its answer carries a `deprecated` field. `cpersona dashboard` opens the
   dashboard without an agent: on port 48700 until `--stop`, signed in by cookie, with
   `--install-shortcut` for a desktop shortcut
-  ([operations](operations.md#the-dashboard)).
+  ([operations](operations.md#the-dashboard)). From 2.6.16a3 its session ends when it
+  stops, so a browser signed in by 2.6.16a2 opens it once more from the shortcut or the
+  command. Over HTTP the tool is, for now, the only way to sign in to the remote
+  dashboard; a way without it comes before 2.7.
 
 New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 (`trace=true`), the time cue (`time_cue`), associations declared with
