@@ -50,8 +50,19 @@ const T = {
     emptyEpisodesP: "An episode is the summary of one conversation. Your agent stores one when a session ends.",
     emptyEntities: "No entities yet",
     emptyEntitiesP: "Entities are names your agent declares — people, projects, places — so it can connect memories about the same thing.",
-    soonEpisodes: "Browsing episodes comes in a later version.",
-    soonEntities: "Browsing entities comes in a later version.",
+    episodesLead: "The summary of each conversation, the latest first.",
+    entitiesLead: "Names agents declared — people, projects, places — the most mentioned first.",
+    searchEpisodesPh: "Search summaries and keywords", searchEntitiesPh: "Search names and aliases",
+    noEpisodeMatch: "No episode contains that text.", noEntityMatch: "No entity has that name.", noMatchShort: "Shorten the word.",
+    conversation: "Conversation", stored: "Stored", keywords: "Keywords",
+    resolvedQ: "Topic concluded", resolvedYes: "Yes", resolvedNo: "No", resolvedTag: "Concluded",
+    mentionsEnt: "Entities mentioned", aliases: "Also called", declaredBy: "Declared by", declaredAt: "Declared",
+    mentionedIn: "Mentioned in", relationsH: "Relations",
+    noMentionsYet: "No memory or episode is declared to mention it.", noRelationsYet: "No relation is declared.",
+    notVisible: "Not found: deleted, or outside what you can see", anchorOn: "Stated in",
+    kinds: { mem: "Memory", ep: "Episode", entity: "Entity" },
+    nMentions: n => `${n.toLocaleString()} mention${n === 1 ? "" : "s"}`, nRelations: n => `${n.toLocaleString()} relation${n === 1 ? "" : "s"}`,
+    copyName: "Copy name",
     tryAsk: "Try asking your agent:", askEpisodes: "“Summarise this session and archive it to memory.”",
     askEntities: "“Remember that Caroline and Melanie are friends.”",
     palettePh: "Search memories, or type a command", cmdGo: v => `Go to ${v}`, cmdLang: "Switch to 日本語", cmd: "Command",
@@ -132,8 +143,19 @@ const T = {
     emptyEpisodesP: "エピソードは、1 回の会話の要約です。セッションの終わりにエージェントが保存します。",
     emptyEntities: "実体はまだありません",
     emptyEntitiesP: "実体は、エージェントが宣言する人・プロジェクト・場所などの名前です。同じものについての記憶をつなぐのに使います。",
-    soonEpisodes: "エピソードを見る画面は、今後のバージョンで入ります。",
-    soonEntities: "実体を見る画面は、今後のバージョンで入ります。",
+    episodesLead: "会話ごとの要約です。新しい会話から順に並びます。",
+    entitiesLead: "エージェントが宣言した名前 (人・プロジェクト・場所など) です。言及の多い順に並びます。",
+    searchEpisodesPh: "要約とキーワードを検索", searchEntitiesPh: "名前と別名を検索",
+    noEpisodeMatch: "その語を含むエピソードはありません。", noEntityMatch: "その名前の実体はありません。", noMatchShort: "語を短くしてください。",
+    conversation: "会話の時間", stored: "保存日時", keywords: "キーワード",
+    resolvedQ: "話題の決着", resolvedYes: "決着した", resolvedNo: "決着していない", resolvedTag: "決着",
+    mentionsEnt: "言及している実体", aliases: "別名", declaredBy: "宣言元", declaredAt: "宣言日時",
+    mentionedIn: "言及している記録", relationsH: "関係",
+    noMentionsYet: "この実体に言及していると宣言された記憶・エピソードはありません。", noRelationsYet: "宣言された関係はありません。",
+    notVisible: "見つかりません (削除されたか、表示できる範囲の外です)", anchorOn: "根拠",
+    kinds: { mem: "記憶", ep: "エピソード", entity: "実体" },
+    nMentions: n => `言及 ${n.toLocaleString()} 件`, nRelations: n => `関係 ${n.toLocaleString()} 件`,
+    copyName: "名前をコピー",
     tryAsk: "エージェントにこう頼んでみてください:", askEpisodes: "「このセッションをまとめて記憶に残して」",
     askEntities: "「Caroline と Melanie は友達だと覚えておいて」",
     palettePh: "記憶を検索、またはコマンドを入力", cmdGo: v => `${v} へ移動`, cmdLang: "Switch to English", cmd: "コマンド",
@@ -180,7 +202,7 @@ try {
   else token = sessionStorage.getItem("cp.token") || "";
 } catch {}
 
-const state = { view: "overview", path: [], q: "", id: 0, month: "", around: 0, cluster: 0, entity: 0, lang: "en" };
+const state = { view: "overview", path: [], q: "", id: 0, kind: "", month: "", around: 0, cluster: 0, entity: 0, lang: "en" };
 // The layout this browser chose in the settings; the classic one unless it chose tabs.
 // Its own key: it was kept under "cp.layout", which is also where the network keeps
 // where its points were left (LAYOUT_KEY), so each overwrote the other. A "tabs" left
@@ -196,7 +218,7 @@ try {
   if (chosen === "tabs") layout = "tabs";
 } catch {}
 document.body.dataset.layout = layout;
-for (const k of ["view", "q", "month"]) if (H0.get(k)) state[k] = H0.get(k);
+for (const k of ["view", "q", "month", "kind"]) if (H0.get(k)) state[k] = H0.get(k);
 if (H0.get("id")) state.id = Number(H0.get("id")) || 0;
 for (const k of ["around", "cluster", "entity"]) if (H0.get(k)) state[k] = Number(H0.get(k)) || 0;
 try { if (H0.get("path")) state.path = JSON.parse(H0.get("path")); } catch {}
@@ -252,6 +274,7 @@ function saveHash() {
   if (state.q) h.set("q", state.q);
   if (state.month) h.set("month", state.month);
   if (state.id) h.set("id", state.id);
+  if (state.kind) h.set("kind", state.kind);
   for (const k of ["around", "cluster", "entity"]) if (state[k]) h.set(k, state[k]);
   history.replaceState(null, "", "#" + h);
 }
@@ -416,7 +439,7 @@ async function renderMemories(append = false) {
     const meta = [`<span title="${esc(r.agent_id)}">${esc(r.agent_id)}</span>`, `<span>${esc(when(r.timestamp).slice(11))}</span>`];
     if (r.recall_count) meta.push(`<span>${t("recalled")(r.recall_count)}</span>`);
     if (r.locked) meta.push(`<span>${t("locked")}</span>`);
-    html += `<button class="row ${r.id === state.id ? "sel" : ""}" data-id="${r.id}"><div class="text">${mark(r.snippet, state.q)}</div><div class="meta">${meta.join("")}</div></button>`;
+    html += `<button class="row ${r.id === state.id && !state.kind ? "sel" : ""}" data-id="${r.id}"><div class="text">${mark(r.snippet, state.q)}</div><div class="meta">${meta.join("")}</div></button>`;
   }
   list.innerHTML = html;
   for (const b of list.querySelectorAll(".row")) b.addEventListener("click", () => openDetail(Number(b.dataset.id)).catch(fail));
@@ -425,12 +448,161 @@ async function renderMemories(append = false) {
   $("moreBtn")?.addEventListener("click", () => renderMemories(true).catch(fail));
 }
 
-function renderOther(kind) {
-  const n = overviewData.counts[kind];
-  const E = kind === "episodes" ? ["emptyEpisodes", "emptyEpisodesP", "askEpisodes", "soonEpisodes"] : ["emptyEntities", "emptyEntitiesP", "askEntities", "soonEntities"];
-  $("page").innerHTML = n
-    ? `<h1>${t(kind)}</h1><p class="lead">${n.toLocaleString()} · ${t(E[3])}</p>`
-    : `<h1>${t(kind)}</h1><div class="empty"><h2>${t(E[0])}</h2><p>${t(E[1])}</p><p class="hint">${t("tryAsk")}</p><div class="say">${t(E[2])}</div></div>`;
+// ---- Episodes and entities: listed and opened as memories are
+const LISTS = {
+  episodes: { api: "/api/episodes", detail: "episode", lead: "episodesLead", ph: "searchEpisodesPh", none: "noEpisodeMatch",
+    empty: ["emptyEpisodes", "emptyEpisodesP", "askEpisodes"] },
+  entities: { api: "/api/entities", detail: "entity", lead: "entitiesLead", ph: "searchEntitiesPh", none: "noEntityMatch",
+    empty: ["emptyEntities", "emptyEntitiesP", "askEntities"] },
+};
+// The kind of record each list opens, and the list a record belongs to.
+const LIST_DETAIL = { memories: "memory", episodes: "episode", entities: "entity" };
+const DETAIL_LIST = { memory: "memories", episode: "episodes", entity: "entities" };
+// The kind the drawer shows: its own, when it names one, else the list's.
+const drawerKind = () => state.kind || LIST_DETAIL[state.view] || "memory";
+const dayLabel = d => {
+  const now = new Date();
+  return d === now.toISOString().slice(0, 10) ? t("today") : d === new Date(now - 864e5).toISOString().slice(0, 10) ? t("yesterday") : esc(d);
+};
+const episodeTime = r => r.end_time || r.start_time || r.created_at;
+
+function episodeRows(rows) {
+  let html = "", last = "";
+  for (const r of rows) {
+    const ts = episodeTime(r), d = day(ts);
+    if (d !== last) { html += `<div class="group">${dayLabel(d)}</div>`; last = d; }
+    const meta = [`<span title="${esc(r.agent_id)}">${esc(r.agent_id)}</span>`, `<span>${esc(when(ts).slice(11))}</span>`];
+    if (r.resolved) meta.push(`<span>${t("resolvedTag")}</span>`);
+    if (r.keywords) meta.push(`<span>${mark(r.keywords.split(/[\s,、]+/).filter(Boolean).slice(0, 4).join(" "), state.q)}</span>`);
+    html += `<button class="row" data-id="${r.id}"><div class="text">${mark(r.snippet, state.q)}</div><div class="meta">${meta.join("")}</div></button>`;
+  }
+  return html;
+}
+
+function entityRows(rows) {
+  return rows.map(r => `<button class="row" data-id="${r.id}"><div class="text"><b>${mark(r.name, state.q)}</b>${r.aliases.length
+      ? ` <span class="muted">${t("aliases")}: ${r.aliases.map(a => mark(a, state.q)).join(", ")}</span>` : ""}</div>
+    <div class="meta"><span>${t("nMentions")(r.mentions)}</span><span>${t("nRelations")(r.relations)}</span><span title="${esc(r.agent_id)}">${esc(r.agent_id)}</span></div></button>`).join("");
+}
+
+let otherOffset = 0, otherRows = [];
+async function renderList(kind, append = false) {
+  const L = LISTS[kind], page = $("page");
+  if (!overviewData.counts[kind]) {
+    page.innerHTML = `<h1>${t(kind)}</h1><div class="empty"><h2>${t(L.empty[0])}</h2><p>${t(L.empty[1])}</p><p class="hint">${t("tryAsk")}</p><div class="say">${t(L.empty[2])}</div></div>`;
+    return;
+  }
+  if (!append) { otherOffset = 0; otherRows = []; }
+  const res = await api(L.api, { q: state.q, limit: 40, offset: otherOffset });
+  if (state.view !== kind) return;
+  otherRows = otherRows.concat(res.rows);
+  otherOffset += 40;
+  if (!append) {
+    page.innerHTML = `
+      <h1>${t(kind)}</h1><p class="lead">${t(L.lead)}</p>
+      <div class="toolbar"><label class="search">
+        <svg aria-hidden="true" class="icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>
+        <input id="q" type="search" placeholder="${t(L.ph)}" value="${esc(state.q)}" aria-label="${t(L.ph)}"></label></div>
+      <div id="list"></div><div class="more" id="more"></div>`;
+    let timer;
+    $("q").addEventListener("input", e => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { state.q = e.target.value.trim(); saveHash(); keepPlace(); renderList(kind).catch(fail); }, 220);
+    });
+  }
+  const list = $("list");
+  if (!otherRows.length) {
+    list.innerHTML = `<div class="empty"><h2>${t(L.none)}</h2><p>${t("noMatchShort")}</p></div>`;
+    $("more").innerHTML = "";
+    return;
+  }
+  list.innerHTML = kind === "episodes" ? episodeRows(otherRows) : entityRows(otherRows);
+  const open = $("drawer").classList.contains("open") && drawerKind() === L.detail ? state.id : 0;
+  for (const b of list.querySelectorAll(".row")) {
+    b.classList.toggle("sel", Number(b.dataset.id) === open);
+    b.addEventListener("click", () => openDetail(Number(b.dataset.id), L.detail).catch(fail));
+  }
+  $("more").innerHTML = `<span class="hint">${t("shown")(otherRows.length, res.total)}</span>` +
+    (res.total > otherRows.length ? ` <button class="btn" id="moreBtn">${t("loadMore")}</button>` : "");
+  $("moreBtn")?.addEventListener("click", () => renderList(kind, true).catch(fail));
+}
+
+// A link to a memory, an episode or an entity, as relations and mentions name them.
+const REF_KIND = { mem: "memory", ep: "episode", entity: "entity" };
+function refLink(x, self = 0) {
+  if (x.kind === "entity" && x.id === self) return `<b>${esc(x.text)}</b>`;
+  if (x.missing) return `<span class="muted" title="${esc(t("notVisible"))}">${esc(t("kinds")[x.kind] || x.kind)} · ${t("notVisible")}</span>`;
+  const label = x.kind === "entity" ? esc(x.text) : `<span class="muted">${esc(t("kinds")[x.kind] || x.kind)}</span> ${esc(x.text)}`;
+  return `<button class="ref" data-ref-kind="${esc(x.kind)}" data-ref-id="${x.id}">${label}</button>`;
+}
+function wireRefs(d) {
+  for (const b of d.querySelectorAll("[data-ref-kind]"))
+    b.addEventListener("click", () => openDetail(Number(b.dataset.refId), REF_KIND[b.dataset.refKind]).catch(fail));
+}
+function closeButton(d) {
+  return d.id === "drawer" ? `<button class="x" id="closeBtn" aria-label="${t("close")}">×</button>` : "";
+}
+
+async function renderEpisode(id, d = $("page")) {
+  const e = await api("/api/episode", { id });
+  const title = `${day(episodeTime(e))} · ${e.agent_id}`;
+  recTitles[`episode:${id}`] = title;
+  renderTabs();
+  const span = e.start_time || e.end_time ? `${when(e.start_time) || "?"} – ${when(e.end_time) || "?"}` : "—";
+  d.innerHTML = `<article class="doc">
+    <div class="top"><h2>${esc(title)}</h2>${closeButton(d)}</div>
+    <dl class="facts-list">
+      <dt>${t("conversation")}</dt><dd>${esc(span)}</dd>
+      <dt>${t("stored")}</dt><dd>${esc(when(e.created_at))} UTC</dd>
+      <dt>${t("who")}</dt><dd>${esc(e.agent_id)}</dd>
+      <dt>${t("where")}</dt><dd>${esc(levelLabel("project", e.project_id))} / ${esc(levelLabel("channel", e.channel))}</dd>
+      <dt>${t("resolvedQ")}</dt><dd>${e.resolved ? t("resolvedYes") : t("resolvedNo")}</dd>
+      ${e.keywords ? `<dt>${t("keywords")}</dt><dd>${mark(e.keywords, state.q)}</dd>` : ""}
+      ${e.entities.length ? `<dt>${t("mentionsEnt")}</dt><dd class="refs">${e.entities.map(x => refLink({ kind: "entity", id: x.id, text: x.name })).join("")}</dd>` : ""}
+    </dl>
+    <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} · ep:${e.id}</button></div>
+    <div class="content">${mark(e.summary, state.q)}</div>
+    <details class="tech" ${techAlways ? "open" : ""}><summary>${t("tech")}</summary>
+      <dl class="facts-list">
+        <dt>${t("vector")}</dt><dd>${e.has_embedding ? esc(e.embedding_model || "✓") : `<span class="muted">${t("vectorMissing")}</span>`}</dd>
+        <dt>${t("length")}</dt><dd>${t("chars")(e.summary.length)}</dd>
+        <dt>${t("ids")}</dt><dd>ep:${e.id}</dd>
+      </dl>
+      <details><summary class="hint">${t("raw")}</summary><pre class="raw">${esc(JSON.stringify({ ...e, entities: undefined }, null, 2))}</pre></details>
+    </details></article>`;
+  $("closeBtn")?.addEventListener("click", closeDetail);
+  $("copyRef").addEventListener("click", () => { navigator.clipboard?.writeText(`ep:${e.id}`); toast(t("copied")(`ep:${e.id}`)); });
+  wireRefs(d);
+}
+
+async function renderEntity(id, d = $("page")) {
+  const e = await api("/api/entity", { id });
+  recTitles[`entity:${id}`] = e.name;
+  renderTabs();
+  const mentionsMem = e.mentions.some(m => m.kind === "mem" && !m.missing);
+  d.innerHTML = `<article class="doc">
+    <div class="top"><h2>${esc(e.name)}</h2>${closeButton(d)}</div>
+    <dl class="facts-list">
+      ${e.aliases.length ? `<dt>${t("aliases")}</dt><dd>${e.aliases.map(esc).join(", ")}</dd>` : ""}
+      <dt>${t("who")}</dt><dd>${esc(e.agent_id)}</dd>
+      <dt>${t("where")}</dt><dd>${esc(levelLabel("project", e.project_id))} / ${esc(levelLabel("channel", e.channel))}</dd>
+      <dt>${t("declaredBy")}</dt><dd>${esc(e.declared_by)}</dd>
+      <dt>${t("declaredAt")}</dt><dd>${esc(when(e.created_at))}</dd>
+    </dl>
+    <div class="actions"><button class="btn" id="copyName">${t("copyName")}</button>
+      ${mentionsMem ? `<button class="btn" id="entityGraph">${t("openEntity")}</button>` : ""}</div>
+    <section class="sect"><h3>${t("mentionedIn")} <span class="muted">${e.mentions.length.toLocaleString()}</span></h3>
+      ${e.mentions.length ? `<ul class="reflist">${e.mentions.map(m => `<li>${refLink(m)}</li>`).join("")}</ul>` : `<p class="hint">${t("noMentionsYet")}</p>`}</section>
+    <section class="sect"><h3>${t("relationsH")} <span class="muted">${e.relations.length.toLocaleString()}</span></h3>
+      ${e.relations.length ? `<ul class="reflist">${e.relations.map(r => `<li class="rel">${refLink(r.subject, e.id)}<span class="pred">${esc(r.predicate)}</span>${refLink(r.object, e.id)}${r.anchor
+        ? `<div class="hint">${t("anchorOn")}: ${refLink(r.anchor)}</div>` : ""}</li>`).join("")}</ul>` : `<p class="hint">${t("noRelationsYet")}</p>`}</section>
+    <details class="tech" ${techAlways ? "open" : ""}><summary>${t("tech")}</summary>
+      <dl class="facts-list"><dt>${t("ids")}</dt><dd>entity ${e.id} · ${esc(e.normalized)}</dd></dl>
+    </details></article>`;
+  $("closeBtn")?.addEventListener("click", closeDetail);
+  $("copyName").addEventListener("click", () => { navigator.clipboard?.writeText(e.name); toast(t("copied")(e.name)); });
+  $("entityGraph")?.addEventListener("click", () => go({ view: "graph", entity: e.id }));
+  wireRefs(d);
 }
 
 // ---- A memory in full
@@ -444,21 +616,26 @@ function spans(parts, total, kind) {
 
 // A memory opens in a tab of its own, as a note does in a notes app; a tab already
 // showing it is brought forward instead of opening another.
-async function openDetail(id) {
-  // The classic layout opens a memory in a drawer over the list, so the list stays.
+async function openDetail(id, kind = "memory") {
+  // The classic layout opens a record in a drawer over the list, so the list stays.
+  // The drawer names its kind only when it is not the list's own (a memory a relation
+  // on an entity's page points at, say), so a row of the list is lit only for its own.
   if (layout === "classic") {
     state.id = id;
+    state.kind = kind === LIST_DETAIL[state.view] ? "" : kind;
     saveHash();
     keepPlace();
-    for (const b of document.querySelectorAll(".row")) b.classList.toggle("sel", Number(b.dataset.id) === id);
-    await renderDetail(id, $("drawer"));
+    for (const b of document.querySelectorAll(".row")) b.classList.toggle("sel", !state.kind && Number(b.dataset.id) === id);
+    await RENDER[kind](id, $("drawer"));
     $("drawer").classList.add("open");
     return;
   }
-  const at = tabs.findIndex(tb => { const c = tb.hist[tb.pos]; return c.view === "memory" && c.id === id; });
+  const at = tabs.findIndex(tb => { const c = tb.hist[tb.pos]; return c.view === kind && c.id === id; });
   if (at >= 0) return switchTab(at);
-  return openTab({ view: "memory", id, q: state.q });
+  return openTab({ view: kind, id, q: state.q });
 }
+// The views that show one record, and what draws each.
+const RENDER = { memory: (id, d) => renderDetail(id, d), episode: (id, d) => renderEpisode(id, d), entity: (id, d) => renderEntity(id, d) };
 
 async function renderDetail(id, d = $("page")) {
   const m = await api("/api/memory", { id });
@@ -529,6 +706,7 @@ function closeDetail() {
   if (!$("drawer").classList.contains("open")) return;
   $("drawer").classList.remove("open");
   state.id = 0;
+  state.kind = "";
   saveHash();
   keepPlace();
 }
@@ -553,8 +731,8 @@ function drawLayoutChoice() {
 // and a memory in the drawer moves to a tab.
 async function setLayout(l) {
   if (l === layout) return;
-  const inTab = state.view === "memory" ? state.id : 0;
-  const inDrawer = $("drawer").classList.contains("open") ? state.id : 0;
+  const inTab = state.view in RENDER ? [state.id, state.view] : null;
+  const inDrawer = $("drawer").classList.contains("open") ? [state.id, drawerKind()] : null;
   closeDetail();
   layout = l;
   document.body.dataset.layout = l;
@@ -562,8 +740,8 @@ async function setLayout(l) {
   drawLayoutChoice();
   if (l === "classic") {
     sideShow("tree");
-    if (inTab) { await go({ view: "memories", path: [], month: "" }); await openDetail(inTab); }
-  } else if (inDrawer) await openDetail(inDrawer);
+    if (inTab) { await go({ view: DETAIL_LIST[inTab[1]], path: [], month: "" }); await openDetail(...inTab); }
+  } else if (inDrawer) await openDetail(...inDrawer);
 }
 // Signing out reloads the page, so nothing read before stays on the screen.
 async function signOut() {
@@ -1214,10 +1392,11 @@ function setLang(l) {
 // ---- Tabs, each with its own back and forward
 // A tab holds a history of places (what the hash names); moving within a tab adds to
 // its history, the arrows walk it, and a memory or a new tab opens beside the current.
-const PLACE = ["view", "path", "q", "month", "id", "around", "cluster", "entity"];
+const PLACE = ["view", "path", "q", "month", "id", "kind", "around", "cluster", "entity"];
 const place = () => JSON.parse(JSON.stringify(Object.fromEntries(PLACE.map(k => [k, state[k]]))));
 let tabs = [], active = 0;
 const memTitles = {};
+const recTitles = {};
 const cur = () => tabs[active];
 function keepPlace() { if (cur()) cur().hist[cur().pos] = place(); }
 function saveTabs() {
@@ -1225,6 +1404,8 @@ function saveTabs() {
 }
 function tabTitle(c) {
   if (c.view === "memory") return memTitles[c.id] || `mem:${c.id}`;
+  if (c.view === "episode") return recTitles[`episode:${c.id}`] || `ep:${c.id}`;
+  if (c.view === "entity") return recTitles[`entity:${c.id}`] || `entity ${c.id}`;
   if (c.view === "memories" && c.q) return `${t("sideSearch")}: ${c.q}`;
   if ((c.view === "memories" || c.view === "graph") && (c.path || []).length) {
     const i = c.path.length - 1;
@@ -1263,7 +1444,7 @@ function renderTabs() {
   $("fwdBtnTab").disabled = !cur() || cur().pos >= cur().hist.length - 1;
 }
 function show(c) {
-  Object.assign(state, { path: [], q: "", month: "", id: 0, around: 0, cluster: 0, entity: 0 }, JSON.parse(JSON.stringify(c)));
+  Object.assign(state, { path: [], q: "", month: "", id: 0, kind: "", around: 0, cluster: 0, entity: 0 }, JSON.parse(JSON.stringify(c)));
   return route().catch(fail);
 }
 function switchTab(i) { keepPlace(); active = i; return show(cur().hist[cur().pos]); }
@@ -1290,7 +1471,7 @@ function step(d) {
 // A move that does not name what to center on leaves the "around", group and entity views.
 function go(next) {
   keepPlace();
-  Object.assign(state, { around: 0, cluster: 0, entity: 0, id: 0 }, next);
+  Object.assign(state, { around: 0, cluster: 0, entity: 0, id: 0, kind: "" }, next);
   const tb = cur();
   if (tb) { tb.hist = tb.hist.slice(0, tb.pos + 1); tb.hist.push(place()); tb.pos = tb.hist.length - 1; }
   closeDetail();
@@ -1309,12 +1490,12 @@ async function route() {
   if (document.activeElement !== $("cnavQ")) $("cnavQ").value = state.view === "memories" ? state.q : "";
   renderTree().catch(() => {});
   stopGraph();
-  $("main").classList.toggle("is-doc", state.view === "memory");
+  $("main").classList.toggle("is-doc", state.view in RENDER);
   if (state.view === "overview") renderOverview();
   else if (state.view === "memories") await renderMemories();
   else if (state.view === "graph") await renderGraph();
-  else if (state.view === "memory") await renderDetail(state.id);
-  else renderOther(state.view);
+  else if (state.view in LISTS) await renderList(state.view);
+  else if (state.view in RENDER) await RENDER[state.view](state.id);
 }
 
 // ---- Side panel: the directory, or a search of memory text
@@ -1489,21 +1670,21 @@ function wire() {
     if (saved && saved.db === overviewData.db && saved.tabs?.length) { tabs = saved.tabs; active = Math.min(saved.active, tabs.length - 1); }
   } catch {}
   const named = place();
-  let openMemory = named.id && named.view !== "memory" ? named.id : 0;
-  if (openMemory) named.id = 0;
+  let openRec = named.id && !(named.view in RENDER) ? [named.id, named.kind || LIST_DETAIL[named.view] || "memory"] : null;
+  if (openRec) { named.id = 0; named.kind = ""; }
   if (!tabs.length) tabs = [{ hist: [named], pos: 0 }];
   else if (H0.get("view")) { tabs[active].hist = tabs[active].hist.slice(0, tabs[active].pos + 1); tabs[active].hist.push(named); tabs[active].pos = tabs[active].hist.length - 1; }
-  // The classic layout has no memory tabs: one left from the tabbed layout opens in
-  // the drawer over the list instead.
+  // The classic layout has no record tabs: one left from the tabbed layout opens in
+  // the drawer over its list instead.
   const here = cur().hist[cur().pos];
-  if (layout === "classic" && here.view === "memory") {
-    openMemory = here.id;
-    cur().hist[cur().pos] = { ...here, view: "memories", id: 0 };
+  if (layout === "classic" && here.view in RENDER) {
+    openRec = [here.id, here.view];
+    cur().hist[cur().pos] = { ...here, view: DETAIL_LIST[here.view], id: 0, kind: "" };
   }
   sideShow(H0.get("side") === "search" && layout === "tabs" ? "search" : "tree");
   if (H0.get("sq")) { $("sideQ").value = H0.get("sq"); sqToggleHelp(); sideSearch(H0.get("sq")).catch(() => {}); }
   await show(cur().hist[cur().pos]);
   setTimeout(prefetchNetwork, 0);
-  if (openMemory) await openDetail(openMemory).catch(fail);
+  if (openRec) await openDetail(...openRec).catch(fail);
   if (H0.get("palette") === "1") openPalette(H0.get("pq") || "");
 })();

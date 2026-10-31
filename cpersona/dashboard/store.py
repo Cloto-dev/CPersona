@@ -449,3 +449,207 @@ def search(
             }
         )
     return {"total": len(found), "rows": rows}
+
+
+# ---- Episodes: the summary an agent stores when a conversation ends
+def _fts_or_substring(query: str, fts: str, alias: str, columns: tuple[str, ...]) -> tuple[str, list[str], list]:
+    """A join and a condition that find ``query``: the trigram index from three
+    characters, else a substring of any of ``columns`` (as the memory list does)."""
+    query = query.strip()
+    if not query:
+        return "", [], []
+    if len(query) >= FTS_MIN_CHARS:
+        return f" JOIN {fts} f ON f.rowid = {alias}.id", [f"{fts} MATCH ?"], ['"' + query.replace('"', '""') + '"']
+    either = " OR ".join(f"instr(lower({alias}.{c}), lower(?)) > 0" for c in columns)
+    return "", [f"({either})"], [query] * len(columns)
+
+
+def episodes(conn: sqlite3.Connection, query: str = "", limit: int = 50, offset: int = 0) -> dict:
+    """One page of episodes, the latest conversation first, within a search of
+    their summaries and keywords."""
+    if not _has_table(conn, "episodes"):
+        return {"total": 0, "rows": []}
+    join, where, args = _fts_or_substring(query, "episodes_fts", "e", ("summary", "keywords"))
+    sql = (
+        "SELECT e.id, e.agent_id, e.project_id, e.channel, e.summary, e.keywords, e.start_time, "
+        "e.end_time, e.resolved, e.created_at FROM episodes e" + join
+    )
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    total = conn.execute(f"SELECT count(*) FROM ({sql})", args).fetchone()[0]
+    limit = max(1, min(int(limit), MAX_LIMIT))
+    # When a conversation took place, else when it was stored.
+    rows = conn.execute(
+        sql + " ORDER BY coalesce(e.end_time, e.start_time, e.created_at) DESC, e.id DESC LIMIT ? OFFSET ?",
+        [*args, limit, max(0, int(offset))],
+    )
+    return {
+        "total": total,
+        "rows": [
+            {
+                "id": r["id"],
+                "agent_id": r["agent_id"],
+                "project_id": r["project_id"],
+                "channel": r["channel"],
+                "start_time": r["start_time"],
+                "end_time": r["end_time"],
+                "created_at": r["created_at"],
+                "resolved": bool(r["resolved"]),
+                "keywords": r["keywords"],
+                "snippet": snippet(r["summary"], query.strip()),
+            }
+            for r in rows
+        ],
+    }
+
+
+def episode(conn: sqlite3.Connection, episode_id: int) -> dict | None:
+    """One episode in full, with the entities declared as mentioned in it, but never its vector."""
+    r = conn.execute(
+        "SELECT id, agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved, "
+        "embedding_model, created_at, embedding IS NOT NULL AS has_embedding FROM episodes WHERE id = ?",
+        (episode_id,),
+    ).fetchone()
+    if r is None:
+        return None
+    out = dict(r)
+    out["resolved"] = bool(out["resolved"])
+    out["has_embedding"] = bool(out["has_embedding"])
+    out["entities"] = (
+        [
+            dict(e)
+            for e in conn.execute(
+                "SELECT e.id, e.name FROM entity_mentions em JOIN entities e ON e.id = em.entity_id "
+                "WHERE em.ref = ? ORDER BY e.name, e.id",
+                (f"ep:{episode_id}",),
+            )
+        ]
+        if _has_table(conn, "entity_mentions")
+        else []
+    )
+    return out
+
+
+# ---- Entities: names an agent declares, with their aliases, mentions and relations
+#: Characters of a memory or an episode shown where an entity's page names it.
+REF_CHARS = 120
+
+
+def entities(conn: sqlite3.Connection, query: str = "", limit: int = 50, offset: int = 0) -> dict:
+    """One page of entities, the most mentioned first, matched on their names and aliases."""
+    if not _has_table(conn, "entities"):
+        return {"total": 0, "rows": []}
+    where, args = [], []
+    query = query.strip()
+    if query:
+        where.append(
+            "(instr(lower(e.name), lower(?)) > 0 OR e.id IN "
+            "(SELECT entity_id FROM entity_aliases WHERE instr(lower(alias), lower(?)) > 0))"
+        )
+        args += [query, query]
+    sql = (
+        "SELECT e.id, e.name, e.agent_id, e.project_id, e.channel, e.declared_by, e.created_at, "
+        "(SELECT count(*) FROM entity_mentions m WHERE m.entity_id = e.id) AS mentions, "
+        "(SELECT count(*) FROM relations r WHERE (r.subject_kind = 'entity' AND r.subject_id = e.id) "
+        "OR (r.object_kind = 'entity' AND r.object_id = e.id)) AS relations, "
+        "(SELECT group_concat(alias, char(31)) FROM (SELECT alias FROM entity_aliases a "
+        "WHERE a.entity_id = e.id ORDER BY alias)) AS aliases FROM entities e"
+    )
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    total = conn.execute(f"SELECT count(*) FROM ({sql})", args).fetchone()[0]
+    limit = max(1, min(int(limit), MAX_LIMIT))
+    rows = conn.execute(
+        sql + " ORDER BY mentions DESC, relations DESC, lower(e.name), e.id LIMIT ? OFFSET ?",
+        [*args, limit, max(0, int(offset))],
+    )
+    return {
+        "total": total,
+        "rows": [
+            {
+                **{k: r[k] for k in ("id", "name", "agent_id", "project_id", "channel", "declared_by", "created_at")},
+                "mentions": r["mentions"],
+                "relations": r["relations"],
+                # Aliases equal to the name only repeat it.
+                "aliases": [a for a in (r["aliases"] or "").split("\x1f") if a and a != r["name"]],
+            }
+            for r in rows
+        ],
+    }
+
+
+def _short(text: str) -> str:
+    """The start of a record, cut to REF_CHARS with a mark where it was cut."""
+    text = snippet(text).removesuffix("…")
+    return text if len(text) <= REF_CHARS else text[:REF_CHARS].rstrip() + "…"
+
+
+def _describe(conn: sqlite3.Connection, kind: str, record_id: int) -> dict:
+    """What a relation or a mention points at, for a link: an entity's name, or the
+    start of a memory or an episode. ``missing`` when the row is gone or not visible."""
+    if kind == "entity":
+        r = conn.execute("SELECT name FROM entities WHERE id = ?", (record_id,)).fetchone()
+        text = r["name"] if r else None
+    elif kind == "mem":
+        r = conn.execute("SELECT content, timestamp FROM memories WHERE id = ?", (record_id,)).fetchone()
+        text = _short(r["content"]) if r else None
+    elif kind == "ep":
+        r = conn.execute("SELECT summary FROM episodes WHERE id = ?", (record_id,)).fetchone()
+        text = _short(r["summary"]) if r else None
+    else:
+        text = None
+    return {"kind": kind, "id": record_id, "text": text, "missing": text is None}
+
+
+def _ref(ref: str) -> tuple[str, int] | None:
+    kind, _, rid = ref.partition(":")
+    return (kind, int(rid)) if rid.isdigit() else None
+
+
+def entity(conn: sqlite3.Connection, entity_id: int) -> dict | None:
+    """One entity: its aliases, the records declared to mention it, and its relations,
+    each end described so the page can link to it."""
+    r = conn.execute(
+        "SELECT id, name, normalized, agent_id, project_id, channel, declared_by, created_at "
+        "FROM entities WHERE id = ?",
+        (entity_id,),
+    ).fetchone()
+    if r is None:
+        return None
+    out = dict(r)
+    out["aliases"] = [
+        a["alias"]
+        for a in conn.execute(
+            "SELECT alias FROM entity_aliases WHERE entity_id = ? ORDER BY alias", (entity_id,)
+        )
+        if a["alias"] != r["name"]
+    ]
+    mentions = []
+    for m in conn.execute(
+        "SELECT ref, declared_by, created_at FROM entity_mentions WHERE entity_id = ? ORDER BY created_at DESC, ref",
+        (entity_id,),
+    ):
+        parsed = _ref(m["ref"])
+        if parsed:
+            mentions.append({**_describe(conn, *parsed), "declared_by": m["declared_by"], "created_at": m["created_at"]})
+    out["mentions"] = mentions
+    relations = []
+    for rel in conn.execute(
+        "SELECT id, subject_kind, subject_id, predicate, object_kind, object_id, anchor_ref, declared_by, declared_at "
+        "FROM relations WHERE (subject_kind = 'entity' AND subject_id = ?) OR (object_kind = 'entity' AND object_id = ?) "
+        "ORDER BY declared_at DESC, id DESC",
+        (entity_id, entity_id),
+    ):
+        relations.append(
+            {
+                "id": rel["id"],
+                "predicate": rel["predicate"],
+                "subject": _describe(conn, rel["subject_kind"], rel["subject_id"]),
+                "object": _describe(conn, rel["object_kind"], rel["object_id"]),
+                "anchor": _describe(conn, *_ref(rel["anchor_ref"])) if _ref(rel["anchor_ref"]) else None,
+                "declared_by": rel["declared_by"],
+                "declared_at": rel["declared_at"],
+            }
+        )
+    out["relations"] = relations
+    return out

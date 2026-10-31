@@ -249,6 +249,16 @@
   pre.raw { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--recessed); border-radius: 6px; padding: 10px; }
   .icon { color: var(--faint); flex: none; }
   .muted { color: var(--faint); }
+  /* An episode's or an entity's links to the records it names. */
+  .sect { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 14px; }
+  .sect h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+  .reflist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+  .reflist li { min-width: 0; overflow-wrap: anywhere; }
+  .refs { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .ref { border: 0; background: none; padding: 0; cursor: pointer; color: var(--accent); text-align: left; }
+  .ref:hover { text-decoration: underline; }
+  .ref .muted { color: var(--faint); }
+  .rel .pred { color: var(--muted); margin: 0 8px; }
   #schemaLine { color: var(--faint); }
 
   /* Command palette */

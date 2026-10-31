@@ -97,6 +97,18 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
                 out = store.memory(conn, int(q.get("id", 0)))
                 if out is None:
                     return _err(404, "No memory with that id.")
+            elif route == "/api/episodes":
+                out = store.episodes(conn, q.get("q", ""), int(q.get("limit", 50)), int(q.get("offset", 0)))
+            elif route == "/api/episode":
+                out = store.episode(conn, int(q.get("id", 0)))
+                if out is None:
+                    return _err(404, "No episode with that id.")
+            elif route == "/api/entities":
+                out = store.entities(conn, q.get("q", ""), int(q.get("limit", 50)), int(q.get("offset", 0)))
+            elif route == "/api/entity":
+                out = store.entity(conn, int(q.get("id", 0)))
+                if out is None:
+                    return _err(404, "No entity with that id.")
             elif route == "/api/graph" and q.get("around"):
                 out = graph.around(conn, key, int(q["around"]), int(q.get("hops", graph.DEFAULT_HOPS)))
                 if out is None:

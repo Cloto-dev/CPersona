@@ -629,9 +629,19 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   recently: on the next load they start there, a point added since starts beside
   the points it is tied to, and only the new points move while they settle. The
   positions are kept per database file name and picture, in that browser only.
-- Episodes, entities and recall traces are not shown yet, and nothing is edited
-  from the page. Store health appears only when an agent opened the page: started
-  from a terminal, the dashboard cannot judge it from the file alone.
+- **Episodes and entities** are listed and opened as memories are: in the drawer
+  in the standard layout, in a tab of their own in the tabbed one. Episodes come
+  the latest conversation first, searched in their summaries and keywords; an
+  episode shows when the conversation took place, whether its topic was
+  concluded, and the entities declared as mentioned in it. Entities come the most
+  mentioned first, searched in their names and aliases; an entity shows the
+  memories and episodes that mention it and the relations it takes part in, and
+  each of those opens from there. A record a relation names that cannot be read
+  (outside what the viewer may see, or gone) is named as not found rather than
+  shown.
+- Recall traces are not shown yet, and nothing is edited from the page. Store
+  health appears only when an agent opened the page: started from a terminal,
+  the dashboard cannot judge it from the file alone.
 
 ## Maintenance cadence
 
