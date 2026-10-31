@@ -1815,6 +1815,9 @@ function wire() {
   });
 }
 
+// Installable as an app; the worker passes every request through and keeps nothing.
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
 (async () => {
   if (LOCAL) for (const el of document.querySelectorAll('[data-t="signOutDesc"]')) el.dataset.t = "signOutDescLocal";
   wire();

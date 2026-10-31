@@ -41,6 +41,15 @@ _STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/app.css": ("app.css", "text/css; charset=utf-8"),
+    # What installing the page as an app needs: the manifest, a service worker that
+    # keeps nothing, and the icons. They carry no data, so they need no token.
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
+    "/icons/icon.svg": ("icons/icon.svg", "image/svg+xml"),
+    "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
+    "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
+    "/icons/icon-maskable-512.png": ("icons/icon-maskable-512.png", "image/png"),
+    "/icons/apple-touch-icon.png": ("icons/apple-touch-icon.png", "image/png"),
 }
 
 _HEADERS = {
@@ -50,7 +59,8 @@ _HEADERS = {
     "X-Frame-Options": "DENY",
     "Content-Security-Policy": (
         "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
-        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        "img-src 'self' data:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
     ),
 }
 

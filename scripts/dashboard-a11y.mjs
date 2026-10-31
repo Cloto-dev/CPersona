@@ -133,6 +133,16 @@ for (const scheme of ["light", "dark"]) {
   }
 }
 const axeVersion = await evaluate("axe.version");
+// The page installs as an app: Chrome finds the manifest, the icons and the worker.
+try {
+  await open("&view=overview&lang=ja");
+  await sleep(1500); // the worker registers after the page loads
+  const errors = (await send("Page.getInstallabilityErrors")).result?.installabilityErrors;
+  if (!Array.isArray(errors)) failures.push("install: Chrome did not report whether the page installs");
+  else if (errors.length) failures.push(`install: ${errors.map(e => e.errorId).join(", ")}`);
+} catch (e) {
+  failures.push(`install: ${e.message}`);
+}
 // The side panel's views sit in three headed groups, the tabbed layout's icons in the
 // same order, and the store's page, opened from a terminal with no server to ask,
 // says when the server's check is shown instead of showing nothing.

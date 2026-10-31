@@ -6,6 +6,13 @@
 <meta name="referrer" content="no-referrer">
 <title>CPersona Dashboard</title>
 <link rel="stylesheet" href="app.css">
+<!-- Installable as an app (an icon on the desktop, the taskbar or the Dock). The
+     addresses are relative so the remote dashboard, under /dashboard/, finds them. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121417" media="(prefers-color-scheme: dark)">
 </head>
 <body>
 <!-- Two layouts, chosen in the settings: "classic" (the default) is one side bar of

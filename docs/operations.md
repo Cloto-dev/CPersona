@@ -505,6 +505,7 @@ cpersona dashboard                                 # the database a CPersona ser
 cpersona dashboard --db ~/.claude/cpersona.db      # or: uvx cpersona dashboard --db …
 cpersona dashboard --list                          # the databases CPersona servers have opened
 cpersona dashboard --stop                          # stop the dashboard of that database
+cpersona dashboard --install-shortcut              # a desktop shortcut that opens it
 ```
 
 - **From a terminal or a shortcut**: `cpersona dashboard` opens the database
@@ -516,6 +517,16 @@ cpersona dashboard --stop                          # stop the dashboard of that 
   port held by another database or program is reported, and `--port` picks
   another. The browser signs in with a one-time code and keeps a session cookie
   for 30 days, so a bookmark opens the page again.
+- **A shortcut, and an app**: `cpersona dashboard --install-shortcut` makes a
+  shortcut that opens that database's dashboard with a double-click: on Windows
+  on the desktop and in the Start menu (pin it to the taskbar from there), on
+  macOS an app in `~/Applications` with a link on the desktop (drag it to the
+  Dock), on Linux an entry among the applications and on the desktop.
+  `--remove-shortcut` takes it away. The shortcut runs the Python CPersona is
+  installed in, so install CPersona with `uv tool install` or `pip` for it:
+  `uvx` runs from a cache that can be cleared. The page can also be installed
+  from the browser as an app (Chrome and Edge; Safari's Add to Dock); its service
+  worker passes every request through and keeps nothing in the browser.
 - **From your agent**: ask it to open the dashboard. Under the stdio transport the
   server registers `open_dashboard`, which opens the page for the database the
   server already uses and returns the address, so nobody has to look the path up.

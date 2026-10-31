@@ -11,12 +11,17 @@ it is stopped (``--stop``) so that a shortcut or a bookmark finds it again. Run 
 second time for the same store, it starts nothing: the running dashboard gives a
 sign-in code and the browser opens on it.
 
-Exit codes: 0 when the dashboard ran, was opened or was stopped; 1 when ``--stop``
-found none of this store; 2 when the database cannot be read or the port is taken.
+``--install-shortcut`` makes a desktop shortcut that runs this for one database
+(``shortcut``), so the dashboard opens with a double-click.
+
+Exit codes: 0 when the dashboard ran, was opened or was stopped, or a shortcut was
+made or removed; 1 when ``--stop`` found none of this store; 2 when the database
+cannot be read, the port is taken, or a shortcut could not be made.
 """
 
 import argparse
 import os
+import subprocess
 import sys
 import webbrowser
 
@@ -46,6 +51,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--list", action="store_true", help="list the databases CPersona servers have opened, and exit")
     p.add_argument("--stop", action="store_true", help="stop the dashboard of this database on the port, and exit")
+    p.add_argument(
+        "--install-shortcut",
+        action="store_true",
+        help="make a desktop shortcut that opens this database's dashboard, and exit",
+    )
+    p.add_argument("--remove-shortcut", action="store_true", help="remove that shortcut, and exit")
     return p
 
 
@@ -83,6 +94,19 @@ def main(argv: list[str] | None = None) -> int:
         print(e, file=sys.stderr)
         return 2
     stores.remember(db)  # named once with --db, it opens without it next time
+    if args.install_shortcut or args.remove_shortcut:
+        from cpersona.dashboard import shortcut
+
+        try:
+            paths = shortcut.install(db, args.port) if args.install_shortcut else shortcut.remove(db)
+        except (OSError, subprocess.CalledProcessError) as e:
+            print(f"Could not {'make' if args.install_shortcut else 'remove'} the shortcut: {e}", file=sys.stderr)
+            return 2
+        verb = "Made" if args.install_shortcut else "Removed"
+        print(f"{verb}:" if paths else "Nothing to remove.")
+        for path in paths:
+            print(f"  {path}")
+        return 0
     found = local.probe(args.port) if args.port else None
     mine = isinstance(found, dict) and found.get("store") == local.store_id(db)
     if args.stop:
