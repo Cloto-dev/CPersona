@@ -1,6 +1,6 @@
 {
   "name": "cpersona",
-  "version": "2.6.16a3",
+  "version": "2.6.16a4",
   "description": "Hooks and an agent skill that make an agent use CPersona's memory at the right moments: look before the first action and before each answer, store as it goes, and restore the task after the conversation is compacted. Connect the CPersona MCP server separately.",
   "author": {
     "name": "Cloto-dev",
