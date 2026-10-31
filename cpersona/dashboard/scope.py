@@ -17,10 +17,10 @@ import sqlite3
 from cpersona import acl
 
 # Tables whose rows belong to an agent directly.
-_OWNED = ("memories", "episodes", "entities", "record_blocks")
+_OWNED = ("memories", "episodes", "entities", "profiles", "record_blocks")
 # Every agent column a store can carry, so an agent with only entities or only
 # relations is still listed.
-_AGENT_SOURCES = ("memories", "episodes", "entities", "relations", "record_blocks")
+_AGENT_SOURCES = ("memories", "episodes", "entities", "profiles", "relations", "record_blocks")
 
 
 class Scope:

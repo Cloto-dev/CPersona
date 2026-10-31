@@ -23,6 +23,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+from cpersona.config import MAX_PROFILE_LENGTH
 from cpersona.database import SCHEMA_VERSION
 
 #: The oldest schema this reader has been run against. Every column it reads
@@ -188,6 +189,7 @@ def overview(conn: sqlite3.Connection, name: str) -> dict:
             "memories": _count(conn, "memories"),
             "episodes": _count(conn, "episodes"),
             "entities": _count(conn, "entities"),
+            "profiles": _count(conn, "profiles"),
         },
         "span": [span[0], span[1]],
         "months": [{"month": r["m"], "count": r["n"]} for r in months],
@@ -653,3 +655,31 @@ def entity(conn: sqlite3.Connection, entity_id: int) -> dict | None:
         )
     out["relations"] = relations
     return out
+
+
+# ---- Profiles: the summary an agent keeps of its user, sent with every recall
+def profiles(conn: sqlite3.Connection, agent: str = "") -> dict:
+    """Each agent's profile in full, the latest written first; one agent's when ``agent`` is given.
+
+    ``in_recall`` marks the rows a recall attaches (the agent's own profile, with
+    no user named); the length is set against the cap a write is cut to.
+    """
+    if not _has_table(conn, "profiles"):
+        return {"max_length": MAX_PROFILE_LENGTH, "rows": []}
+    sql = "SELECT agent_id, project_id, user_id, content, updated_at FROM profiles"
+    args: list = []
+    if agent:
+        sql += " WHERE agent_id = ?"
+        args.append(agent)
+    rows = conn.execute(sql + " ORDER BY updated_at DESC, agent_id, user_id", args)
+    return {
+        "max_length": MAX_PROFILE_LENGTH,
+        "rows": [
+            {
+                **dict(r),
+                "length": len(r["content"]),
+                "in_recall": r["user_id"] == "",
+            }
+            for r in rows
+        ],
+    }

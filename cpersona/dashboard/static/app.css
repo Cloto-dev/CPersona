@@ -111,8 +111,6 @@
   .cnav .nav[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .cnav .nav .n { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
   .cnav .nav[aria-current="page"] .n { color: var(--accent); }
-  .cnav-q { flex: none; margin: 4px 0; background: var(--base); }
-  .cnav-q input { min-width: 0; padding: 6px 0; font-size: 13px; }
   .drawer {
     position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 92vw); background: var(--raised); z-index: 20;
     border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(0,0,0,.12); overflow: auto; padding: 20px 24px 32px;
@@ -259,6 +257,14 @@
   .ref:hover { text-decoration: underline; }
   .ref .muted { color: var(--faint); }
   .rel .pred { color: var(--muted); margin: 0 8px; }
+  /* A profile: the agent and when it was written, then the text as the agent wrote it. */
+  .profile + .profile { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 12px; }
+  .profile-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; font-size: 13px; }
+  .profile-head .ref { font-weight: 600; }
+  .profile-when { margin-left: auto; color: var(--faint); font-size: 12px; }
+  .profile-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.7; margin-bottom: 6px; }
+  .profile-text.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .profile-more { font-size: 12px; margin-bottom: 6px; }
   #schemaLine { color: var(--faint); }
 
   /* Command palette */

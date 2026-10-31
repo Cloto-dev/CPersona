@@ -3,7 +3,7 @@
 
 const T = {
   en: {
-    overview: "Overview", memories: "Memories", episodes: "Episodes", entities: "Entities", browse: "Browse",
+    overview: "Overview", memories: "Memories", episodes: "Episodes", entities: "Entities", profiles: "Profiles", browse: "Browse",
     techAlways: "Always show details",
     calmDots: "Avoid clusters of dots", calmDotsHint: "Draws the network with lines, without bright clusters of dots.",
     sideSearch: "Search", settings: "Settings", back: "Back", forward: "Forward", newTab: "New tab", closeTab: "Close tab",
@@ -63,6 +63,13 @@ const T = {
     kinds: { mem: "Memory", ep: "Episode", entity: "Entity" },
     nMentions: n => `${n.toLocaleString()} mention${n === 1 ? "" : "s"}`, nRelations: n => `${n.toLocaleString()} relation${n === 1 ? "" : "s"}`,
     copyName: "Copy name",
+    profilesLead: "The summary each agent keeps of its user. A recall sends it with every answer, so what it says reaches every reply.",
+    profileUpdated: w => `updated ${w}`, profileLen: (n, max) => `${n.toLocaleString()} / ${max.toLocaleString()} characters`,
+    profileUser: u => `for user ${u}`, profileSent: "Sent with every recall", profileNotInRecall: "Not sent with recall: written for a named user",
+    emptyProfiles: "No profiles yet",
+    emptyProfilesP: "A profile is a short summary an agent writes of you and rewrites as it learns more. CPersona never writes it itself.",
+    askProfiles: "“Update your profile of me: I write Python and prefer short answers.”",
+    profileShowAll: "Show it all", profileShowLess: "Show less",
     tryAsk: "Try asking your agent:", askEpisodes: "“Summarise this session and archive it to memory.”",
     askEntities: "“Remember that Caroline and Melanie are friends.”",
     palettePh: "Search memories, or type a command", cmdGo: v => `Go to ${v}`, cmdLang: "Switch to 日本語", cmd: "Command",
@@ -96,7 +103,7 @@ const T = {
     openMemory: "Open", centerHere: "Center on this memory", showAround: "See it in the network",
   },
   ja: {
-    overview: "概要", memories: "記憶", episodes: "エピソード", entities: "実体", browse: "たどる",
+    overview: "概要", memories: "記憶", episodes: "エピソード", entities: "実体", profiles: "プロフィール", browse: "たどる",
     techAlways: "詳細情報を常に開く",
     calmDots: "集合体回避モード", calmDotsHint: "点の集まりを目立たせず、線で描きます。",
     sideSearch: "検索", settings: "設定", back: "戻る", forward: "進む", newTab: "新しいタブ", closeTab: "タブを閉じる",
@@ -156,6 +163,13 @@ const T = {
     kinds: { mem: "記憶", ep: "エピソード", entity: "実体" },
     nMentions: n => `言及 ${n.toLocaleString()} 件`, nRelations: n => `関係 ${n.toLocaleString()} 件`,
     copyName: "名前をコピー",
+    profilesLead: "エージェントが利用者についてまとめた要約です。想起のたびに答えに付くので、ここに書かれたことがすべての返答に届きます。",
+    profileUpdated: w => `更新 ${w}`, profileLen: (n, max) => `${n.toLocaleString()} / ${max.toLocaleString()} 字`,
+    profileUser: u => `利用者 ${u} 向け`, profileSent: "想起のたびに付きます", profileNotInRecall: "想起には付きません (利用者を指定して書いたもの)",
+    emptyProfiles: "プロフィールはまだありません",
+    emptyProfilesP: "プロフィールは、エージェントが利用者について書く短い要約です。分かったことが増えると書き直します。CPersona が自分で書くことはありません。",
+    askProfiles: "「私のプロフィールを更新して。Python を書いていて、短い答えが好み」",
+    profileShowAll: "すべて表示", profileShowLess: "短く表示",
     tryAsk: "エージェントにこう頼んでみてください:", askEpisodes: "「このセッションをまとめて記憶に残して」",
     askEntities: "「Caroline と Melanie は友達だと覚えておいて」",
     palettePh: "記憶を検索、またはコマンドを入力", cmdGo: v => `${v} へ移動`, cmdLang: "Switch to English", cmd: "コマンド",
@@ -300,8 +314,6 @@ function applyLang() {
     if (el.tagName === "BUTTON") el.setAttribute("aria-label", t(el.dataset.titleT));
   }
   $("sideQ").placeholder = t("sideSearchPh");
-  $("cnavQ").placeholder = t("searchPh");
-  $("cnavQ").setAttribute("aria-label", t("searchPh"));
   for (const b of document.querySelectorAll("[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === state.lang));
   drawLayoutChoice();
   $("paletteInput").placeholder = t("palettePh");
@@ -412,6 +424,7 @@ async function renderMemories(append = false) {
     page.innerHTML = `
       <h1>${t("memories")}</h1>
       <div class="crumbs">${crumbs}${state.month ? `<span class="sep">›</span><span>${esc(state.month)}</span>` : ""}</div>
+      <div id="agentProfile"></div>
       <div class="toolbar"><label class="search">
         <svg aria-hidden="true" class="icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>
         <input id="q" type="search" placeholder="${t("searchPh")}" value="${esc(state.q)}" aria-label="${t("searchPh")}"></label></div>
@@ -423,6 +436,7 @@ async function renderMemories(append = false) {
     });
     for (const b of page.querySelectorAll(".crumbs [data-depth]"))
       b.addEventListener("click", () => go({ view: "memories", path: state.path.slice(0, Number(b.dataset.depth)), month: "" }));
+    if (state.path.length) renderAgentProfile(state.path[0]).catch(() => {});
   }
   const list = $("list");
   if (!listRows.length) {
@@ -525,6 +539,53 @@ async function renderList(kind, append = false) {
   $("more").innerHTML = `<span class="hint">${t("shown")(otherRows.length, res.total)}</span>` +
     (res.total > otherRows.length ? ` <button class="btn" id="moreBtn">${t("loadMore")}</button>` : "");
   $("moreBtn")?.addEventListener("click", () => renderList(kind, true).catch(fail));
+}
+
+// ---- Profiles: one short text per agent, so one card each rather than a list and a page
+function profileCard(p, max, { name = true, clamp = false } = {}) {
+  return `<div class="profile">
+    <div class="profile-head">${name ? `<button class="ref" data-agent-go="${esc(p.agent_id)}">${esc(p.agent_id)}</button>` : ""}
+      ${p.user_id ? `<span class="muted">${esc(t("profileUser")(p.user_id))}</span>` : ""}
+      <span class="profile-when">${esc(t("profileUpdated")(when(p.updated_at)))}</span></div>
+    <div class="profile-text${clamp ? " clamp" : ""}">${esc(p.content)}</div>
+    ${clamp ? `<button class="ref profile-more" hidden>${t("profileShowAll")}</button>` : ""}
+    <div class="hint">${t("profileLen")(p.length, max)} · ${p.in_recall ? t("profileSent") : t("profileNotInRecall")}</div></div>`;
+}
+function wireProfiles(el) {
+  for (const b of el.querySelectorAll("[data-agent-go]"))
+    b.addEventListener("click", () => go({ view: "memories", path: [b.dataset.agentGo], q: "", month: "" }));
+  // "Show it all" only where the text is cut.
+  for (const card of el.querySelectorAll(".profile")) {
+    const text = card.querySelector(".profile-text.clamp"), more = card.querySelector(".profile-more");
+    if (!text || !more) continue;
+    more.hidden = text.scrollHeight <= text.clientHeight + 1;
+    more.addEventListener("click", () => {
+      const cut = text.classList.toggle("clamp");
+      more.textContent = t(cut ? "profileShowAll" : "profileShowLess");
+    });
+  }
+}
+function emptyProfiles() {
+  return `<div class="empty"><h2>${t("emptyProfiles")}</h2><p>${t("emptyProfilesP")}</p><p class="hint">${t("tryAsk")}</p><div class="say">${t("askProfiles")}</div></div>`;
+}
+// Every agent's profile, on a view of its own.
+async function renderProfiles() {
+  const page = $("page");
+  if (!overviewData.counts.profiles) { page.innerHTML = `<h1>${t("profiles")}</h1>${emptyProfiles()}`; return; }
+  const res = await api("/api/profiles");
+  if (state.view !== "profiles") return;
+  page.innerHTML = `<h1>${t("profiles")}</h1><p class="lead">${t("profilesLead")}</p>` +
+    res.rows.map(p => `<div class="block">${profileCard(p, res.max_length)}</div>`).join("");
+  wireProfiles(page);
+}
+// Above an agent's memories, the profile a recall sends with them.
+async function renderAgentProfile(agent) {
+  if (!overviewData.counts.profiles) return;
+  const res = await api("/api/profiles", { agent });
+  const el = $("agentProfile");
+  if (!el || state.path[0] !== agent || !res.rows.length) return;
+  el.innerHTML = `<div class="block"><h2>${t("profiles")}</h2>${res.rows.map(p => profileCard(p, res.max_length, { name: false, clamp: true })).join("")}</div>`;
+  wireProfiles(el);
 }
 
 // A link to a memory, an episode or an entity, as relations and mentions name them.
@@ -1360,7 +1421,7 @@ async function openPalette(text = "") {
 async function fillPalette(text) {
   const q = text.trim();
   const cmds = [
-    ...["overview", "memories", "graph", "episodes", "entities"].map(v => ({ label: t("cmdGo")(t(v)), side: t("cmd"), run: () => go({ view: v, path: [], q: "", month: "" }) })),
+    ...["overview", "memories", "graph", "episodes", "entities", "profiles"].map(v => ({ label: t("cmdGo")(t(v)), side: t("cmd"), run: () => go({ view: v, path: [], q: "", month: "" }) })),
     { label: t("cmdLang"), side: t("cmd"), run: () => setLang(state.lang === "en" ? "ja" : "en") },
   ].filter(c => !q || c.label.toLowerCase().includes(q.toLowerCase()));
   let found = [];
@@ -1486,8 +1547,6 @@ async function route() {
   keepPlace();
   renderTabs();
   saveTabs();
-  // The side bar's search shows the words the list is searching, unless being typed in.
-  if (document.activeElement !== $("cnavQ")) $("cnavQ").value = state.view === "memories" ? state.q : "";
   renderTree().catch(() => {});
   stopGraph();
   $("main").classList.toggle("is-doc", state.view in RENDER);
@@ -1495,6 +1554,7 @@ async function route() {
   else if (state.view === "memories") await renderMemories();
   else if (state.view === "graph") await renderGraph();
   else if (state.view in LISTS) await renderList(state.view);
+  else if (state.view === "profiles") await renderProfiles();
   else if (state.view in RENDER) await RENDER[state.view](state.id);
 }
 
@@ -1569,18 +1629,6 @@ function wire() {
   $("backBtnTab").addEventListener("click", () => step(-1));
   $("fwdBtnTab").addEventListener("click", () => step(1));
   $("paletteBtn").addEventListener("click", () => openPalette());
-  // The side bar's search opens the memory list on the words typed, as the list's own
-  // search does; within a folder already open in the list, it searches that folder.
-  let cnavTimer;
-  $("cnavQ").addEventListener("input", e => {
-    clearTimeout(cnavTimer);
-    cnavTimer = setTimeout(() => {
-      const q = e.target.value.trim();
-      if (state.view !== "memories" && !q) return;
-      const inList = state.view === "memories";
-      go({ view: "memories", q, path: inList ? state.path : [], month: inList ? state.month : "" }).catch(fail);
-    }, 220);
-  });
   $("setBtn").addEventListener("click", openSettings);
   $("setClose").addEventListener("click", closeSettings);
   $("settingsBg").addEventListener("click", e => { if (e.target.id === "settingsBg") closeSettings(); });
@@ -1660,7 +1708,7 @@ function wire() {
     return fail(H0.get("signedout") ? new Error(t("signedOut")) : e);
   }
   $("dbname").textContent = overviewData.db;
-  for (const k of ["memories", "episodes", "entities"]) $("n-" + k).textContent = overviewData.counts[k].toLocaleString();
+  for (const k of ["memories", "episodes", "entities", "profiles"]) $("n-" + k).textContent = overviewData.counts[k].toLocaleString();
   for (const el of document.querySelectorAll("[data-n]")) el.textContent = overviewData.counts[el.dataset.n].toLocaleString();
   applyLang();
   // Tabs come back from this browser session for the same database; the place the

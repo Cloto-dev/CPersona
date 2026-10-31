@@ -109,6 +109,8 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
                 out = store.entity(conn, int(q.get("id", 0)))
                 if out is None:
                     return _err(404, "No entity with that id.")
+            elif route == "/api/profiles":
+                out = store.profiles(conn, q.get("agent", ""))
             elif route == "/api/graph" and q.get("around"):
                 out = graph.around(conn, key, int(q["around"]), int(q.get("hops", graph.DEFAULT_HOPS)))
                 if out is None:

@@ -565,10 +565,9 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   data. `--no-browser` prints the address without opening it.
 - **How it is laid out**: two layouts, chosen in the settings (the gear at the
   foot of the side panel) and kept in the browser. *Standard*, the default, is
-  one side panel of the views (overview, memories, network, episodes, entities)
-  with a search box, over the logical directory; a memory opens in a drawer
-  beside the list, so the list does not move. The search box opens the memory
-  list on the words typed, within the folder the list shows. *Tabbed* puts a
+  one side panel of the views (overview, memories, network, episodes, entities,
+  profiles) over the logical directory; a memory opens in a drawer beside the
+  list, so the list does not move. *Tabbed* puts a
   column of icons on the left, a side panel that browses the logical directory or
   searches, and tabs: each memory opens in a tab of its own, and each tab has its
   own back and forward (Alt+← / Alt+→). Switching keeps the memory that is open.
@@ -639,6 +638,11 @@ python -m cpersona.dashboard --db ~/.claude/cpersona.db
   each of those opens from there. A record a relation names that cannot be read
   (outside what the viewer may see, or gone) is named as not found rather than
   shown.
+- **Profiles**: each agent's profile, the summary it keeps of its user, in full
+  with when it was written and its length against the cap a write is cut to. A
+  recall sends an agent's own profile with every answer; one written for a named
+  user is marked as not sent. Choosing an agent in the memory list shows that
+  agent's profile above its memories.
 - Recall traces are not shown yet, and nothing is edited from the page. Store
   health appears only when an agent opened the page: started from a terminal,
   the dashboard cannot judge it from the file alone.

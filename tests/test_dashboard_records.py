@@ -1,4 +1,4 @@
-"""The dashboard's episode and entity views (2.6.16): lists, detail pages and each viewer's reach.
+"""The dashboard's episode, entity and profile views (2.6.16): lists, detail pages and each viewer's reach.
 
 Each view is pinned on rows that a wrong query would order, match or describe
 differently: episodes stored out of order, an entity whose alias (not its name)
@@ -12,12 +12,12 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from cpersona import acl, database
+from cpersona import acl, config, database
 from cpersona.dashboard import store, web
 from cpersona.dashboard.scope import Scope
 from cpersona.database import get_db
 
-TABLES = ("memories", "episodes", "entities", "entity_aliases", "entity_mentions", "relations", "record_nodes", "record_blocks")
+TABLES = ("memories", "episodes", "entities", "entity_aliases", "entity_mentions", "relations", "profiles", "record_nodes", "record_blocks")
 
 
 @pytest_asyncio.fixture
@@ -240,3 +240,48 @@ async def test_a_viewer_sees_only_their_agents_episodes_and_entities(db):
     text = json.dumps(_answer("/api/entity", both, id=thing)[1])
     assert "bravo" in text and "Hidden" in text
     assert _answer("/api/episodes", both)[1]["total"] == 2
+
+
+# ---- Profiles
+
+
+async def _profile(conn, agent, content, updated, user=""):
+    await conn.execute(
+        "INSERT INTO profiles (agent_id, user_id, content, updated_at) VALUES (?, ?, ?, ?)", (agent, user, content, updated)
+    )
+    await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_profiles_come_whole_the_latest_written_first_and_say_which_a_recall_sends(db):
+    long = "Prefers short answers. " * 50
+    await _profile(db, "a", long, "2026-10-30 10:00:00")
+    await _profile(db, "b", "Works in the cpersona repository.", "2026-10-31 09:00:00")
+    await _profile(db, "a", "A guest who asked once.", "2026-10-29 08:00:00", user="guest")
+    out = store.profiles(_read())
+    assert out["max_length"] == config.MAX_PROFILE_LENGTH
+    assert [(r["agent_id"], r["user_id"]) for r in out["rows"]] == [("b", ""), ("a", ""), ("a", "guest")]
+    first_a = out["rows"][1]
+    # Whole, not a preview: the page shows exactly what a recall sends.
+    assert first_a["content"] == long and first_a["length"] == len(long)
+    # A recall attaches the agent's own profile, not one written for a named user.
+    assert [r["in_recall"] for r in out["rows"]] == [True, True, False]
+    assert [r["user_id"] for r in store.profiles(_read(), "a")["rows"]] == ["", "guest"]
+    assert store.profiles(_read(), "nobody")["rows"] == []
+    assert _answer("/api/overview")[1]["counts"]["profiles"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_sees_only_their_agents_profiles(db):
+    await _memory(db, "a", "alpha note")
+    await _memory(db, "b", "bravo note")
+    await _profile(db, "a", "alpha profile", "2026-10-30 10:00:00")
+    await _profile(db, "b", "bravo secret profile", "2026-10-30 11:00:00")
+    only_a = Scope({"a": acl.PERM_READ})
+    code, out = _answer("/api/profiles", only_a)
+    assert code == 200 and [r["agent_id"] for r in out["rows"]] == ["a"]
+    assert _answer("/api/profiles", only_a, agent="b")[1]["rows"] == []
+    assert _answer("/api/overview", only_a)[1]["counts"]["profiles"] == 1
+    # With both readable, b's profile is there: the checks above can fail.
+    both = Scope({"*": acl.PERM_READ})
+    assert "bravo secret" in json.dumps(_answer("/api/profiles", both)[1])
