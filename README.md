@@ -4,161 +4,89 @@
 
 # CPersona
 
-### MCP Memory Server
+**Long-term memory for AI agents, in one SQLite file you own.**
 
-Persistent memory for AI agents, over MCP.
-One SQLite file you own. No LLM in the loop. Honest when recall degrades.
-Ask your agent to save a project's design decisions and their reasons, then recall them in a later coding session ([setup and verification](https://cloto-dev.github.io/CPersona/getting-started/#4-verify-it-works)).
-Use `reconstruct` to read recalled items with quotes from the stored records ([traceable recall](https://cloto-dev.github.io/CPersona/tools/#everyday-memory)).
-In this project's own run on OmniMemEval's pipeline: 89.6% on LongMemEval-S, tied for first with MemOS within sampling error (88.75% on the 400 questions not used in development), and 84.0% on LoCoMo ([benchmarks](https://github.com/Cloto-dev/cpersona#benchmarks)).
+CPersona is an [MCP](https://modelcontextprotocol.io/) server that lets Claude Code, Codex, Claude Desktop, Cursor, VS Code
+or any other MCP client remember what you decided, why, and what happened last time — across sessions.
 
-[![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE) [![Sponsor](https://img.shields.io/badge/sponsor-Cloto--dev-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Cloto-dev)
+[![PyPI](https://img.shields.io/pypi/v/cpersona)](https://pypi.org/project/cpersona/) [![CI](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Cloto-dev/cpersona/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://github.com/Cloto-dev/cpersona/blob/master/pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE)
 
-[Documentation](https://cloto-dev.github.io/CPersona/) · [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) · [Architecture](https://cloto-dev.github.io/CPersona/architecture/) · [Tools](https://cloto-dev.github.io/CPersona/tools/) · [PyPI](https://pypi.org/project/cpersona/) · [Zenn Book (JP)](https://zenn.dev/cloto/books/claude-memory-mcp-server)
+[Documentation](https://cloto-dev.github.io/CPersona/) · [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) · [Tools](https://cloto-dev.github.io/CPersona/tools/) · [Discussions](https://github.com/Cloto-dev/cpersona/discussions)
+
+<img src="https://raw.githubusercontent.com/Cloto-dev/cpersona/51261bf/docs/assets/dashboard/network.png" alt="The CPersona dashboard's memory network: each point is a memory, lines join the most similar ones, grouped by agent" width="860">
+
+<sub>The built-in dashboard, showing a made-up store of 72 memories.</sub>
 
 </div>
 
----
+## Why CPersona
 
-> **Standalone repository** — This is the standalone version for use with Claude Desktop, Claude Code, Codex CLI, Cursor, VS Code, and any other MCP client ([registration table](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client)).
-> If you are a [ClotoCore](https://github.com/Cloto-dev/ClotoCore) user, install CPersona from the in-app marketplace ([ClotoHub](https://hub.cloto.dev)) instead — it distributes this same repository.
+Every new session with a coding agent starts from zero. CPersona gives the agent a memory it
+can write to as it works and read from before it acts.
 
-> **Project status** — **2.4.x is Stable**; **2.6.x is Current**, where all
-> fixes land, pending production-soak certification. Its first final, 2.6.0,
-> migrates the schema from version 13 to 17 on its first start and changes some
-> tool behaviour, so take a 2.5 store across with
-> [Upgrading from 2.5 to 2.6](https://cloto-dev.github.io/CPersona/upgrading-to-2.6/).
-> **2.5.x is Candidate**: no longer the newest line and not yet certified,
-> reachable by exact version. Which version to run, and how long each line
-> keeps receiving fixes:
-> [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
-> Where the lines are heading: the [roadmap](https://cloto-dev.github.io/CPersona/roadmap/).
+- **Yours, on your machine.** Everything lives in a single SQLite file. No account, no cloud,
+  no external database; `sqlite3 .backup` copies it.
+- **No language model inside.** CPersona never calls a generative model to store or recall.
+  Your agent writes the summary; CPersona keeps it and finds it again.
+- **Answers you can trace.** `reconstruct`, the recommended way to answer from memory, quotes the
+  stored records behind each item, so you can see where an answer came from.
+- **Search that catches what vectors miss.** Vector search runs beside full-text and keyword
+  search, so exact names, identifiers and error strings are found too, in Japanese and other
+  scripts without spaces as well.
+- **See what it remembers.** `cpersona dashboard` opens a read-only page of the store: what was
+  stored last, what is recalled most, every memory in full, and the network above.
+- **Honest when it degrades.** Without an embedding server it still runs on keyword search, and
+  says so on every recall instead of quietly returning less.
 
-> **Upgrading from 2.5.2 or earlier?** Two things need a decision from you.
-> **v2.5.3 will not start the HTTP transport without `CPERSONA_AUTH_TOKEN`**,
-> wherever it binds — set one, or opt out with
-> `CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true` ([why](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues); stdio is unaffected).
-> **v2.5.2 changed tool response shapes** — branch on `ok is false`, and treat any
-> response carrying `error` as a failure whether or not `ok` is present
-> ([contract §10](https://cloto-dev.github.io/CPersona/behavior-contracts/#10-response-shapes-how-to-tell-success-from-failure)).
+## Quick start
 
-## The Problem
+**With Claude Code or Codex**, install the agent plugin and let the agent do the rest:
 
-Claude forgets everything between sessions. Every conversation starts from zero — no context about your project, your preferences, or what you discussed yesterday.
-
-cpersona fixes this. It's an [MCP](https://modelcontextprotocol.io/) server that stores memories in a local SQLite file and retrieves them through hybrid search. Claude remembers you. It runs against any MCP-compatible host — [Claude Desktop](https://claude.ai/download), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [ClotoCore](https://github.com/Cloto-dev/ClotoCore) (the AI agent platform where cpersona originated, and whose memory layer it is), or a client of your own.
-
-## Quick Start
-
-> **Already running CPersona, or updating it as an agent?** Since 2.6.12a1 the
-> hooks and the agent skill ship as a plugin (below), and any 2.6 server works
-> with it. If CPersona's hooks were registered by hand (for example a copy of the
-> old `examples/claude-code-hooks/prompt_hook.py`) or the skill was copied into
-> `~/.claude/skills/` or `~/.codex/skills/`, install the plugin and remove those
-> copies, or keep them and turn the plugin's matching hooks off with
-> `CPERSONA_HOOKS_DISABLE`. Running both gives the agent every note twice. Before
-> any upgrade, read the *When you upgrade* section of that release's
-> [notes](https://github.com/Cloto-dev/cpersona/releases).
->
-> **Setting this up as an AI agent?** Read the
-> [Agent Skill](https://github.com/Cloto-dev/cpersona/blob/master/plugin/skills/cpersona-memory/SKILL.md)
-> — `plugin/skills/cpersona-memory/SKILL.md` in a clone of this repository — and follow
-> it end to end. It is the complete procedure: install, embedding server,
-> registration, **and the two steps a quick start tends to skip** — verifying
-> from a *new* session, and persisting the memory policy so the next session
-> knows which `agent_id` holds the memories.
->
-> **Using Claude Code or Codex yourself?** Install the agent plugin, which carries
-> the same skill and hooks that remind the agent to look in memory before it acts,
-> to store as it goes, and to restore the task after the conversation is
-> compacted. Then say *"Set up CPersona."* The server itself is connected in step 3.
->
-> ```text
-> /plugin install cpersona --marketplace Cloto-dev/cpersona
-> ```
->
-> That is Claude Code 2.1.275 or later. For Codex, run
-> `codex plugin marketplace add Cloto-dev/cpersona` and
-> `codex plugin add cpersona@cpersona`, then trust the hooks in `/hooks`. The
-> [getting started guide](https://cloto-dev.github.io/CPersona/getting-started/#let-the-agent-do-it-claude-code)
-> lists what each hook adds, and how to copy the skill alone from the wheel.
-
-**1. Install** — Python 3.11+, and [uv](https://docs.astral.sh/uv/) for the one-command path.
-
-```bash
-uvx cpersona          # run directly, no install step
-pip install cpersona  # or install it
+```text
+/plugin install cpersona --marketplace Cloto-dev/cpersona
 ```
 
-**2. Run an embedding server** — strongly recommended; it powers the vector layer
+Then say *"Set up CPersona."* The plugin carries the setup skill and the hooks that remind the
+agent to recall before it acts and to store as it goes. (Claude Code 2.1.275 or later. In Codex:
+`codex plugin marketplace add Cloto-dev/cpersona`, then `codex plugin add cpersona@cpersona`.)
+
+**By hand**, in three steps:
 
 ```bash
+# 1. Run an embedding server (recommended; it powers vector search)
 uvx --from "cembedding[onnx]" cembedding-download-model --model bge-m3
-EMBEDDING_PROVIDER=onnx_bge_m3 uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
-```
+EMBEDDING_PROVIDER=onnx_bge_m3 uvx --from "cembedding[onnx]" cembedding
 
-The reference server's lifetime is bound to its stdin. Started with stdin closed — by a service manager, by `nohup … </dev/null`, or from an agent's background shell — it binds the port and exits within the same second with status 0. Give it a stdin that stays open (`sleep infinity | cembedding`); [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/#the-reference-server) has the details.
-
-Any endpoint implementing the [embedding contract](https://cloto-dev.github.io/CPersona/getting-started/#the-contract) works and is equally recommended; CEmbedding is the reference implementation. The choice of backend is yours — the recommendation is to connect one, not to connect that one.
-
-**Without a backend, cpersona still runs** — FTS5 + keyword search, and it says on every recall that it is degraded rather than quietly returning less. That is a supported fallback, not a recommended way to run: recall then matches on shared words, so a memory phrased differently from your question can be missed, and so can an older one.
-
-**3. Register it with your MCP client**
-
-For Codex, Cursor, VS Code, or Claude Desktop, follow the
-[client registration table](https://cloto-dev.github.io/CPersona/getting-started/#3-register-cpersona-with-your-mcp-client).
-The command below is for Claude Code.
-
-```bash
+# 2. Register CPersona with your client (Claude Code shown)
 claude mcp add-json cpersona '{"type":"stdio","command":"uvx","args":["cpersona"],"env":{"CPERSONA_DB_PATH":"/home/you/.claude/cpersona.db","EMBEDDING_MODE":"http","EMBEDDING_HTTP_URL":"http://127.0.0.1:8401/embed"}}' -s user
+
+# 3. In a new session, ask the agent to store something, then recall it in another new session
+
+# 4. See what it remembers, in the browser
+cpersona dashboard
 ```
 
-**4. Verify from a new session** — ask the agent to `store` something, then `recall` it in a *fresh* session. Surviving the session boundary is the whole point.
+[Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) covers the other clients,
+Windows, containers, and the short policy block that makes every future session use the memory.
 
-**5. Make it stick** — registration gives the agent the tools. It does not tell the next session to use them, or which `agent_id` holds the memories: recall is scoped to an exact `agent_id`, so a session that guesses the wrong one gets nothing back. Persist the short policy block into the file your client loads every session (`~/.claude/CLAUDE.md`, `AGENTS.md`, …) — [Getting Started §5](https://cloto-dev.github.io/CPersona/getting-started/#5-make-the-memory-triggers-fire-in-every-session).
+Upgrading an existing install? Read the *When you upgrade* section of the
+[release notes](https://github.com/Cloto-dev/cpersona/releases) and
+[SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md) first.
 
-At startup the server asks pypi.org whether a newer release exists and tells the
-calling agent through `recall`; set `CPERSONA_UPDATE_CHECK=false` to turn that
-off. Updating is never automatic.
+## A look inside
 
-Claude Desktop config, Windows paths, installing from source and the full
-walkthrough: [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/).
+| Overview | A memory, opened |
+| --- | --- |
+| ![The dashboard overview: the memories stored last and recalled most](https://raw.githubusercontent.com/Cloto-dev/cpersona/51261bf/docs/assets/dashboard/overview-light.png) | ![A memory opened in the dashboard, its text first](https://raw.githubusercontent.com/Cloto-dev/cpersona/51261bf/docs/assets/dashboard/memory-dark.png) |
 
-## What You Get
-
-- **Hybrid search** — vector (the layer an embedding server powers), FTS5
-  (trigram, so it works on Japanese and other space-less scripts) and keyword,
-  fused by rank or relative score. The FTS and keyword layers rescue what vectors
-  miss: identifiers, error strings, exact names.
-- **Evidence you can trace** — `reconstruct`, the recommended way to answer from
-  memory, returns items that quote the stored rows behind them, within a
-  character budget. Text past a long record's embedding window stays reachable
-  (block reach, on by default).
-- **Three memory types** — facts, session summaries and an accumulated profile.
-- **Zero LLM dependency** — cpersona never calls a generative model; your agent
-  summarizes and hands over the result. Recall is deterministic given a calibrated
-  gate, but the gate is sampled, so two installs on identical data can settle
-  differently.
-- **Single-file SQLite** — no external database; `sqlite3 .backup` copies the
-  corpus (the calibration sidecar beside it needs copying too, and so does the
-  alias ledger when an ACL row sets `per_subject`).
-- **Operable** — auto-calibrated thresholds, a health check with auto-repair, an
-  advisory when the embedding layer dies, JSONL export/import, agent-to-agent merge.
-- **Isolation** — `agent_id`, `project_id` and `channel` let several agents and
-  projects share one database without bleeding into each other.
-
-How it fits together: [Architecture](https://cloto-dev.github.io/CPersona/architecture/) ·
-what the tools do: [Tools](https://cloto-dev.github.io/CPersona/tools/) ·
-what you may rely on: [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/).
+Memories are kept per agent, and `project_id` and `channel` let several agents and projects share
+one database without mixing.
 
 ## Benchmarks
 
-Measured on [OmniMemEval](https://github.com/MemTensor/OmniMemEval)'s LongMemEval-S
-pipeline: the 500 questions of the cleaned LongMemEval-S, answered by `gpt-4.1-mini`
-and judged by `gpt-4o-mini`, through the same harness, prompts and models as the
-memory backends OmniMemEval reproduces. Accuracy is the share of questions judged
-correct; Context Tokens is the average number of tokens sent to the answer model per
-question, its prompt included.
+On [OmniMemEval](https://github.com/MemTensor/OmniMemEval)'s LongMemEval-S pipeline (500 questions,
+answered by `gpt-4.1-mini`, judged by `gpt-4o-mini`), in this project's own run. Overall is the
+share of questions judged correct; Context Tokens is the average sent to the answer model per question:
 
 | Backend | Deployment | SS-User | SS-Asst | SS-Pref | Temp. Reas | Multi-S | Know. Upd | Overall | Context Tokens |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -166,43 +94,16 @@ question, its prompt included.
 | CPersona 2.6.11 (lite mode) | local | 95.71 | 83.93 | 90.00 | 80.45 | 74.44 | 82.05 | 82.20 | 993.3 |
 | MemOS | cloud | 100.00 | 100.00 | 100.00 | 89.47 | 78.95 | 84.62 | 89.20 | 4,151 |
 
-**Tied for first: 89.60% at 4,262.5 tokens a question**, in this project's own run.
-Of the 12 backends OmniMemEval reproduces through the same pipeline, MemOS is level with
-it (89.20% at 4,151 tokens) and every other one scores at least 9 points lower. CPersona's
-modes were tuned on 100 of these 500 questions, and the other 400 served its release
-checks; on those 400, pro answers 88.75%, still level with MemOS. ("Level" means within
-the 95% sampling error of two independent runs.) Lite mode, the smaller response, answers
-82.20% at 993.3 tokens: below MemOS, level with EverOS, Zep / Graphiti, mem9 and Letta,
-with a quarter or less of the tokens any of them sends. On LoCoMo (1,540 questions, same
-models) pro answers 84.03% at 4,441 tokens: below MemOS (88.83%), level with Cognee,
-EverOS and Hindsight, with fewer tokens than any of them. CPersona stores each
-conversation as it is and calls no generative model to store or recall.
-
-Against [OpenViking](https://github.com/volcengine/OpenViking) 0.5.0, run by this
-project without its recommended rerank: 84.03% against 59.09% on LoCoMo, and on the
-[Open Agent Memory Benchmark](https://github.com/rocke2020/open-agent-memory-benchmark)'s
-60-question LongMemEval screen, 52 against 51 correct with a quarter of the evidence
-tokens and no generative-model tokens at write time (OpenViking's model used 37 million,
-input and output). Not every cost
-favours CPersona: on LoCoMo its context was 0.58 of OpenViking's, and at 2.6.11 its
-pro mode searched slower (72.7 against 50.0 ms median). 2.6.12 returns the same
-contexts faster: a later run of both put pro at 48.2 against 50.6 ms.
-
-One run each, by this project, at the 2.6.11 release. OmniMemEval lists the rows of
-both benchmarks among its
-[published reference results](https://github.com/MemTensor/OmniMemEval/blob/main/docs/user_memory/results.md),
-after its maintainers recomputed them from the saved records against the datasets;
-that check is not an independent rerun. Setups, registered rules and
-every departure from a clean run: [results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-2_6_11.md);
-earlier runs: [2.6.3a1 and 2.6.4a1](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme.md); retrieval-only
-measurements on LMEB: [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
+Pro mode is level with MemOS within sampling error, and on LoCoMo it answers 84.03%. Setups, the
+registered rules and every departure from a clean run are in the
+[results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-2_6_11.md).
 
 ## Documentation
 
-[**cloto-dev.github.io/CPersona**](https://cloto-dev.github.io/CPersona/) is canonical — when this README disagrees with it, the site wins.
+[cloto-dev.github.io/CPersona](https://cloto-dev.github.io/CPersona/) is the full reference, also in Japanese:
 
-| | |
-|---|---|
+| Guide | What it covers |
+| --- | --- |
 | [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/) | Install, embedding server, client registration, verification |
 | [Behavior Contracts](https://cloto-dev.github.io/CPersona/behavior-contracts/) | What you may rely on: recall ordering, dedup, scan window, response shapes |
 | [Tools](https://cloto-dev.github.io/CPersona/tools/) | Every tool, grouped by what you reach for it for |
@@ -213,52 +114,28 @@ measurements on LMEB: [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob
 | [Quality Assurance](https://cloto-dev.github.io/CPersona/quality-assurance/) | How a release is gated: audits, the bug ledger, structural and mutation gates |
 | [FAQ](https://cloto-dev.github.io/CPersona/faq/) | Short answers to the questions operators actually ask |
 
-Japanese translations are in the language selector (English is canonical) and
-agents can read [`llms.txt`](https://cloto-dev.github.io/CPersona/llms.txt).
-Longer reads in Japanese: a [book](https://zenn.dev/cloto/books/claude-memory-mcp-server)
-on the design and setup, and an [article](https://zenn.dev/cloto/articles/claude-code-compact-external-memory)
-on the token economics of session-end → `/clear` → `recall`.
+## Contributing
 
-## Quality Assurance
+Bug fixes, tests and documentation can be sent as a pull request straight away. For changes to the
+database schema, the tool contracts or the tool list, open an issue first.
+[CONTRIBUTING.md](https://github.com/Cloto-dev/cpersona/blob/master/CONTRIBUTING.md) has the setup —
+no embedding server is needed to run the
+**~4,150 test functions** — and the three checks CI runs.
 
-Every release is gated by a machine-verifiable process: multi-agent audit rounds with adversarial verification, a [bug ledger](https://github.com/Cloto-dev/cpersona/blob/master/qa/issue-registry.json) that fails CI if a fix marker disappears or a removed defect returns, structural gates for invariants a plain test cannot express, a mutation proof that those gates go red when the invariant is broken, and gates holding the documented counts, defaults and version claims to the source that defines them.
-
-Behind it: **~4,144 test functions** across ~317 test modules (~5,872 cases parametrised, more test code than server code), on **Schema v21** — [how a release is gated](https://cloto-dev.github.io/CPersona/quality-assurance/).
+Questions and ideas are welcome in [Discussions](https://github.com/Cloto-dev/cpersona/discussions).
+A sentence in the docs that confused you is worth reporting too: it is a defect of its own.
 
 ## Support
 
-Three tiers — **Stable** (production-certified, critical fixes only), **Current**
-(newest line, all fixes land here) and **Experimental** (opt-in pre-releases). A
-superseded line keeps critical-fix support for 30 more days. **Read
-[SUPPORT.md § Known issues](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md#known-issues)
-before pinning a version** — some of them change what you should run.
+- **Bugs and requests**: [open an issue](https://github.com/Cloto-dev/cpersona/issues/new/choose).
+- **Security**: report privately, as [SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md) describes.
+- **Which version to run**: [SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md).
+- **In Japanese**: the docs have a language selector, and a [book on Zenn](https://zenn.dev/cloto/books/claude-memory-mcp-server) covers the design and setup.
 
-Found a bug, or something the docs do not explain? Open a
-[bug report](https://github.com/Cloto-dev/cpersona/issues/new?template=bug_report.yml)
-or [feature request](https://github.com/Cloto-dev/cpersona/issues/new?template=feature_request.yml),
-even when you are not certain — a configuration problem mistaken for a bug means
-the documentation was unclear, which is a defect of its own. Report security
-vulnerabilities privately via
-[SECURITY.md](https://github.com/Cloto-dev/cpersona/blob/master/SECURITY.md).
-
-## Sponsorship
-
-CPersona is MIT-licensed and stays fully usable whether or not anyone sponsors
-it. Sponsorship buys no feature, no release tier and no position in the issue
-queue — issues are triaged by impact, reproducibility and safety, and that does
-not change for anyone.
-
-If CPersona has earned a place in your workflow and you would like the work to
-continue, you can [sponsor Cloto-dev on GitHub](https://github.com/sponsors/Cloto-dev).
-The same page covers CPersona, ClotoCore and the other projects published
-under that account; sponsorship goes toward development time, testing
-and infrastructure, documentation and maintenance.
-
-Money is not the only thing that helps, and it is not the thing this project
-needs most. Starring the repository, saying which part of the setup was
-confusing, filing a reproducible issue, or correcting a sentence in the
-documentation all move it forward.
+If CPersona has earned a place in your workflow, you can
+[sponsor the work on GitHub](https://github.com/sponsors/Cloto-dev). It buys no feature and no place
+in the issue queue; starring the repository, filing a clear issue or fixing a sentence in the docs helps too.
 
 ## License
 
-MIT — free to use from any MCP host without restriction.
+MIT — see [LICENSE](https://github.com/Cloto-dev/cpersona/blob/master/LICENSE).
