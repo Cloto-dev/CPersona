@@ -10,16 +10,12 @@
     --scrim: rgba(0,0,0,.24);
     /* How a memory is split: nodes blue, blocks a soft blue-green (not the green of "ok"). */
     --node: #5b8def; --node-soft: #dfe9fc; --block: #8fc4b3; --block-soft: #e2f2ec;
+    /* The memory network follows the theme: graphite marks on the page's own ground
+       here, a night ground in the dark theme. The canvas reads these (startGraph). */
+    --net-ground: #f5f6f8; --net-dot: #7d8590; --net-dot-bold: #5f6670; --net-on: #1a1d21;
+    --net-ink: #46505f; --net-accent: #b8326e; --net-label: #59616b; --net-label-strong: #1a1d21;
+    --net-hub: #838b96; --net-hub-ink: #2f3540; --net-similar: #6b737d; --net-grad-a: #3f6fd8; --net-grad-b: #d9733f;
     color-scheme: light;
-  }
-  /* The network is drawn on a dark ground in both themes (NIGHT in app.js), so the
-     heading, legend, hints and panels over it take the dark tokens too. */
-  .graph.whole {
-    --base: #121417; --recessed: #0d0f11; --raised: #1a1d21; --line: #2b3036; --line-soft: #23272c;
-    --text: #e5e8ec; --muted: #a2aab3; --faint: #8a929b;
-    --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f; --label: #767d85;
-    --bar: #6b747f; --mark: #5c4b0f;
-    color-scheme: dark; color: var(--text);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -29,6 +25,9 @@
       --accent: #6b9ef2; --accent-soft: #1c2a42; --on-accent: #0d0f11; --warn: #e3a857; --warn-soft: #33270f; --label: #767d85;
       --bar: #6b747f; --mark: #5c4b0f;
       --node: #6b9ef2; --node-soft: #1f2d47; --block: #5f9c88; --block-soft: #1c3029;
+      --net-ground: #0f131c; --net-dot: #c7d6f2; --net-dot-bold: #e6eeff; --net-on: #ffffff;
+      --net-ink: #aac8ff; --net-accent: #ffd9ef; --net-label: #c9dcff; --net-label-strong: #eef3ff;
+      --net-hub: #c7d6f2; --net-hub-ink: #4f6aa6; --net-similar: #9fb6e6; --net-grad-a: #6f9af2; --net-grad-b: #f0915e;
       color-scheme: dark;
     }
   }
@@ -341,10 +340,10 @@
   .layer .n { color: var(--faint); font-variant-numeric: tabular-nums; }
   .layer svg { display: block; }
   .l-declared { stroke: var(--accent); stroke-width: 2.4; }
-  .l-similar { stroke: url(#lg-similar); stroke-opacity: .7; stroke-width: 1.2; }
+  .l-similar { stroke: url(#lg-similar); stroke-width: 1.2; }
   .l-structure { stroke: currentColor; stroke-opacity: .35; stroke-width: 1; }
-  .s-a { stop-color: #6f9af2; }
-  .s-b { stop-color: #f0915e; }
+  .s-a { stop-color: var(--net-grad-a); }
+  .s-b { stop-color: var(--net-grad-b); }
   .g-card { right: 16px; bottom: 16px; width: min(360px, calc(100% - 32px)); display: none; font-size: 13px; }
   .g-card.open { display: block; }
   .g-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
@@ -370,10 +369,9 @@
   .g-key p { margin: 2px 0 0; color: var(--faint); }
   .k-row { display: flex; align-items: center; gap: 8px; }
   .k-row line { stroke-width: 1.5; }
-  .k-similar, .k-near { stroke: #9fb6e6; }
-  .k-declared { stroke: #ffd9ef; }
-  .k-co, .k-part { stroke: #aac8ff; stroke-opacity: .7; }
-  .k-structure { stroke: #aac8ff; stroke-opacity: .5; }
+  .k-similar, .k-near { stroke: var(--net-similar); }
+  .k-declared { stroke: var(--net-accent); }
+  .k-co, .k-part, .k-structure { stroke: var(--net-ink); stroke-opacity: .7; }
   .l-part { stroke: currentColor; stroke-opacity: .5; stroke-width: 1.2; }
   .l-co { stroke: var(--accent); stroke-opacity: .5; stroke-width: 2; }
   .l-near { stroke: url(#lg-near); }

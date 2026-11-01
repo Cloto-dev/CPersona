@@ -630,13 +630,14 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   graph view draws every note (the next item but one), or the memories of a
   folder, a month, an entity or a group of similar memories when a link narrows
   it.
-- **How it looks**: on a dark ground, memories are small plain dots and each
+- **How it looks**: on a ground that follows the theme (graphite marks on light
+  grey, or light marks on a night ground), memories are small plain dots and each
   agent is a flat dot carrying a figure (stripes, a crescent, a ring, dots or
   quarters) chosen from its id, so the same agent looks the same on every load.
   Colour marks only the point pointed at and its lines, or every agent when
   *Colour by agent* is on. Agents are always named; other names appear as the
   view comes closer. In a picture of
-  more than 1,000 points the dots are drawn brighter over the lines. The setting
+  more than 1,000 points the dots are drawn stronger over the lines. The setting
   *Avoid clusters of dots* draws them small and faint instead, with the lines as
   the subject, for people who find dense fields of dots unpleasant to look at.
 - **The memories** are drawn as points joined by three kinds of line, each
