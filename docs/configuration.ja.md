@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:6cda1b7bac25a258b30e40a36189b33699010489 -->
+<!-- i18n-source: docs/configuration.md@blob:c10bed93e1b5a435cc26f825539a18251f3f374d -->
 
 # 設定リファレンス
 
@@ -39,6 +39,8 @@
 | `CPERSONA_DASHBOARD_PUBLIC_URL` | *(未設定)* | 人がこのサーバーに届くアドレス。リモートのダッシュボードのリンクはこのアドレスで始まる (例: `https://memory.example.com`)。ダッシュボードのセッションの Cookie は Secure なので、https か、localhost の http でなければならない |
 | `CPERSONA_DASHBOARD_STORES_PATH` | `~/.cpersona/` の `stores.json` | サーバーが起動した時に、開いたデータベースの場所を書き足す一覧。端末やショートカットから実行した `cpersona dashboard` は、ここから最後に使われたデータベースを開く。書くのはパスと時刻だけで、本人だけが読める。`~` は展開されます |
 | `CPERSONA_DASHBOARD_STORES` | `true` | `false` にすると、サーバーは開いたデータベースの場所をその一覧に書き足さなくなる。すでにある一覧は読むので、`--db` を付けない `cpersona dashboard` はそこにあるデータベースを開き、一覧が空なら `--db` を求める。 |
+| `CPERSONA_RECALL_LOG` | `false` | `true` にすると、`recall` と `reconstruct` の呼び出しごとに、そのトレース (参照・順位・スコア・理由。保存した本文は含まない) を、時刻・範囲・質問の文・返した参照と一緒に、ストアの横のファイル (`<db>.recall-log.db`、本人だけが読める) に圧縮して残す。ほかでは保存しない質問の文が残る。永続化を止めたセッションは何も書かない。呼び出し側が受け取る応答は変わらない。12,000 行のストアで測ると、有効にした想起は 2 割ほど長くかかった |
+| `CPERSONA_RECALL_LOG_SIZE` | `200` | 想起の記録に残す、新しい順の呼び出しの数 (1 以上)。新しい行を書くたびに、古い行を消す |
 | `CPERSONA_FOLDER_MAX_DEPTH` | `6` | project の下に置けるフォルダの段の数 (1〜16)。下げても、それより深いフォルダは読めるまま残る。上限より下への新しいフォルダと記録の出し入れは拒まれ、`folder_integrity` が上限を超えたフォルダを挙げる |
 | `CPERSONA_RECALL_MODE` | `rrf` | recall の融合戦略 (`rrf` / `rsf` / `cascade`)。後述 |
 | `CPERSONA_RECALL_PREVIEW_CHARS` | `500` | プレビュー階層: recall 系ツールが返す本文の最大文字数。`full_content=true` は 1 応答あたり 200,000 文字の予算内で全文を返します (bug-211)。超えた分の行はプレビュー階層に戻り (関連度の高い行から全文で残します、bug-214)、応答に `full_content_budget_chars` が付きます。残りは `get_contents` が自身の 40,000 文字予算で取得します。`0` はプレビュー階層**と両方の予算を**無効にします。無効な階層へ降格すると本文が知らないうちに落ちるため、切り詰めをやめる選択は、どこでも切り詰めないという選択になります。`CPERSONA_RECONSTRUCT_DEFAULT_BUDGET` と `CPERSONA_RECONSTRUCT_MAX_BUDGET` は、未設定ならこの大きさの抜粋 1 つ分まで引き上がります |

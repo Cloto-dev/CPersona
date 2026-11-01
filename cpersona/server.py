@@ -27,6 +27,7 @@ import ipaddress
 import logging
 import os
 import sys
+import time
 import webbrowser
 from collections.abc import Callable
 from typing import NamedTuple
@@ -49,6 +50,7 @@ from cpersona.dashboard import scope as dashboard_scope
 from cpersona.dashboard import store as dashboard_store
 from cpersona import tokens as tokens_module
 from cpersona import generation
+from cpersona import recall_log
 from cpersona._vendored_mcp_common import no_persist
 # Re-exported: benchmarks/benchmark_latency.py imports the client from here; the
 # server itself builds one through vector.build_embedding_client().
@@ -660,6 +662,8 @@ async def do_recall_boundary(
         # refusal carries the empty collection rather than making one path KeyError.
         return {**_oc_reject(error), "messages": []}
     query_vec: list = []
+    record = _records_recall(session_key)
+    started = time.perf_counter()
     result = await do_recall(
         agent_id,
         query,
@@ -675,17 +679,36 @@ async def do_recall_boundary(
         # query vector this call hands back.
         excerpt_chars=0 if full_content else config.RECALL_EXCERPT_CHARS,
         **({"query_vec_out": query_vec} if full_content else {}),
-        **({"trace": True} if trace else {}),
+        # The recall log keeps the trace of a call that did not ask for one; it is taken
+        # out of the response below, so the caller receives exactly what it asked for.
+        **({"trace": True} if trace or record else {}),
         **({"time_cue": time_cue} if time_cue is not None else {}),
         # The propagation seat is measured on this tool only (cpersona/propagation.py);
         # passed only when on, so a recall with it off is called exactly as before.
         **({"propagation_seat": True} if config.RECALL_PROPAGATION_SEAT else {}),
     )
+    if record and "trace" in result:
+        recall_log.write(
+            tool="recall", agent_id=agent_id, project_id=pid, channel=channel, deep=deep, query=query,
+            args={"limit": limit, "full_content": full_content, "source_id": source_id,
+                  **({"time_cue": time_cue} if time_cue is not None else {})},
+            returned=[m.get("ref") for m in result.get("messages") or [] if isinstance(m, dict)],
+            ms=(time.perf_counter() - started) * 1000,
+            trace=result["trace"] if trace else result.pop("trace"),
+        )
     if full_content:
         result = await _full_content_with_budget(agent_id, query, result, query_vec)
     else:
         result = _apply_preview(result)
     return _oc_annotate(result, project_id, pid, warning)
+
+
+def _records_recall(session_key: str) -> bool:
+    """Whether this call goes to the recall log: on, and the session has not paused
+    persistence (a paused session writes nothing, the log included)."""
+    if not recall_log.enabled():
+        return False
+    return not session.is_paused_for(session.resolve_session_key(session_key)[0])
 
 
 async def do_reconstruct_boundary(
@@ -712,6 +735,9 @@ async def do_reconstruct_boundary(
         # every reconstruct response, so a refusal carries the empty collection
         # rather than making one path KeyError.
         return {**_oc_reject(error), "items": [], "returned_count": 0}
+    record = _records_recall(session_key)
+    sink: dict | None = {} if record and not trace else None
+    started = time.perf_counter()
     result = await do_reconstruct(
         agent_id,
         query,
@@ -733,7 +759,19 @@ async def do_reconstruct_boundary(
         # used_tokens count them too.
         envelope={**_oc_annotate({}, project_id, pid, warning), **acl.response_echo()},
         **({"time_cue": time_cue} if time_cue else {}),
+        **({"trace_sink": sink} if sink is not None else {}),
     )
+    traced = result.get("trace") if trace else (sink or {}).get("trace")
+    if record and traced is not None:
+        recall_log.write(
+            tool="reconstruct", agent_id=agent_id, project_id=pid, channel=channel, deep=deep, query=query,
+            args={"count": count, "top_k": top_k, "max_hops": max_hops, "max_evidence": max_evidence,
+                  "budget": budget, "lite": lite, "mode": mode, "source_id": source_id,
+                  **({"time_cue": time_cue} if time_cue else {})},
+            returned=[i.get("head_ref") for i in result.get("items") or [] if isinstance(i, dict)],
+            ms=(time.perf_counter() - started) * 1000,
+            trace=traced,
+        )
     # bug-485: no preview cut here. Heads are already cut where they are quoted --
     # to the preview tier with filling off, to RECONSTRUCT_QUOTE_CHARS with it on --
     # so a cut at this boundary could never fire.
