@@ -269,7 +269,7 @@ def owned_paths() -> list[OwnedPath]:
     """
     import glob as _glob
 
-    from cpersona import block_index, coarse_index, config, update_check, vector_index
+    from cpersona import block_index, coarse_index, config, recall_log, update_check, vector_index
 
     db = config.DB_PATH
     if db == ":memory:":
@@ -296,6 +296,14 @@ def owned_paths() -> list[OwnedPath]:
         for table in ("memories", "episodes")
     ]
     out.append(OwnedPath(block_index.index_path(), "file", "the embedding sign bits of every block row"))
+    # The recall log keeps each query's text beside the store (recall_log.py).
+    log = recall_log.log_path()
+    if log:
+        out += [
+            OwnedPath(log, "file", "the text of recent queries and the traces of their recalls"),
+            OwnedPath(f"{log}-wal", "file", "the recall log's write-ahead log"),
+            OwnedPath(f"{log}-shm", "file", "the shared-memory index for the recall log's write-ahead log"),
+        ]
     # Written by _back_up_calibration_sidecar under a name it mints, so the
     # pattern is the only way to name them; it is the one the pruner uses.
     out += [

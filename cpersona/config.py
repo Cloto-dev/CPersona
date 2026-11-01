@@ -744,6 +744,12 @@ DASHBOARD_SESSION_KEY = os.environ.get("CPERSONA_DASHBOARD_SESSION_KEY", "")
 # Whether a server notes the database it opens in the list `cpersona dashboard`
 # reads (known_stores.py). Off, nothing is written; a list already there is still read.
 DASHBOARD_STORES = _parse_bool("CPERSONA_DASHBOARD_STORES", True)
+# The recall log (recall_log.py): the trace of each real recall and reconstruct, kept
+# beside the store in <db>.recall-log.db, the newest RECALL_LOG_SIZE rows. Off by
+# default: it keeps each query's text, which nothing else stores. A session that
+# paused persistence writes no row.
+RECALL_LOG = _parse_bool("CPERSONA_RECALL_LOG", False)
+RECALL_LOG_SIZE = max(1, _parse_int("CPERSONA_RECALL_LOG_SIZE", 200))
 
 # How deep a folder may sit below its project (the project itself is depth 0).
 # Lowering it leaves deeper folders readable; it refuses new folders and filings

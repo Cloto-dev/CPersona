@@ -1646,6 +1646,7 @@ async def do_reconstruct(
     lite: bool = False,
     mode: str | None = None,
     envelope: dict | None = None,
+    trace_sink: dict | None = None,
 ) -> dict:
     """Assemble recall items from the candidate pool the recall process produced.
 
@@ -1720,6 +1721,11 @@ async def do_reconstruct(
     bounds_max_evidence = min(requested_evidence, associations.TRAVERSE_MAX_LIMIT)
     bound_lowered = hops_lowered or bounds_max_evidence < requested_evidence
 
+    # The recall log (recall_log.py) records the trace of a call that did not ask for
+    # one: the call runs traced, the caller receives exactly the untraced response, and
+    # the trace goes to `trace_sink` instead.
+    traced = trace or trace_sink is not None
+
     def _shaped(response: dict) -> dict:
         """The response as the caller receives it without the trace: compact, and under a
         mode its cap fields. The trace is an audit and is not held to the cap."""
@@ -1754,7 +1760,7 @@ async def do_reconstruct(
         **({"lexical_terms": cue_terms} if cue_terms else {}),
         # The recall trace of the call this reconstruction rests on
         # (docs/RECALL_PROCESS_DESIGN.md §1.1), returned as trace.recall.
-        **({"trace": True} if trace else {}),
+        **({"trace": True} if traced else {}),
         **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
         providers_=p,
         query_vec_out=recalled_vec,
@@ -1805,7 +1811,7 @@ async def do_reconstruct(
             response[notice] = recall_result[notice]
     if recall_result.get("gate_fallback"):
         response["gate_fallback"] = True
-    if trace:
+    if traced:
         response["trace"] = {"candidate_refs": [c.ref for c in candidates], "clusters": []}
         if cue_report:
             response["trace"]["cues"] = cue_report
@@ -1824,6 +1830,8 @@ async def do_reconstruct(
                 shaped = _shaped(response)
                 response.update(mode=mode, cap=shaped["cap"], used_tokens=shaped["used_tokens"])
             return response
+        if trace_sink is not None:
+            trace_sink["trace"] = response["trace"]
         return _shaped(response)
 
     spans = await _read_candidates(agent_id, candidates)
@@ -1836,7 +1844,7 @@ async def do_reconstruct(
         grouped.setdefault(uf.find(i), []).append(i)
     clusters = [sorted(members) for _, members in sorted(grouped.items())]
     response["reconstruction"]["cluster_count"] = len(clusters)
-    if trace:
+    if traced:
         response["trace"]["clusters"] = [[candidates[i].ref for i in group] for group in clusters]
 
     why_by_ref = {candidates[i].ref: uf.why[i] for i in uf.why}
@@ -1953,7 +1961,7 @@ async def do_reconstruct(
     # few indices only -- the fused values are not calibrated across records), so the runner-up
     # is a place to read next, not a confidence.
     # Kept per entry, so the trace lists the entries a response quotes, as it always has.
-    entry_orders: list[dict | None] = [({} if trace else None) for _ in entries_claims]
+    entry_orders: list[dict | None] = [({} if traced else None) for _ in entries_claims]
 
     # What the budget does not shape is quoted once: every item's other claims, and,
     # outside the evidence sequences, every head. Which of them a response carries is
@@ -2035,7 +2043,7 @@ async def do_reconstruct(
         out["bounds"] = {k: (list(v) if isinstance(v, list) else v) for k, v in bounds.items()}
         out["reconstruction"] = dict(response["reconstruction"])
         out["effective_budget"] = budget_chars
-        if trace:
+        if traced:
             out["trace"] = dict(response["trace"])
         # Which of entries_claims the quoted entries are: all of them, unless the evidence
         # sequence (2.6.5a1) left an item with no passage inside the budget.
@@ -2052,7 +2060,7 @@ async def do_reconstruct(
                 text, basis, passages = records[i]
                 head_quote = sequence_quote(entries_claims[i][1], text, basis, passages, taken[i])
                 entries.append((item_at[i], head_quote, quotes_at[i]))
-            if trace:
+            if traced:
                 picked = {(i, j) for i, js in taken.items() for j in js}
                 out["trace"]["sequence"] = {
                     "mode": sequence,
@@ -2193,7 +2201,7 @@ async def do_reconstruct(
                     **{key: response[key] for key in _NOTICES if key in response},
                 )
             final, quoted, shaped = fits
-    if trace:
+    if traced:
         node_orders: dict[str, list[int]] = {}
         for position in quoted:
             node_orders.update(entry_orders[position] or {})
@@ -2212,9 +2220,11 @@ async def do_reconstruct(
         except Exception as exc:  # noqa: BLE001
             logger.warning("reconstruct trace: coverage ledger not built: %s", type(exc).__name__)
             final["trace"]["coverage"] = {"error": type(exc).__name__}
-        if mode:
-            # Every field, and not held to the cap: `used_tokens` is what the same call
-            # returns without the trace.
-            final.update(mode=mode, cap=shaped["cap"], used_tokens=shaped["used_tokens"])
-        return final
+        if trace:
+            if mode:
+                # Every field, and not held to the cap: `used_tokens` is what the same call
+                # returns without the trace.
+                final.update(mode=mode, cap=shaped["cap"], used_tokens=shaped["used_tokens"])
+            return final
+        trace_sink["trace"] = final["trace"]
     return shaped if mode else _shaped(final)
