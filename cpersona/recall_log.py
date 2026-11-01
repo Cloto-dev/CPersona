@@ -46,12 +46,17 @@ CREATE TABLE IF NOT EXISTS recall_log (
 """
 
 
-def log_path() -> str | None:
-    """Where the log lives: beside the store, or nowhere for an in-memory store."""
-    db = config.DB_PATH
-    if not db or db == ":memory:":
+def path_for(db_path: str) -> str | None:
+    """Where the log of the store at ``db_path`` lives, or None for an in-memory store.
+    The dashboard reads the log of the store it opened, not of this server's."""
+    if not db_path or db_path == ":memory:":
         return None
-    return f"{db}.recall-log.db"
+    return f"{db_path}.recall-log.db"
+
+
+def log_path() -> str | None:
+    """Where this server's log lives: beside its store."""
+    return path_for(config.DB_PATH)
 
 
 def enabled() -> bool:

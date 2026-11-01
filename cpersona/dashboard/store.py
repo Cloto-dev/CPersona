@@ -776,3 +776,101 @@ def profiles(conn: sqlite3.Connection, agent: str = "") -> dict:
             for r in rows
         ],
     }
+
+
+# The recall log (cpersona/recall_log.py): the trace of each recall and reconstruct a
+# server kept beside this store, when CPERSONA_RECALL_LOG is on. Read-only, from its
+# own file; a viewer of a shared server sees only the rows of the agents they read.
+RECALL_REF = re.compile(r"^(mem|ep):\d+$")
+
+
+def _recall_log(db_path: str) -> sqlite3.Connection | None:
+    from cpersona import recall_log
+
+    path = recall_log.path_for(str(Path(db_path).expanduser()))
+    if not path or not os.path.isfile(path):
+        return None
+    conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _readable(scope, agent_id: str) -> bool:
+    return scope is None or scope.readable(agent_id)
+
+
+def recalls(db_path: str, scope=None, query: str = "", limit: int = 50, offset: int = 0) -> dict:
+    """The logged calls, newest first. ``query`` narrows them: a reference (``mem:12``)
+    keeps the calls whose trace names that record, any other text the calls whose
+    query contains it."""
+    from cpersona import recall_log
+
+    log = _recall_log(db_path)
+    if log is None:
+        return {"exists": False, "rows": [], "total": 0}
+    query = query.strip()
+    by_ref = query if RECALL_REF.match(query) else ""
+    try:
+        cols = "id, at, tool, agent_id, project_id, channel, deep, query, returned, ms"
+        out = []
+        for r in log.execute(f"SELECT {cols}{', trace' if by_ref else ''} FROM recall_log ORDER BY id DESC"):
+            if not _readable(scope, r["agent_id"]):
+                continue
+            if by_ref:
+                if f'"{by_ref}"' not in json.dumps(recall_log.read_trace(r["trace"])):
+                    continue
+            elif query and query.lower() not in r["query"].lower():
+                continue
+            returned = json.loads(r["returned"])
+            out.append({
+                "id": r["id"], "at": r["at"], "tool": r["tool"], "agent_id": r["agent_id"],
+                "project_id": r["project_id"], "channel": r["channel"], "deep": bool(r["deep"]),
+                "query": r["query"], "returned": len(returned), "ms": r["ms"],
+                **({"returned_ref": by_ref in returned} if by_ref else {}),
+            })
+    finally:
+        log.close()
+    return {"exists": True, "rows": out[offset : offset + limit], "total": len(out)}
+
+
+def _refs_in(value, found: set[str]) -> None:
+    if isinstance(value, str):
+        if RECALL_REF.match(value):
+            found.add(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            _refs_in(v, found)
+    elif isinstance(value, list):
+        for v in value:
+            _refs_in(v, found)
+
+
+def recall(conn: sqlite3.Connection, db_path: str, scope, entry_id: int) -> dict | None:
+    """One logged call with its trace, and the start of each record the trace names
+    that this viewer can read (``missing`` for one deleted since, or not visible)."""
+    from cpersona import recall_log
+
+    log = _recall_log(db_path)
+    if log is None:
+        return None
+    try:
+        r = log.execute("SELECT * FROM recall_log WHERE id = ?", (entry_id,)).fetchone()
+    finally:
+        log.close()
+    if r is None or not _readable(scope, r["agent_id"]):
+        return None
+    trace = recall_log.read_trace(r["trace"])
+    names: set[str] = set()
+    _refs_in(trace, names)
+    returned = json.loads(r["returned"])
+    names.update(x for x in returned if isinstance(x, str) and RECALL_REF.match(x))
+    records = {}
+    for ref in sorted(names)[:400]:
+        kind, rid = _ref(ref)
+        records[ref] = _describe(conn, kind, rid)
+    return {
+        "id": r["id"], "at": r["at"], "tool": r["tool"], "agent_id": r["agent_id"],
+        "project_id": r["project_id"], "channel": r["channel"], "deep": bool(r["deep"]),
+        "query": r["query"], "args": json.loads(r["args"]), "returned": returned, "ms": r["ms"],
+        "trace": trace, "records": records,
+    }

@@ -603,7 +603,7 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   foot of the side panel) and kept in the browser. *Standard*, the default, is
   one side panel of the views, grouped under headings (the overview; records:
   memories, episodes and profiles; connections: entities and the network; and
-  the store's status), over the logical directory; a memory opens in a drawer beside the
+  manage: the store's status and the recall log), over the logical directory; a memory opens in a drawer beside the
   list, so the list does not move. The list behind the drawer is dimmed, and a
   click on it closes the drawer. Under the views, a line names the key that opens
   the command palette: ⌘K on a Mac, Ctrl+K elsewhere. *Tabbed* puts a
@@ -695,9 +695,19 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   there, and the calibration file's values (the threshold and gates for every
   agent and for each; a gate stored without a value is marked). Opened by an
   agent, it adds the server's check, notes included.
-- Recall traces are not shown yet, and nothing is edited from the page. The
-  server's check appears only when an agent opened the page: started from a terminal,
-  the dashboard cannot judge it from the file alone.
+- **Recall log**: the recalls and reconstructs a server recorded with
+  `CPERSONA_RECALL_LOG=true` (off by default; see [Configuration](configuration.md)),
+  newest first. One opens on what it returned and how that was formed: the
+  candidates each search found, the merged order, which the quality gate dropped
+  and why, and what was cut at a score drop or by count, each with the start of
+  the record it names. The page reads the log as recorded and never re-runs a
+  recall, so it shows what the agent received. A memory opened in the drawer
+  offers the recalls whose trace names it, and the filter takes a reference
+  (`mem:12`) as well as query text. A viewer of a shared server sees only the
+  rows of the agents they read.
+- Nothing is edited from the page. The server's check appears only when an agent
+  opened the page: started from a terminal, the dashboard cannot judge it from
+  the file alone.
 
 ## Maintenance cadence
 

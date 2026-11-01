@@ -26,6 +26,15 @@ const T = {
     tzNote: zone => `Times are shown in ${zone}.`,
     store: "Store status", navRecords: "Records", navLinks: "Connections", navManage: "Manage",
     storeLead: name => `${name}, read without writing. The server's check appears when an agent opens the dashboard.`,
+    recalls: "Recall log", recallsLead: "The recalls agents made, newest first, with why each record was kept or dropped.",
+    emptyRecalls: "No recalls logged", emptyRecallsP: "A server keeps this log only with CPERSONA_RECALL_LOG=true. It then records each recall and reconstruct, with the query's text, beside the store.",
+    noRecallLog: "This store has no recall log", searchRecallsPh: "Filter by query text, or mem:12", noRecallMatch: "No logged recall matches",
+    recallsFor: ref => `Recalls whose trace names ${ref}`, seeRecalls: "Recalls that considered it", allRecalls: "All recalls",
+    nReturned: n => `${n} returned`, deepTag: "deep", tookMs: ms => `${Math.round(ms)} ms`, returnedIt: "returned it", notReturned: "not returned",
+    rcReturned: "Returned", rcStages: "How the result was formed", rcNone: "None",
+    rcArms: "Candidates from each search", rcFusion: "Merged order", rcGate: "Quality gate", rcAutocut: "Cut at a score drop", rcCount: "Cut by count", rcItems: "Assembled items",
+    rcArm: { vector_near: "Vector, recent", vector_far: "Vector, older", memory_keyword: "Keyword, memories", episode_fts: "Full text, episodes", block: "Blocks" },
+    rcPassed: n => `${n} passed`, rcDropped: n => `${n} dropped`, rcBelow: (s, th) => `score ${s} below ${th}`, rcMissing: "Deleted, or not readable here",
     stRecords: "Records", stMemNoEmb: "Memories without an embedding", stEpNoEmb: "Episodes without an embedding",
     stOf: (n, total) => `${n.toLocaleString()} of ${total.toLocaleString()}`, stUnreachable: "A vector search cannot reach them.",
     stFiles: "Files", stFilesHidden: "Shown to a viewer who reads every agent.", stSchema: "Schema", stSchemaV: v => `version ${v}`,
@@ -145,6 +154,15 @@ const T = {
     tzNote: zone => `時刻は ${zone} で表示しています。`,
     store: "記録先の状態", navRecords: "記録", navLinks: "つながり", navManage: "管理",
     storeLead: name => `${name} を読み取り専用で開いて数えています。サーバーの点検は、エージェントから開いた時だけ出ます。`,
+    recalls: "想起の履歴", recallsLead: "エージェントが行った想起です。新しい順に並び、記録が残った理由と外れた理由を見られます。",
+    emptyRecalls: "想起の履歴はまだありません", emptyRecallsP: "この履歴は、サーバーを CPERSONA_RECALL_LOG=true で起動した時だけ残ります。その時は recall と reconstruct のたびに、質問の文と一緒に記録先の横へ書きます。",
+    noRecallLog: "この記録先には想起の履歴がありません", searchRecallsPh: "質問の文、または mem:12 で絞り込む", noRecallMatch: "一致する想起はありません",
+    recallsFor: ref => `${ref} が出てくる想起`, seeRecalls: "この記録が候補になった想起", allRecalls: "すべての想起",
+    nReturned: n => `${n} 件を返した`, deepTag: "深い想起", tookMs: ms => `${Math.round(ms)} ms`, returnedIt: "返した", notReturned: "返していない",
+    rcReturned: "返した記録", rcStages: "結果ができるまで", rcNone: "なし",
+    rcArms: "検索ごとの候補", rcFusion: "まとめた順位", rcGate: "品質のゲート", rcAutocut: "スコアの落ち込みで切った記録", rcCount: "件数で切った記録", rcItems: "組み立てた項目",
+    rcArm: { vector_near: "ベクトル (新しい範囲)", vector_far: "ベクトル (古い範囲)", memory_keyword: "キーワード (記憶)", episode_fts: "全文 (エピソード)", block: "ブロック" },
+    rcPassed: n => `${n} 件が通過`, rcDropped: n => `${n} 件が外れた`, rcBelow: (s, th) => `スコア ${s} がしきい値 ${th} に届かない`, rcMissing: "削除されたか、ここでは読めない記録です",
     stRecords: "記録", stMemNoEmb: "埋め込みのない記憶", stEpNoEmb: "埋め込みのないエピソード",
     stOf: (n, total) => `${n.toLocaleString()} 件 / ${total.toLocaleString()} 件`, stUnreachable: "ベクトル検索では見つかりません。",
     stFiles: "ファイル", stFilesHidden: "全エージェントを読める閲覧者にだけ表示します。", stSchema: "スキーマ", stSchemaV: v => `バージョン ${v}`,
@@ -499,6 +517,90 @@ async function renderStore() {
   renderHealth();
 }
 
+// ---- The recall log: what a server kept of each recall (CPERSONA_RECALL_LOG). The page
+// reads it as recorded, never re-running a recall, so it shows what the agent got.
+const RECALL_REF = /^(mem|ep):\d+$/;
+// Views whose id names a row of their own, not a record to open in the drawer.
+const PAGE_IDS = { recalls: true };
+let recallLogExists = null;
+const num3 = x => typeof x === "number" ? (Math.round(x * 1000) / 1000).toString() : esc(String(x ?? ""));
+function recallRows(rows, byRef) {
+  let html = "", last = "";
+  for (const r of rows) {
+    const d = day(r.at);
+    if (d !== last) { html += `<div class="group">${dayLabel(d)}</div>`; last = d; }
+    const meta = [`<span title="${esc(r.agent_id)}">${esc(r.agent_id)}</span>`, `<span>${esc(when(r.at).slice(11))}</span>`];
+    if (r.tool !== "recall") meta.push(`<span>${esc(r.tool)}</span>`);
+    if (r.deep) meta.push(`<span>${t("deepTag")}</span>`);
+    meta.push(`<span>${esc(t("nReturned")(r.returned))}</span>`, `<span>${esc(t("tookMs")(r.ms))}</span>`);
+    if (byRef) meta.push(`<span>${r.returned_ref ? t("returnedIt") : t("notReturned")}</span>`);
+    html += `<button class="row" data-id="${r.id}"><div class="text">${mark(r.query, byRef ? "" : state.q)}</div><div class="meta">${meta.join("")}</div></button>`;
+  }
+  return html;
+}
+async function renderRecalls(id) {
+  if (id) return renderRecall(id);
+  const page = $("page"), byRef = RECALL_REF.test(state.q);
+  const res = await api("/api/recalls", { q: state.q, limit: 200, offset: 0 });
+  if (state.view !== "recalls" || state.id) return;
+  recallLogExists = res.exists;
+  if (!res.exists) {
+    page.innerHTML = `<h1>${t("recalls")}</h1><div class="empty"><h2>${t("emptyRecalls")}</h2><p>${t("emptyRecallsP")}</p></div>`;
+    return;
+  }
+  if (!$("rcList")) {
+    page.innerHTML = `<h1>${t("recalls")}</h1><p class="lead" id="rcLead"></p>
+      <div class="toolbar"><label class="search">
+        <svg aria-hidden="true" class="icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>
+        <input id="q" type="search" placeholder="${t("searchRecallsPh")}" value="${esc(state.q)}" aria-label="${t("searchRecallsPh")}"></label></div>
+      <div id="rcList"></div><div class="more" id="more"></div>`;
+    let timer;
+    $("q").addEventListener("input", e => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { state.q = e.target.value.trim(); saveHash(); keepPlace(); renderRecalls(0).catch(fail); }, 220);
+    });
+  }
+  $("rcLead").textContent = byRef ? t("recallsFor")(state.q) : t("recallsLead");
+  const list = $("rcList");
+  list.innerHTML = res.rows.length ? recallRows(res.rows, byRef) : `<div class="empty"><h2>${t("noRecallMatch")}</h2><p>${t("noMatchShort")}</p></div>`;
+  for (const b of list.querySelectorAll(".row")) b.addEventListener("click", () => go({ view: "recalls", id: Number(b.dataset.id) }));
+  $("more").innerHTML = res.rows.length ? `<span class="hint">${t("shown")(res.rows.length, res.total)}</span>` : "";
+}
+function recallRefItem(ref, records, extra = "") {
+  const r = records[ref], [kind, rid] = ref.split(":");
+  const text = r && !r.missing ? esc(r.text) : `<span class="muted">${t("rcMissing")}</span>`;
+  return `<li><button class="ref" data-ref-kind="${esc(kind)}" data-ref-id="${esc(rid)}">${esc(ref)}</button> ${text}${extra ? ` <span class="muted">${extra}</span>` : ""}</li>`;
+}
+const recallList = (refs, records, extra = () => "") =>
+  refs.length ? `<ol class="rc-refs">${refs.map(x => recallRefItem(x, records, extra(x))).join("")}</ol>` : `<p class="hint">${t("rcNone")}</p>`;
+async function renderRecall(id) {
+  const e = await api("/api/recall", { id });
+  if (state.view !== "recalls" || state.id !== id) return;
+  const tr = e.trace.recall || e.trace, rec = e.records, refOf = x => typeof x === "string" ? x : x?.ref;
+  const arms = Object.entries(t("rcArm")).filter(([k]) => (tr.arms?.[k] || []).length)
+    .map(([k, name]) => `<h3>${esc(name)} <span class="muted">(${tr.arms[k].length})</span></h3>${recallList(tr.arms[k].map(refOf), rec, r => {
+      const row = tr.arms[k].find(x => refOf(x) === r); return row && typeof row.raw === "number" ? num3(row.raw) : ""; })}`).join("");
+  const decisions = tr.gate?.decisions || [], passed = decisions.filter(d => d.passed), dropped = decisions.filter(d => !d.passed);
+  const fusion = (tr.fusion || []).slice(0, 20);
+  const cutAuto = (tr.autocut?.dropped || []).map(refOf), cutCount = (tr.order?.cut_by_count || []).map(refOf);
+  const steps = [
+    [t("rcArms"), arms || `<p class="hint">${t("rcNone")}</p>`],
+    [t("rcFusion"), recallList(fusion.map(refOf), rec, r => num3(fusion.find(x => refOf(x) === r)?.score))],
+    [t("rcGate"), `<p class="hint parts"><span>${esc(t("rcPassed")(passed.length))}</span><span>${esc(t("rcDropped")(dropped.length))}</span></p>`
+      + recallList(dropped.map(d => d.ref), rec, r => { const d = dropped.find(x => x.ref === r); return esc(t("rcBelow")(num3(d.score), num3(d.threshold))); })],
+    [t("rcAutocut"), recallList(cutAuto, rec)],
+    [t("rcCount"), recallList(cutCount, rec)],
+  ];
+  const meta = [esc(when(e.at)), esc(e.agent_id), esc(e.tool), ...(e.deep ? [t("deepTag")] : []), esc(t("nReturned")(e.returned.length)), esc(t("tookMs")(e.ms))];
+  $("page").innerHTML = `<p><button class="ref" id="rcBack">← ${t("allRecalls")}</button></p>
+    <h1>${esc(e.query)}</h1><p class="hint parts">${meta.map(m => `<span>${m}</span>`).join("")}</p>
+    <section class="block"><h2>${e.tool === "reconstruct" ? t("rcItems") : t("rcReturned")}</h2>${recallList(e.returned, rec)}</section>
+    <section class="block"><h2>${t("rcStages")}</h2>${steps.map(([h, body]) => `<div class="rc-step"><h3>${esc(h)}</h3>${body}</div>`).join("")}</section>`;
+  $("rcBack").addEventListener("click", () => go({ view: "recalls", id: 0 }));
+  for (const b of $("page").querySelectorAll("[data-ref-kind]"))
+    b.addEventListener("click", () => openDetail(Number(b.dataset.refId), REF_KIND[b.dataset.refKind]).catch(fail));
+}
+
 // Store health comes from the running server's own checks, so it exists only when an
 // agent opened the dashboard; started from a terminal, the block stays hidden.
 // The check runs once per page load (it can take seconds); going back to the
@@ -833,7 +935,8 @@ async function renderDetail(id, d = $("page")) {
     <p class="doc-meta"><span>${esc(when(m.timestamp))}</span><span>${esc(levelLabel("project", m.project_id))} / ${esc(levelLabel("channel", m.channel))}</span></p>
     <div class="content" id="content">${mark(m.content, state.q)}</div>
     <div class="actions"><button class="btn" id="copyRef">${t("copyRef")} (mem:${m.id})</button>
-      ${m.has_embedding ? `<button class="btn" id="aroundBtn">${t("showAround")}</button>` : ""}</div>
+      ${m.has_embedding ? `<button class="btn" id="aroundBtn">${t("showAround")}</button>` : ""}
+      ${recallLogExists ? `<button class="btn" id="recallsBtn">${t("seeRecalls")}</button>` : ""}</div>
     <dl class="facts-list">
       <dt>${t("from")}</dt><dd>${esc(src)}</dd>
       <dt>${t("used")}</dt><dd>${esc(t("usedN")(m.recall_count, when(m.last_recalled_at)))}</dd>
@@ -861,6 +964,7 @@ async function renderDetail(id, d = $("page")) {
     navigator.clipboard?.writeText(`mem:${m.id}`);
     toast(t("copied")(`mem:${m.id}`));
   });
+  $("recallsBtn")?.addEventListener("click", () => go({ view: "recalls", id: 0, q: `mem:${m.id}`, path: [], month: "" }));
   // Clicking a part lights it in the text and scrolls to it; clicking it again clears.
   // Hovering does nothing, so moving the pointer across the bars never moves the text.
   const content = $("content");
@@ -1550,7 +1654,7 @@ async function openPalette(text = "") {
 async function fillPalette(text) {
   const q = text.trim();
   const cmds = [
-    ...["overview", "memories", "episodes", "profiles", "entities", "graph", "store"].map(v => ({ label: t("cmdGo")(t(v)), side: t("cmd"), run: () => go({ view: v, path: [], q: "", month: "" }) })),
+    ...["overview", "memories", "episodes", "profiles", "entities", "graph", "store", "recalls"].map(v => ({ label: t("cmdGo")(t(v)), side: t("cmd"), run: () => go({ view: v, path: [], q: "", month: "" }) })),
     { label: t("cmdLang"), side: t("cmd"), run: () => setLang(state.lang === "en" ? "ja" : "en") },
   ].filter(c => !q || c.label.toLowerCase().includes(q.toLowerCase()));
   let found = [];
@@ -1685,6 +1789,7 @@ async function route() {
   else if (state.view in LISTS) await renderList(state.view);
   else if (state.view === "profiles") await renderProfiles();
   else if (state.view === "store") await renderStore();
+  else if (state.view === "recalls") await renderRecalls(state.id);
   else if (state.view in RENDER) await RENDER[state.view](state.id);
 }
 
@@ -1839,6 +1944,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
       if (!r.ok) throw new Error(signin("linkUsed"));
     }
     overviewData = await api("/api/overview");
+    // Whether this store has a recall log, so a memory can offer the recalls that considered it.
+    api("/api/recalls", { limit: 0 }).then(r => { recallLogExists = r.exists; }).catch(() => {});
   } catch (e) {
     return fail(H0.get("signedout") ? new Error(signin("signedOut")) : e);
   }
@@ -1853,7 +1960,9 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
     if (saved && saved.db === overviewData.db && saved.tabs?.length) { tabs = saved.tabs; active = Math.min(saved.active, tabs.length - 1); }
   } catch {}
   const named = place();
-  let openRec = named.id && !(named.view in RENDER) ? [named.id, named.kind || LIST_DETAIL[named.view] || "memory"] : null;
+  // An id on a list opens that record in the drawer; the recall log's id is one of its
+  // own rows, shown on its page.
+  let openRec = named.id && !(named.view in RENDER) && !(named.view in PAGE_IDS) ? [named.id, named.kind || LIST_DETAIL[named.view] || "memory"] : null;
   if (openRec) { named.id = 0; named.kind = ""; }
   if (!tabs.length) tabs = [{ hist: [named], pos: 0 }];
   else if (H0.get("view")) { tabs[active].hist = tabs[active].hist.slice(0, tabs[active].pos + 1); tabs[active].hist.push(named); tabs[active].pos = tabs[active].hist.length - 1; }

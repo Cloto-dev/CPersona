@@ -131,6 +131,12 @@ def answer(db_path: str, route: str, q: dict, name: str, scope=None) -> tuple[in
                 out = store.state(conn, db_path, scope)
             elif route == "/api/profiles":
                 out = store.profiles(conn, q.get("agent", ""))
+            elif route == "/api/recalls":
+                out = store.recalls(db_path, scope, q.get("q", ""), int(q.get("limit", 50)), int(q.get("offset", 0)))
+            elif route == "/api/recall":
+                out = store.recall(conn, db_path, scope, int(q.get("id", 0)))
+                if out is None:
+                    return _err(404, "No logged recall with that id.")
             elif route == "/api/graph" and q.get("around"):
                 out = graph.around(conn, key, int(q["around"]), int(q.get("hops", graph.DEFAULT_HOPS)))
                 if out is None:
