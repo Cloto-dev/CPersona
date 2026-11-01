@@ -74,7 +74,7 @@ async def test_the_trace_accounts_for_every_returned_row(fake_embedding_client, 
     monkeypatch.setattr(memory_handlers, "RECALL_MODE", mode)
     out = await memory_handlers.do_recall(AGENT, QUERY, limit=3, trace=True)
     tr = out["trace"]
-    assert tr["trace_version"] == 1
+    assert tr["trace_version"] == 2
     assert tr["policy"]["process"] == "single-pass-v0" and tr["policy"]["scoring"]
     assert tr["stages"] == [{"stage": 0, "searched": "all arms", "next": None}] and tr["suspected"] == []
     assert tr["scope"]["agent_id"] == AGENT and tr["request"]["limit"] == 3
@@ -91,7 +91,13 @@ async def test_the_trace_accounts_for_every_returned_row(fake_embedding_client, 
     arm_refs = {row["ref"] for rows in tr["arms"].values() for row in rows}
     for row in tr["fusion"]:
         assert row["ref"] in arm_refs
-        assert row["score"] == pytest.approx(sum(row["votes"].values()))
+        # Score and votes are each cut to 4 significant digits, so the sum holds to that precision.
+        assert row["score"] == pytest.approx(sum(row["votes"].values()), rel=1e-3)
+    # Every decision's threshold is readable: its own where it differs, else its signal's.
+    held = tr["gate"]["thresholds"]
+    for d in tr["gate"]["decisions"]:
+        if d["signal"] in {"rrf", "rsf", "cosine", "confidence"}:
+            assert d.get("threshold", held.get(d["signal"])) is not None
     assert set(tr["timing_ms"]) >= {"retrieve_and_score", "gate", "order", "total"}
 
 
@@ -107,7 +113,7 @@ async def test_the_trace_carries_no_stored_text(fake_embedding_client):
 async def test_reconstruct_returns_the_trace_of_its_recall(fake_embedding_client):
     await _seed()
     out = await reconstruct.do_reconstruct(AGENT, QUERY, count=2, trace=True)
-    assert out["trace"]["recall"]["trace_version"] == 1
+    assert out["trace"]["recall"]["trace_version"] == 2
     assert "recall" not in (await reconstruct.do_reconstruct(AGENT, QUERY, count=2)).get("trace", {})
 
 
@@ -115,7 +121,7 @@ async def test_reconstruct_returns_the_trace_of_its_recall(fake_embedding_client
 async def test_the_recall_tool_passes_trace_through_the_boundary(fake_embedding_client):
     await _seed()
     out = await server.do_recall_boundary(AGENT, QUERY, 10, False, "", [], None, "", trace=True)
-    assert out["trace"]["trace_version"] == 1
+    assert out["trace"]["trace_version"] == 2
     plain = await server.do_recall_boundary(AGENT, QUERY, 10, False, "", [], None, "")
     assert "trace" not in plain
 
@@ -275,3 +281,83 @@ def test_every_gate_branch_records_its_signal_and_reason():
     reasons = ["below_gate"] * 4 + ["unscored_volume"]
     expected = [(f"mem:{i + 1}", s, False, r) for i, (s, r) in enumerate(zip(signals, reasons))]
     assert got == expected + [("profile", "profile", False, "profile_small_pool")]
+
+
+# --- the size of a requested trace (trace_version 2) ---------------------------------
+
+
+def _floats(value):
+    if isinstance(value, float):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _floats(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _floats(v)
+
+
+def test_numbers_keep_four_significant_digits_not_four_places():
+    from cpersona.recall_trace import _round
+
+    assert _round(0.03278688524590164) == 0.03279
+    assert _round(0.7880957126617432) == 0.7881
+    # Deep RRF ranks differ past the fourth decimal; four places would print them equal.
+    assert _round(1 / 159) != _round(1 / 160)
+    assert _round({"a": [1 / 3, {"b": 2.0}], "n": 7, "ok": True, "s": "x"}) == {
+        "a": [0.3333, {"b": 2.0}], "n": 7, "ok": True, "s": "x"}
+    assert _round(_round(1 / 7)) == _round(1 / 7)
+
+
+def _gate(decisions):
+    return {"decisions": [dict(d) for d in decisions]}
+
+
+def _read(gate, d):
+    return d.get("threshold", gate["thresholds"].get(d["signal"]))
+
+
+def test_each_signal_holds_its_threshold_once_and_a_differing_decision_keeps_its_own():
+    from cpersona.recall_trace import _hoist_thresholds
+
+    original = [
+        {"ref": "mem:1", "signal": "rrf", "score": 0.03, "threshold": 0.0098, "passed": True},
+        {"ref": "mem:2", "signal": "rrf", "score": 0.01, "threshold": 0.0164, "passed": False},  # capped row
+        {"ref": "mem:3", "signal": "rrf", "score": 0.02, "threshold": 0.0098, "passed": True},
+        {"ref": "mem:4", "signal": "cosine", "score": 0.7, "threshold": 0.2, "passed": True},
+        {"ref": "mem:5", "signal": None, "score": None, "threshold": None, "passed": True},
+        {"ref": "profile", "signal": "profile", "score": None, "threshold": 50, "passed": False},
+    ]
+    gate = _gate(original)
+    _hoist_thresholds(gate)
+    # The threshold most of a signal's decisions used is held, not the first one seen.
+    assert gate["thresholds"] == {"rrf": 0.0098, "cosine": 0.2, "profile": 50}
+    assert [("threshold" in d) for d in gate["decisions"]] == [False, True, False, False, False, False]
+    # Nothing is lost: every decision reads back the threshold it was decided against.
+    assert [_read(gate, d) for d in gate["decisions"]] == [d["threshold"] for d in original]
+    # A second finish() leaves it as it was.
+    before = copy.deepcopy(gate)
+    _hoist_thresholds(gate)
+    assert gate == before
+
+
+def test_the_most_used_threshold_is_held_even_when_it_is_not_first():
+    from cpersona.recall_trace import _hoist_thresholds
+
+    original = [{"ref": f"mem:{i}", "signal": "rrf", "threshold": t, "passed": True}
+                for i, t in enumerate([0.0164, 0.0098, 0.0098])]
+    gate = _gate(original)
+    _hoist_thresholds(gate)
+    assert gate["thresholds"] == {"rrf": 0.0098}
+    assert [_read(gate, d) for d in gate["decisions"]] == [0.0164, 0.0098, 0.0098]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_trace_carries_no_float_past_four_significant_digits(fake_embedding_client):
+    await _seed()
+    tr = (await memory_handlers.do_recall(AGENT, QUERY, limit=10, trace=True))["trace"]
+    floats = list(_floats(tr))
+    assert floats  # scores, votes, timings
+    assert all(f == float(f"{f:.4g}") for f in floats)
+    assert "thresholds" in tr["gate"] and all("threshold" not in d or d["threshold"] != tr["gate"]["thresholds"].get(d["signal"])
+                                             for d in tr["gate"]["decisions"])

@@ -18,7 +18,16 @@ import hashlib
 import json
 import time
 
-TRACE_VERSION = 1
+# 2: numbers carry 4 significant digits, `gate.thresholds` holds each signal's
+# threshold once (a decision repeats it only where it differs), and
+# `providers.slots` is present only when the set is not the built-in one.
+TRACE_VERSION = 2
+
+# Significant digits a number keeps in the finished trace. The verdicts that
+# depend on a comparison (a gate decision's `passed`) and the orders (`rank`,
+# `order`) are recorded as such, so rounding the scores changes no reading of
+# the trace; it removes the digits nobody reads, which cost the caller tokens.
+SIGNIFICANT_DIGITS = 4
 
 # The recall-process policy a call ran under. v0 without a time cue is a single
 # pass; the loop that a time cue starts records its own policy name.
@@ -63,6 +72,45 @@ def ref_of(row: dict) -> str:
 
 def _num(value):
     return None if value is None else float(value)
+
+
+def _round(value):
+    """`value` with every float cut to SIGNIFICANT_DIGITS significant digits.
+
+    Significant digits, not decimal places: deep RRF scores differ in the fifth
+    decimal (1/159 against 1/160), and a fixed number of places would print them equal.
+    """
+    if isinstance(value, float):
+        return float(f"{value:.{SIGNIFICANT_DIGITS}g}")
+    if isinstance(value, dict):
+        return {k: _round(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_round(v) for v in value]
+    return value
+
+
+def _hoist_thresholds(gate: dict) -> None:
+    """Hold each signal's threshold once, in `gate.thresholds`.
+
+    The threshold a signal is held at is the one most of its decisions used; a
+    decision keeps its own `threshold` only where it differs (the rrf branch caps
+    it for a row only one retriever ranked). A reader takes
+    ``decision.get("threshold", gate["thresholds"].get(decision["signal"]))``.
+    """
+    if "thresholds" in gate:  # already hoisted: a second finish() must not empty it
+        return
+    counts: dict[str, dict] = {}
+    for d in gate["decisions"]:
+        if d.get("signal") is not None and d.get("threshold") is not None:
+            tally = counts.setdefault(d["signal"], {})
+            tally[d["threshold"]] = tally.get(d["threshold"], 0) + 1
+    # max() keeps the first of equal counts, and the dict keeps first-seen order.
+    held = {signal: max(tally, key=tally.get) for signal, tally in counts.items()}
+    for d in gate["decisions"]:
+        # A decision without a threshold (the unscored volume rule) reads None either way.
+        if "threshold" in d and held.get(d.get("signal")) == d["threshold"]:
+            del d["threshold"]
+    gate["thresholds"] = held
 
 
 def order_digest(rows: list[dict]) -> str:
@@ -220,4 +268,7 @@ class TraceRecorder:
         if not self.data["stages"]:
             # v0 without a time cue is one pass: the whole record above is stage 0.
             self.data["stages"] = [{"stage": 0, "searched": "all arms", "next": None}]
+        # Rounded first, so two thresholds that print the same are held as one.
+        self.data = _round(self.data)
+        _hoist_thresholds(self.data["gate"])
         return self.data

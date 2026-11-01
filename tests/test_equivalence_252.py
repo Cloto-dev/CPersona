@@ -22,6 +22,7 @@ import pytest
 from behaviour_252 import (
     SCENARIOS,
     _drop_keys_added_since_golden,
+    _recorded_traces_as_v2,
     _without_changed_values,
     fake_embed_one,
     observe,
@@ -52,9 +53,14 @@ GOLDEN = Path(__file__).parent / "golden" / "behaviour_252.json"
 # _DIFF_FLOAT_PLACES so a real failure is readable; the equality decision is
 # always the pairwise walk above.
 _COMPARE_ABS_TOL = 1e-5
+
+# Inside a recall trace (a dict carrying `trace_version`), numbers are cut to 4
+# significant digits (trace_version 2), so a recorded full-precision value and the
+# observed one differ by up to half a unit in the fourth digit: 5e-4 relative.
+_TRACE_REL_TOL = 6e-4
 _DIFF_FLOAT_PLACES = 6
 
-def _structures_equal(a: Any, b: Any, *, abs_tol: float = _COMPARE_ABS_TOL) -> bool:
+def _structures_equal(a: Any, b: Any, *, abs_tol: float = _COMPARE_ABS_TOL, rel_tol: float = 0.0) -> bool:
     """Deep-compare two JSON-shaped structures with float tolerance.
 
     Everything else (strings, ints, bools, None, dict keys, list order) is
@@ -74,15 +80,17 @@ def _structures_equal(a: Any, b: Any, *, abs_tol: float = _COMPARE_ABS_TOL) -> b
         # both as floats for the comparison.
         if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
             return False
-        return math.isclose(float(a), float(b), abs_tol=abs_tol, rel_tol=0.0)
+        return math.isclose(float(a), float(b), abs_tol=abs_tol, rel_tol=rel_tol)
     if isinstance(a, dict):
         if not isinstance(b, dict) or a.keys() != b.keys():
             return False
-        return all(_structures_equal(a[k], b[k], abs_tol=abs_tol) for k in a)
+        if "trace_version" in a:
+            rel_tol = _TRACE_REL_TOL
+        return all(_structures_equal(a[k], b[k], abs_tol=abs_tol, rel_tol=rel_tol) for k in a)
     if isinstance(a, list):
         if not isinstance(b, list) or len(a) != len(b):
             return False
-        return all(_structures_equal(x, y, abs_tol=abs_tol) for x, y in zip(a, b))
+        return all(_structures_equal(x, y, abs_tol=abs_tol, rel_tol=rel_tol) for x, y in zip(a, b))
     return a == b
 
 
@@ -121,7 +129,7 @@ async def test_behaviour_matches_the_pre_refactor_golden(scenario, golden):
             "construction and proves nothing."
         )
 
-    expected = golden[scenario.id]
+    expected = _recorded_traces_as_v2(golden[scenario.id])
     observed = _drop_keys_added_since_golden(await observe(scenario), expected)
     observed = _without_changed_values(observed, scenario.id)
     expected = _without_changed_values(expected, scenario.id)
@@ -354,3 +362,28 @@ def test_the_float_tolerance_is_untouched():
     """The control: the one leaf type that is compared loosely still is."""
     assert _structures_equal({"score": 0.5}, {"score": 0.5 + 1e-9})
     assert _structures_equal(3, 3.0)
+
+
+def test_a_trace_allows_its_four_significant_digits_and_nothing_else_does():
+    """Inside a trace the 4-digit rounding passes; outside one, and past it, nothing changes."""
+    # A raw keyword score: large enough that the absolute tolerance does not cover the rounding.
+    recorded, rounded = 123.456789, 123.5
+    assert _structures_equal({"trace_version": 2, "s": rounded}, {"trace_version": 2, "s": recorded})
+    assert not _structures_equal({"trace_version": 2, "s": 123.6}, {"trace_version": 2, "s": recorded})
+    assert not _structures_equal({"s": rounded}, {"s": recorded})
+    # A trace nested in a response carries its own allowance, not its siblings'.
+    assert not _structures_equal({"score": rounded, "trace": {"trace_version": 2}},
+                                 {"score": recorded, "trace": {"trace_version": 2}})
+
+
+def test_a_recorded_trace_moves_its_thresholds_without_losing_one():
+    recorded = {"trace_version": 1, "gate": {"decisions": [
+        {"ref": "mem:1", "signal": "rrf", "threshold": 0.0098},
+        {"ref": "mem:2", "signal": "rrf", "threshold": 0.0164},
+        {"ref": "mem:3", "signal": "rrf", "threshold": 0.0098},
+    ]}}
+    v2 = _recorded_traces_as_v2({"result": {"trace": recorded}})["result"]["trace"]
+    assert v2["trace_version"] == 2 and v2["gate"]["thresholds"] == {"rrf": 0.0098}
+    read = [d.get("threshold", v2["gate"]["thresholds"][d["signal"]]) for d in v2["gate"]["decisions"]]
+    assert read == [0.0098, 0.0164, 0.0098]
+    assert recorded["gate"]["decisions"][0]["threshold"] == 0.0098  # the golden itself is untouched

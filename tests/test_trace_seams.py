@@ -68,16 +68,22 @@ def test_the_digest_is_of_refs_in_order():
 
 
 @pytest.mark.asyncio
-async def test_a_traced_recall_names_the_provider_set(fake_embedding_client, installed):
+async def test_a_traced_recall_names_the_provider_set(fake_embedding_client, installed, monkeypatch):
     await _seed()
     out = await memory_handlers.do_recall(AGENT, QUERY, limit=5, trace=True)
     active = providers.active()
-    assert out["trace"]["providers"] == {"digest": active.digest, "slots": active.describe()}
-    assert {s["provider_id"] for s in out["trace"]["providers"]["slots"].values()} == {"builtin"}
+    # The built-in set: the digest alone, since its slots are the same in every call.
+    assert active.digest == providers.builtin_digest()
+    assert out["trace"]["providers"] == {"digest": active.digest}
     installed(_reversing_prior())
     swapped = await memory_handlers.do_recall(AGENT, QUERY, limit=5, trace=True)
     assert swapped["trace"]["providers"]["digest"] != out["trace"]["providers"]["digest"]
+    # Any other set: the slots too, so the trace says which provider replaced which.
+    assert swapped["trace"]["providers"]["slots"] == providers.active().describe()
     assert swapped["trace"]["providers"]["slots"]["prior"]["provider_id"] == "reversing"
+    # The built-in digest is of the built-in set, not of whatever is installed when first asked.
+    monkeypatch.setattr(providers, "_builtin_digest", None)
+    assert providers.builtin_digest() == out["trace"]["providers"]["digest"]
 
 
 @pytest.mark.asyncio

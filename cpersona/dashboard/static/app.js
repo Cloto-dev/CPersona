@@ -587,7 +587,7 @@ async function renderRecall(id) {
     [t("rcArms"), arms || `<p class="hint">${t("rcNone")}</p>`],
     [t("rcFusion"), recallList(fusion.map(refOf), rec, r => num3(fusion.find(x => refOf(x) === r)?.score))],
     [t("rcGate"), `<p class="hint parts"><span>${esc(t("rcPassed")(passed.length))}</span><span>${esc(t("rcDropped")(dropped.length))}</span></p>`
-      + recallList(dropped.map(d => d.ref), rec, r => { const d = dropped.find(x => x.ref === r); return esc(t("rcBelow")(num3(d.score), num3(d.threshold))); })],
+      + recallList(dropped.map(d => d.ref), rec, r => { const d = dropped.find(x => x.ref === r); return esc(t("rcBelow")(num3(d.score), num3(d.threshold ?? tr.gate?.thresholds?.[d.signal]))); })],
     [t("rcAutocut"), recallList(cutAuto, rec)],
     [t("rcCount"), recallList(cutCount, rec)],
   ];
