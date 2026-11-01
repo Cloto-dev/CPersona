@@ -1264,10 +1264,17 @@ function startGraph(G, lens) {
   }
   function fit() { Object.assign(s.view, fitView()); }
 
-  // A constellation on a flat night colour: memories are small plain dots, an agent a
-  // flat dot with a figure of its own, and colour marks only what is pointed at (or
-  // each agent, when asked for). Names fade in as the view comes closer.
-  const NIGHT = "#0f131c";
+  // A constellation on a flat ground: memories are small plain dots, an agent a flat
+  // dot with a figure of its own, and colour marks only what is pointed at (or each
+  // agent, when asked for). Names fade in as the view comes closer. The colours are
+  // the theme's --net-* tokens: graphite on the page's ground in the light theme, a
+  // night ground in the dark one.
+  const NET = Object.fromEntries(["ground", "dot", "dot-bold", "on", "ink", "accent", "label", "label-strong", "hub", "hub-ink"]
+    .map(k => [k, css(`--net-${k}`)]));
+  const NIGHT = NET.ground;
+  // Agents' own hues: light marks on the night ground, darker ones on the light; and
+  // the similarity lines a touch fainter on the light ground, where dark ink weighs more.
+  const AGENT_L = dark ? [80, 42] : [52, 30], LINE_GAIN = dark ? 1 : 0.9;
   // The page's own stack: its Japanese faces draw "…" as centred dots.
   const FONT = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif';
   const hsl = (h, sat, l, a = 1) => `hsla(${((h % 360) + 360) % 360},${sat}%,${l}%,${a})`;
@@ -1299,7 +1306,7 @@ function startGraph(G, lens) {
     c.width = c.height = size * 2;
     const x = c.getContext("2d");
     x.scale(2, 2); x.translate(size / 2, size / 2);
-    const base = uniform ? "#c7d6f2" : hsl(L.h1, L.sat, 80), ink = uniform ? "#4f6aa6" : hsl(L.h2, L.sat, 42);
+    const base = uniform ? NET.hub : hsl(L.h1, L.sat, AGENT_L[0]), ink = uniform ? NET["hub-ink"] : hsl(L.h2, L.sat, AGENT_L[1]);
     x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fillStyle = base; x.fill();
     if (!plain) {
       const figure = FIGURES[Math.floor(mix01(`${agent}:k`) * FIGURES.length)];
@@ -1324,10 +1331,10 @@ function startGraph(G, lens) {
     } else {
       // Coloured by agent, a memory takes its agent's first hue.
       const L = s.byAgent && n.agent ? lookOf(n.agent) : null;
-      ctx.fillStyle = on ? "#ffffff" : L ? hsl(L.h1, L.sat, 80) : "#c7d6f2";
+      ctx.fillStyle = on ? NET.on : L ? hsl(L.h1, L.sat, AGENT_L[0]) : NET.dot;
       ctx.beginPath(); ctx.arc(n.x, n.y, r * (on ? 0.95 : 0.7), 0, Math.PI * 2); ctx.fill();
     }
-    if (n === s.sel || n.hop === 0) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1 / k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); }
+    if (n === s.sel || n.hop === 0) { ctx.strokeStyle = NET.on; ctx.lineWidth = 1 / k; ctx.beginPath(); ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2); ctx.stroke(); }
   }
 
   function draw() {
@@ -1337,7 +1344,7 @@ function startGraph(G, lens) {
     ctx.setTransform(s.DPR * view.k, 0, 0, s.DPR * view.k, s.DPR * view.x, s.DPR * view.y);
     const focus = s.hover || s.sel, near = focus ? adj.get(focus.id) : null;
     const lit = n => !focus || n === focus || near.has(n.id);
-    const ink = "170,200,255", accent = "#ffd9ef", grey = "#c9dcff";
+    const ink = NET.ink, accent = NET.accent, grey = NET.label;
     ctx.lineWidth = 0.9 / view.k;
     // Lines go out in batches, one path per kind and strength step, so tens of
     // thousands of lines cost a few dozen strokes; the lines of the point pointed at
@@ -1362,8 +1369,8 @@ function startGraph(G, lens) {
         if (!path) steps.set(step, path = new Path2D());
         path.moveTo(l.a.x, l.a.y); path.lineTo(l.b.x, l.b.y);
       }
-      ctx.strokeStyle = kind === "declared" ? accent : `rgb(${ink})`;
-      for (const [alpha, path] of steps) { ctx.globalAlpha = Math.max(0.02, alpha); ctx.stroke(path); }
+      ctx.strokeStyle = kind === "declared" ? accent : ink;
+      for (const [alpha, path] of steps) { ctx.globalAlpha = Math.max(0.02, alpha * LINE_GAIN); ctx.stroke(path); }
     }
     if (anyHot) { ctx.globalAlpha = 0.9; ctx.strokeStyle = accent; ctx.stroke(hot); }
     // Plain memory stars, the bulk of a large picture, are filled as two paths (lit and
@@ -1380,7 +1387,7 @@ function startGraph(G, lens) {
       ctx.globalAlpha = lit(n) ? 1 : 0.18;
       drawStar(n, r, n === focus);
     }
-    ctx.fillStyle = bold ? "#e6eeff" : "#c7d6f2";
+    ctx.fillStyle = bold ? NET["dot-bold"] : NET.dot;
     ctx.globalAlpha = 1; ctx.fill(plainLit);
     ctx.globalAlpha = 0.18; ctx.fill(plainDim);
     ctx.textAlign = "center"; ctx.textBaseline = "top";
@@ -1397,7 +1404,7 @@ function startGraph(G, lens) {
       if (n.kind === "project" && n.count >= 50) a = Math.max(a, focus && !lit(n) ? 0.25 : 0.75);
       if (a < 0.02) continue;
       ctx.globalAlpha = a;
-      ctx.fillStyle = n === focus || hub(n) ? "#eef3ff" : grey;
+      ctx.fillStyle = n === focus || hub(n) ? NET["label-strong"] : grey;
       const label = n.kind === "memory" ? day(n.timestamp) : n.name, ly = n.y + radius(n) * (hub(n) ? 1.4 : 1) + 4 / view.k;
       ctx.strokeText(label, n.x, ly); ctx.fillText(label, n.x, ly);
     }

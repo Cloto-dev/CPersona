@@ -3,9 +3,9 @@
 Read from app.css itself, so a token changed to a colour that fails is caught here
 rather than by eye: text tokens against every surface they sit on (SC 1.4.3, 4.5:1),
 and the bars and legend lines that carry information against what is behind them
-(SC 1.4.11, 3:1). The network is drawn on a dark ground in both themes, so the
-tokens declared for it must be the dark theme's, and its legend lines are checked
-against that ground as the canvas draws them.
+(SC 1.4.11, 3:1). The memory network follows the theme (2.6.17): its canvas reads
+the --net-* tokens, so its ground, marks, names and legend lines are checked per
+theme against that ground, as the canvas and the legend draw them.
 """
 
 import colorsys
@@ -31,8 +31,6 @@ def _tokens(block: str) -> dict[str, str]:
 
 LIGHT = _tokens(_block(r"^  :root"))
 DARK = _tokens(_block(r"@media \(prefers-color-scheme: dark\) \{\s*:root"))
-NETWORK = _tokens(_block(r"\.graph\.whole"))
-NIGHT = re.search(r'const NIGHT = "(#[0-9a-f]{6})"', JS).group(1)
 
 
 def _rgb(h: str) -> tuple[float, ...]:
@@ -61,13 +59,16 @@ def over(colour: str, alpha: float, ground: str) -> tuple[float, ...]:
 
 
 TEXT = ("text", "muted", "faint", "accent")
+# The --net-* tokens the canvas reads; each must be declared in both themes.
+NET_DRAWN = ("ground", "dot", "dot-bold", "on", "ink", "accent", "label", "label-strong", "hub", "hub-ink")
 SURFACES = ("base", "recessed", "raised", "accent-soft")
 
 
 def test_the_tokens_were_read():
-    for theme in (LIGHT, DARK, NETWORK):
+    for theme in (LIGHT, DARK):
         assert set(TEXT + SURFACES + ("bar", "mark", "on-accent")) <= set(theme), theme
-    assert NIGHT == "#0f131c"
+        assert {f"net-{k}" for k in NET_DRAWN} <= set(theme), theme
+    assert DARK["net-ground"] == "#0f131c" and LIGHT["net-ground"] == LIGHT["base"]
 
 
 @pytest.mark.parametrize("theme_name", ["light", "dark"])
@@ -97,23 +98,49 @@ def test_selected_text_marks_and_bars_hold_their_contrast(theme_name):
     assert ratio(theme["bar"], theme["recessed"]) >= 3
 
 
-def test_the_network_takes_the_dark_tokens_and_reads_on_its_ground():
-    assert {k: DARK[k] for k in NETWORK} == NETWORK
-    for fg in ("text", "muted", "faint"):
-        assert ratio(NETWORK[fg], NIGHT) >= 4.5, fg
+def test_the_canvas_draws_with_the_net_tokens():
+    # Every colour the network draws comes from the theme's tokens, none fixed in the script.
+    drawn = re.search(r"const NET = Object\.fromEntries\(\[([^\]]*)\]", JS).group(1)
+    assert set(re.findall(r'"([a-z-]+)"', drawn)) == set(NET_DRAWN)
+    start = JS.index("function startGraph(")
+    graph = JS[start : JS.index("\nfunction ", start + 1)]
+    assert not re.findall(r'"#[0-9a-fA-F]{3,6}"', graph), re.findall(r'"#[0-9a-fA-F]{3,6}"', graph)
 
 
-def test_the_legend_draws_each_line_as_the_canvas_does_and_visibly():
-    # The canvas: declared relations in pink, every other line in the blue ink.
-    assert 'accent = "#ffd9ef"' in JS and 'ink = "170,200,255"' in JS
-    ink = "#aac8ff"
-    legend = {k: (c, float(a or 1)) for k, c, a in re.findall(
-        r"\.k-([a-z]+)(?:, \.k-[a-z]+)? \{ stroke: (#[0-9a-f]{6});(?: stroke-opacity: ([0-9.]+);)? \}", CSS)}
-    assert legend["declared"][0] == "#ffd9ef"
-    for kind in ("co", "structure"):
-        assert legend[kind][0] == ink, kind
-    for kind, (colour, alpha) in legend.items():
-        assert ratio(over(colour, alpha, NIGHT), NIGHT) >= 3, (kind, colour, alpha)
+@pytest.mark.parametrize("theme_name", ["light", "dark"])
+def test_the_network_reads_on_its_ground(theme_name):
+    theme = LIGHT if theme_name == "light" else DARK
+    ground = theme["net-ground"]
+    # The heading, hints and panels over the canvas use the page's text tokens.
+    for fg in ("text", "muted", "faint", "net-label", "net-label-strong", "net-on"):
+        assert ratio(theme[fg], ground) >= 4.5, fg
+    # Memories and agents are marks that carry information: 3:1.
+    for mark in ("net-dot", "net-dot-bold", "net-hub", "net-accent"):
+        assert ratio(theme[mark], ground) >= 3, mark
+
+
+@pytest.mark.parametrize("theme_name", ["light", "dark"])
+def test_the_legend_draws_each_line_as_the_canvas_does_and_visibly(theme_name):
+    theme = LIGHT if theme_name == "light" else DARK
+    ground = theme["net-ground"]
+    legend = {k: (c, float(a or 1)) for ks, c, a in re.findall(
+        r"((?:\.k-[a-z]+(?:, )?)+) \{ stroke: var\(--([a-z-]+)\);(?: stroke-opacity: ([0-9.]+);)? \}", CSS)
+        for k in re.findall(r"\.k-([a-z]+)", ks)}
+    # Declared relations in the canvas's accent; the lines drawn in its ink use the ink.
+    assert legend["declared"][0] == "net-accent"
+    for kind in ("co", "part", "structure"):
+        assert legend[kind][0] == "net-ink", kind
+    for kind, (token, alpha) in legend.items():
+        assert ratio(over(theme[token], alpha, ground), ground) >= 3, (kind, token, alpha)
+
+
+@pytest.mark.parametrize("theme_name", ["light", "dark"])
+def test_the_similarity_swatch_reads_on_the_panel(theme_name):
+    # The settings panel's swatch for similar lines runs between two hues; both ends
+    # hold 3:1 on the panel it sits on.
+    theme = LIGHT if theme_name == "light" else DARK
+    for end in ("net-grad-a", "net-grad-b"):
+        assert ratio(theme[end], theme["raised"]) >= 3, end
 
 
 @pytest.mark.parametrize("theme_name", ["light", "dark"])
