@@ -65,6 +65,14 @@ async def build() -> None:
     ):
         await db.execute("INSERT INTO profiles (agent_id, user_id, content, updated_at) VALUES (?, ?, ?, ?)", (agent, user, content, updated))
     await db.commit()
+    # Two logged calls, so the recall log's pages have rows: a recall and a reconstruct,
+    # run through the tools' own boundaries with the log on (keyword search only, since
+    # the fixture has no embedding backend).
+    from cpersona import config, server
+
+    config.RECALL_LOG = True
+    await server.do_recall_boundary("claude-code", "garden plan tomatoes", 5, False, "", [], None, "")
+    await server.do_reconstruct_boundary("claude-code", "Caroline Malmö studio", 3, None, None, None, False, "", None, "")
     await close_db()
 
 
