@@ -178,6 +178,22 @@ try {
 } catch (e) {
   failures.push(`overview: ${e.message}`);
 }
+// How often a memory was recalled: a count with no time of the last recall (which the
+// schema allows: the two columns are set independently) shows the count alone, not a
+// sentence cut off after "last". The fixture's garden memory has a count of 3 and no time.
+try {
+  const used = await evaluate(`[["en", 3, "2026-10-11 13:04"], ["en", 3, ""], ["en", 0, ""], ["ja", 3, "2026-10-11 13:04"], ["ja", 3, ""], ["ja", 0, ""]]
+    .map(([l, n, w]) => T[l].usedN(n, w))`);
+  const want = ["3 times, last 2026-10-11 13:04", "3 times", "Not yet", "3 回 (最後は 2026-10-11 13:04)", "3 回", "まだありません"];
+  if (JSON.stringify(used) !== JSON.stringify(want)) failures.push(`recalled: the count reads ${JSON.stringify(used)}, not ${JSON.stringify(want)}`);
+  await evaluate(`localStorage.setItem("cp.layoutMode", "classic"); true`);
+  await open("&view=memories&id=2&lang=en");
+  await waitFor(`!!document.querySelector("#drawer.open .doc")`);
+  const shown = await evaluate(`[...document.querySelectorAll("#drawer.open dt")].find(d => d.textContent === "Times recalled")?.nextElementSibling?.textContent`);
+  if (shown !== "3 times") failures.push(`recalled: the garden memory, recalled 3 times with no time, shows ${JSON.stringify(shown)}`);
+} catch (e) {
+  failures.push(`recalled: ${e.message}`);
+}
 // The palette's key is named as the keyboard has it: ⌘K on a Mac, Ctrl+K elsewhere,
 // in the hint under the classic layout's views and in the settings' list of keys.
 const { userAgent } = (await send("Browser.getVersion")).result;
