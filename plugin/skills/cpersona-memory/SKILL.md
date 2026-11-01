@@ -86,21 +86,22 @@ From source (development): `git clone https://github.com/Cloto-dev/cpersona.git`
 CPersona is embedding-server-agnostic — it talks to any HTTP endpoint that
 implements `POST /embed` → `{ "embeddings": [[float,…],…], "dimensions": int }`.
 The reference server is [CEmbedding](https://github.com/Cloto-dev/CEmbedding)
-(MIT), which runs `jina-v5-nano` on-device (CPU) — the exact model CPersona was
-tuned and benchmarked against:
+(MIT), which runs `bge-m3` on-device (CPU), MIT-licensed and multilingual — the
+model CPersona recommends (the earlier recommendation, `jina-v5-nano`, is licensed
+for non-commercial use only):
 
 ```bash
 # one-time model fetch into ./data/models (run both commands from the same directory)
-uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
-EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
+uvx --from "cembedding[onnx]" cembedding-download-model --model bge-m3
+EMBEDDING_PROVIDER=onnx_bge_m3 uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
 ```
 
 Or install it onto your PATH with `pip install "cembedding[onnx]"`, then run
-`cembedding-download-model --model jina-v5-nano` and
-`EMBEDDING_PROVIDER=onnx_jina_v5_nano cembedding`. From source: `git clone
+`cembedding-download-model --model bge-m3` and
+`EMBEDDING_PROVIDER=onnx_bge_m3 cembedding`. From source: `git clone
 https://github.com/Cloto-dev/CEmbedding.git`, `cd CEmbedding`,
-`pip install ".[onnx]"`, then `cembedding-download-model --model jina-v5-nano`
-and `EMBEDDING_PROVIDER=onnx_jina_v5_nano python -m cembedding` — the download
+`pip install ".[onnx]"`, then `cembedding-download-model --model bge-m3`
+and `EMBEDDING_PROVIDER=onnx_bge_m3 python -m cembedding` — the download
 and the provider are not optional here any more than in the recipe above; a
 server started without them serves a different backend than the one just
 downloaded.

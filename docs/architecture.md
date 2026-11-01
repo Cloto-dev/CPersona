@@ -15,7 +15,7 @@ flowchart TB
         db[("SQLite database<br>memories — content + embedding<br>episodes — summaries<br>profiles — attributes<br>memories_fts / episodes_fts — FTS5<br>pending_memory_tasks — queue")]
         tools --> db
     end
-    embed["Embedding server<br>jina-v5-nano ONNX, 768d"]
+    embed["Embedding server<br>bge-m3 ONNX, 1024d"]
     host -- "MCP (JSON-RPC)" --> tools
     tools -. "HTTP — optional, and the only network boundary" .-> embed
 ```

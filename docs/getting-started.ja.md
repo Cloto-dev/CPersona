@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:5fbfa31d9000a2c605eb0c6e4fb1569ded3e7ceb -->
+<!-- i18n-source: docs/getting-started.md@blob:0ea5cc921da7e9d91d149d31a333b60cf7e5e883 -->
 
 # はじめに
 
@@ -167,12 +167,12 @@ CPERSONA_EMBEDDING_URL=http://<host>:8401/embed` を渡してください。
 
 ```bash
 export CPERSONA_AUTH_TOKEN=$(openssl rand -hex 32)
-docker compose run --rm embedding cembedding-download-model --model jina-v5-nano
+docker compose run --rm embedding cembedding-download-model --model bge-m3
 docker compose up -d
 ```
 
 真ん中の行は飛ばさないでください。これが無いと、embedding サーバーは最初の
-リクエストで重み (このモデルで約 800 MB) を取りに行きます。その間ポートは接続を
+リクエストで重み (このモデルで約 550 MB) を取りに行きます。その間ポートは接続を
 受け付けますが、応答はできません。先にボリュームへダウンロードしておけば、原因の分からない
 タイムアウトではなく、待っていればよい 1 つの手順になります。
 
@@ -251,22 +251,30 @@ CPersona が読むのは **`embeddings`** だけです。`dimensions` はリフ�
 
 ### リファレンス実装 { #the-reference-server }
 
-[CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) は jina-v5-nano を
+[CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) は bge-m3 を
 オンデバイス (CPU) で動かし、このとおりのエンドポイントを公開します。
 
 ```bash
 # モデルを ./data/models にダウンロード
-uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
+uvx --from "cembedding[onnx]" cembedding-download-model --model bge-m3
 
 # サーバーを起動 (カレントディレクトリの ./data/models を読みます)
-EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding
+EMBEDDING_PROVIDER=onnx_bge_m3 uvx --from "cembedding[onnx]" cembedding
 ```
 
 `pip install "cembedding[onnx]"` で PATH に入れて
-`cembedding-download-model --model jina-v5-nano` → `cembedding` としても同じです。
+`cembedding-download-model --model bge-m3` →
+`EMBEDDING_PROVIDER=onnx_bge_m3 cembedding` としても同じです。
 ソースチェックアウトからなら、同じ 2 手順は
-`python -m cembedding.download_model --model jina-v5-nano` と
-`python -m cembedding` です。
+`python -m cembedding.download_model --model bge-m3` と
+`EMBEDDING_PROVIDER=onnx_bge_m3 python -m cembedding` です。プロバイダは毎回指定してください。
+指定せずに起動したサーバーは、いまダウンロードしたものとは別のモデルを返します。
+
+`onnx_bge_m3` は bge-m3 の int8 の ONNX 変換
+([Xenova/bge-m3](https://huggingface.co/Xenova/bge-m3)、約 550 MB、1024 次元) を
+読み込みます。Apple Silicon では `mlx_bge_m3` と `auto_bge_m3` が bge-m3 を MLX の
+fp16 で動かし、こちらのほうが速く動きます。ただしベクトルは ONNX のものと違うので、
+1 つのストアではどちらか一方だけを使ってください。
 
 いずれの場合も
 `HTTP embedding endpoint started on http://127.0.0.1:8401/embed`
@@ -277,11 +285,6 @@ curl -s http://127.0.0.1:8401/embed \
   -H 'content-type: application/json' \
   -d '{"texts":["hello world"]}' | head -c 200
 ```
-
-CPersona の既定値は jina-v5-nano (768 次元) に合わせて調整されています。契約を
-満たす他のサーバーでも動きます。実測値が公開されているモデルは
-[`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md)
-にあります。
 
 CPersona が必要とするのは URL だけです。ただし、**参照サーバーをどう監視下で動かすか
 は重要**で、そのまま起動するやり方では動きません。
@@ -303,6 +306,38 @@ stdin を開いたままにしてください。サービスマネージャの�
 `EMBEDDING_TRANSPORT=streamable-http` は stdin を読まないので、監視下でもそのまま
 動きます。ただし REST `/embed` の**代わりに** MCP エンドポイントを提供するため、
 `/embed` に POST する CPersona の `http` モードでは選択肢になりません。
+
+### どのモデルを使うか { #which-model }
+
+推奨するモデルは bge-m3 です。MIT ライセンスで、多言語に対応しています。2.6.16 までの
+このページは jina-v5-nano を推奨していましたが、そのライセンス
+([CC BY-NC 4.0](https://huggingface.co/jinaai/jina-embeddings-v5-text-nano-retrieval))
+は商用での利用を認めていません。推奨を替えた理由はライセンスで、2 つのモデルの精度の差は
+主張しません。
+
+小さな機械なら、all-MiniLM-L6-v2 (`--model miniml`、`EMBEDDING_PROVIDER=onnx_miniml`。
+Apache 2.0、384 次元) がずっと小さく済みます。ただし英語専用のモデルです。
+
+CPersona は想起のしきい値をストアごとに、つないだモデルに合わせて較正します。保存済みの
+ベクトルの次元が変わったときは、起動時に較正し直します。契約を満たす他のサーバーでも
+動きます。実測値が公開されているモデルは
+[`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md)
+にあります。
+
+### jina-v5-nano のストアを移す { #moving-from-jina }
+
+jina-v5-nano のベクトル (768 次元) は、bge-m3 のベクトル (1024 次元) と比べられません。
+自動では切り替わりません。ストアは、URL が指すサーバーを使い続けます。移す手順は次のとおりです。
+
+1. 上の手順で bge-m3 のサーバーを起動し、`CPERSONA_EMBEDDING_URL` をそこに向けて
+   CPersona を再起動します。
+2. `check_health(fix=true)` を実行します。`embedding_dimension_mismatch` を報告し、
+   768 次元のベクトルを消して、その行を bge-m3 で埋め込み直します。1 回の実行で
+   埋め込み直すのは、テーブルごとに `CPERSONA_REEMBED_ROW_CAP` (5,000) 行までです。
+   埋め込みのない行が無くなるまで、繰り返し実行してください。
+3. `calibrate_threshold` を実行します。
+
+埋め込み直すまでの行は、キーワード検索でだけ想起されます。
 
 ## 3. MCP クライアントに登録する { #3-register-cpersona-with-your-mcp-client }
 

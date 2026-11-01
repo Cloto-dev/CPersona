@@ -121,15 +121,16 @@ something that used to work and stopped.
 downloads the model once, into `./data/models`:
 
 ```bash
-uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
-EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding
+uvx --from "cembedding[onnx]" cembedding-download-model --model bge-m3
+EMBEDDING_PROVIDER=onnx_bge_m3 uvx --from "cembedding[onnx]" cembedding
 ```
 
 That serves `http://127.0.0.1:8401/embed`. On a PATH install
 (`pip install "cembedding[onnx]"`) the same two steps are
-`cembedding-download-model --model jina-v5-nano` and `cembedding`; from a source
-checkout, `python -m cembedding.download_model --model jina-v5-nano` and
-`python -m cembedding`.
+`cembedding-download-model --model bge-m3` and
+`EMBEDDING_PROVIDER=onnx_bge_m3 cembedding`; from a source checkout,
+`python -m cembedding.download_model --model bge-m3` and
+`EMBEDDING_PROVIDER=onnx_bge_m3 python -m cembedding`.
 
 **Any conforming backend.** CPersona is embedding-server-agnostic. The server
 must implement `POST /embed`, taking `{"texts": ["…"]}` and returning

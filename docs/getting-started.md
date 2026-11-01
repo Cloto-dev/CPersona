@@ -181,12 +181,12 @@ to each other, so vector search works without a second setup:
 
 ```bash
 export CPERSONA_AUTH_TOKEN=$(openssl rand -hex 32)
-docker compose run --rm embedding cembedding-download-model --model jina-v5-nano
+docker compose run --rm embedding cembedding-download-model --model bge-m3
 docker compose up -d
 ```
 
 Do not skip the middle line. Without it, the embedding server downloads its
-weights — around 800 MB — on the first request, while the port is already
+weights — around 550 MB — on the first request, while the port is already
 accepting connections it cannot answer. Fetching them once into the volume
 turns a timeout you would have to diagnose into a step you can watch.
 
@@ -269,21 +269,30 @@ Three requirements are easy to miss. Each one degrades ranking silently:
 
 ### The reference server
 
-[CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) runs jina-v5-nano
+[CEmbedding](https://github.com/Cloto-dev/CEmbedding) (MIT) runs bge-m3
 on-device (CPU) and exposes exactly this endpoint:
 
 ```bash
 # Download the model into ./data/models
-uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
+uvx --from "cembedding[onnx]" cembedding-download-model --model bge-m3
 
 # Run the server (it reads ./data/models from the current directory)
-EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding
+EMBEDDING_PROVIDER=onnx_bge_m3 uvx --from "cembedding[onnx]" cembedding
 ```
 
 Or put it on your PATH with `pip install "cembedding[onnx]"` and run
-`cembedding-download-model --model jina-v5-nano`, then `cembedding`. From a
-source checkout the same two steps are `python -m cembedding.download_model
---model jina-v5-nano` and `python -m cembedding`.
+`cembedding-download-model --model bge-m3`, then
+`EMBEDDING_PROVIDER=onnx_bge_m3 cembedding`. From a source checkout the same two
+steps are `python -m cembedding.download_model --model bge-m3` and
+`EMBEDDING_PROVIDER=onnx_bge_m3 python -m cembedding`. Name the provider every
+time: a server started without it serves a different model from the one just
+downloaded.
+
+`onnx_bge_m3` loads the int8 ONNX conversion of bge-m3
+([Xenova/bge-m3](https://huggingface.co/Xenova/bge-m3), about 550 MB, 1024
+dimensions). On Apple Silicon, `mlx_bge_m3` and `auto_bge_m3` run bge-m3 through
+MLX at fp16, which is faster; their vectors differ from the ONNX ones, so keep
+one store on one of the two.
 
 Either way you should see
 `HTTP embedding endpoint started on http://127.0.0.1:8401/embed`. Verify it
@@ -294,10 +303,6 @@ curl -s http://127.0.0.1:8401/embed \
   -H 'content-type: application/json' \
   -d '{"texts":["hello world"]}' | head -c 200
 ```
-
-CPersona's defaults are tuned against jina-v5-nano (768 dimensions). Any other
-server satisfying the contract works. Models with published measurements are
-listed in [`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
 
 CPersona only needs the URL. But **how you supervise the reference server
 matters**, and the obvious way does not work.
@@ -319,6 +324,40 @@ cembedding'`. In a terminal, the terminal already does this.
 `EMBEDDING_TRANSPORT=streamable-http` does not read stdin, so it supervises
 cleanly. But it serves the MCP endpoint **instead of** REST `/embed`, so it is
 not an option for CPersona's `http` mode, which posts to `/embed`.
+
+### Which model { #which-model }
+
+bge-m3 is the recommended model: it is MIT-licensed and multilingual. Up to
+2.6.16 these pages recommended jina-v5-nano, whose license
+([CC BY-NC 4.0](https://huggingface.co/jinaai/jina-embeddings-v5-text-nano-retrieval))
+does not allow commercial use. The change is about the license; no accuracy
+difference between the two is claimed.
+
+On a small machine, all-MiniLM-L6-v2 (`--model miniml`,
+`EMBEDDING_PROVIDER=onnx_miniml`; Apache 2.0, 384 dimensions) is much smaller,
+but it is an English-only model.
+
+CPersona calibrates its recall thresholds per store, against the model you
+connect, and recalibrates at startup when the stored vectors' dimension changes.
+Any other server satisfying the contract works. Models with published
+measurements are listed in
+[`benchmarks/`](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/README.md).
+
+### Moving a store from jina-v5-nano { #moving-from-jina }
+
+jina-v5-nano's vectors (768 dimensions) cannot be compared with bge-m3's (1024).
+Nothing switches on its own: a store keeps using whatever server its URL names.
+To move one:
+
+1. Start the bge-m3 server as above, point `CPERSONA_EMBEDDING_URL` at it, and
+   restart CPersona.
+2. Run `check_health(fix=true)`. It reports `embedding_dimension_mismatch`,
+   clears the 768-dimension vectors, and re-embeds those rows with bge-m3, up to
+   `CPERSONA_REEMBED_ROW_CAP` (5,000) rows per table per run. Run it again until
+   it reports no row without an embedding.
+3. Run `calibrate_threshold`.
+
+Until a row is re-embedded, recall reaches it by keyword search only.
 
 ## 3. Register CPersona with your MCP client
 
