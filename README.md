@@ -93,8 +93,8 @@ pip install cpersona  # or install it
 **2. Run an embedding server** — strongly recommended; it powers the vector layer
 
 ```bash
-uvx --from "cembedding[onnx]" cembedding-download-model --model jina-v5-nano
-EMBEDDING_PROVIDER=onnx_jina_v5_nano uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
+uvx --from "cembedding[onnx]" cembedding-download-model --model bge-m3
+EMBEDDING_PROVIDER=onnx_bge_m3 uvx --from "cembedding[onnx]" cembedding   # serves http://127.0.0.1:8401/embed
 ```
 
 The reference server's lifetime is bound to its stdin. Started with stdin closed — by a service manager, by `nohup … </dev/null`, or from an agent's background shell — it binds the port and exits within the same second with status 0. Give it a stdin that stays open (`sleep infinity | cembedding`); [Getting Started](https://cloto-dev.github.io/CPersona/getting-started/#the-reference-server) has the details.

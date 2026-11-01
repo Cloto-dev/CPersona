@@ -233,13 +233,13 @@ written against both:
 - Set **`CPERSONA_RECALL_MODE=rsf`**. FTS5 tokenizes CJK poorly, and rsf keeps
   the keyword channel's score magnitude in the merge, which is the signal that
   compensates. No further CJK-specific settings exist.
-- Known characteristics of `jina-v5-nano` — the model this project runs, and
-  the one the reference embedding server downloads by default — on Japanese,
-  confirmed by long-term production use: **strong when at least one
+- Known characteristics of `jina-v5-nano` on Japanese, from long production
+  use before this project moved to bge-m3: **strong when at least one
   proper-noun or identifier anchor overlaps** between query and memory;
-  **weak on pure concept matches** with no shared vocabulary. Phrasing queries
-  with a concrete anchor term ("keyword anchoring") is a correct adaptation to
-  the current model, not a workaround to feel bad about.
+  **weak on pure concept matches** with no shared vocabulary. They have not
+  been measured again on bge-m3. Where a model behaves this way, phrasing
+  queries with a concrete anchor term ("keyword anchoring") is a correct
+  adaptation to it, not a workaround to feel bad about.
 - The model slot is replaceable (`CEmbedding` provider). If you swap the
   embedding model, re-embed the corpus in full and then run
   `calibrate_threshold`. The server auto-recalibrates on a *dimension* change,

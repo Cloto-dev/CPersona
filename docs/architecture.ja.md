@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/architecture.md@blob:4203769b504b360d9cec41fd53ad7b605e9e1173 -->
+<!-- i18n-source: docs/architecture.md@blob:904e2dae7a9a6cc8fc6e13d813db67f2d46dc7c5 -->
 
 # アーキテクチャ
 
@@ -18,7 +18,7 @@ flowchart TB
         db[("SQLite データベース<br>memories — 本文 + 埋め込み<br>episodes — セッション要約<br>profiles — 属性<br>memories_fts / episodes_fts — FTS5<br>pending_memory_tasks — キュー")]
         tools --> db
     end
-    embed["埋め込みサーバー<br>jina-v5-nano ONNX, 768 次元"]
+    embed["埋め込みサーバー<br>bge-m3 ONNX, 1024 次元"]
     host -- "MCP (JSON-RPC)" --> tools
     tools -. "HTTP — 任意であり、唯一のネットワーク境界" .-> embed
 ```
