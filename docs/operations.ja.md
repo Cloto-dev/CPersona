@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/operations.md@blob:4202fcc18b1723f4db06522bd17ba9897a50d830 -->
+<!-- i18n-source: docs/operations.md@blob:efe7c12e6e133c4a7c124a34b4ef9abb42cfdfaf -->
 
 # 運用 Runbook
 
@@ -447,7 +447,7 @@ python -m cpersona.block_index --db /path/to/cpersona.db status
 (`changes_since_build`) を報告します。ファイルが無ければ 1、あっても使えなければ 2 で終了します。
 ある想起がどちらから読んだかを見るには、その trace を求めます (`trace=true`)。`block_source` が `file`、
 またはファイルを読まなかった理由つきの `sqlite` を示します
-([想起の trace](RECALL_PROCESS_DESIGN.md#12-shape-trace_version-1))。
+([想起の trace](RECALL_PROCESS_DESIGN.md#12-shape-trace_version-2))。
 
 設定が on の間、`check_health` は `block_index_absent`、`block_index_unusable`、`block_index_behind` を
 観察 (info) として報告します。どの想起も SQLite から答えを得ているためです。設定が off の時に出るのは

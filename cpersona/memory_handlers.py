@@ -2583,7 +2583,11 @@ async def do_recall(
         **({"propagation": propagation.POLICY} if propagation_seat else {}),
     })
     rec.set("server_version", __version__)
-    rec.set("providers", {"digest": active.digest, "slots": active.describe()})
+    # The slots only when they are not the built-in set; the digest says which set ran either way.
+    rec.set("providers", {
+        "digest": active.digest,
+        **({"slots": active.describe()} if active.digest != providers.builtin_digest() else {}),
+    })
     rec.set("scope", {"agent_id": agent_id, "project_id": project_id, "channel": channel, "source_id": source_id})
     rec.set("request", {
         "limit": limit, "deep": deep, "mode": RECALL_MODE,

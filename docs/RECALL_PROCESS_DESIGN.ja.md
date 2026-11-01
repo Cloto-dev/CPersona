@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:3d36ee41e87783ece54e989a769544cfdd241efc -->
+<!-- i18n-source: docs/RECALL_PROCESS_DESIGN.md@blob:419567dd83f59651f55a5c6f17dae928c992248b -->
 
 # 想起のプロセス v0 — 設計 { #the-recall-process-v0-design }
 
@@ -34,13 +34,14 @@ v0 はサーバーに保存しません。保存したい呼び出し側 (ベン
 記録には保存された本文は入りません。参照・順位・スコア・理由だけです。記録が手元の外へ出る時に何を含めてよいかは、
 別に決めます。
 
-### 1.2 形式 (`trace_version` 1) { #12-shape-trace_version-1 }
+### 1.2 形式 (`trace_version` 2) { #12-shape-trace_version-2 }
 
 | 欄 | 中身 |
 | --- | --- |
-| `trace_version` | `1`。既存の欄の意味が変わる時だけ上げる。欄を足すだけなら上げない |
+| `trace_version` | `2`。既存の欄の意味が変わる時だけ上げる。欄を足すだけなら上げない。2 で、数を有効数字 4 桁にし、信号ごとの閾値を `gate.thresholds` に移し、組み込みの組では `providers.slots` を省いた |
 | `policy` | `{scoring, process}`: その呼び出しが動いたスコアリングのバージョンと想起のプロセスの方針 (手がかり無しは `single-pass-v0`、有りは `cued-v0.3`。§2.11 より前は `cued-v0.2`、§2.10 より前は `cued-v0.1`、§2.8 より前は `cued-v0`) |
 | `server_version` | 答えたサーバーのバージョン |
+| `providers` | 呼び出しが使った provider の組の `digest`。組み込みの組でない時だけ、その `slots` (スロットごとの provider・役割・契約・方針) も載る |
 | `scope` | 解決後の `agent_id`・`project_id`・`channel`・`source_id` |
 | `request` | `limit`、想起の深さ、`deep`、融合方式、confidence の並べ方、事前分布の設定、エピソードペナルティが有効か、渡された `time_cue` |
 | `config` | 埋め込みの方式とモデル、走査窓・reach・far リストの上限、融合ゲートと autocut が有効か |
@@ -49,7 +50,7 @@ v0 はサーバーに保存しません。保存したい呼び出し側 (ベン
 | `block_source` | Block のアームが走った時にある。調べた行をどこから読んだか。`file` (Block の索引ファイル、[約束 §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) なら `changed_records` と `live_rows` (作った後に変わった記録と、その横で SQLite から読んだ行の数)。`sqlite` なら、ファイルを読まなかった理由 `reason`: `off`、`no_file`、`unusable`、`width`、`no_log`、`logging_off`、`generation`、`newer_than_snapshot`、`pruned`、`schema_changed`、`live_bound`、`unholdable_value`、`error`。答えはどちらでも同じ |
 | `fusion` | 候補ごとの融合スコアと、各検索器の寄与 |
 | `scoring` | 効いた場合の、行ごとのエピソードペナルティの係数と事前分布の重み |
-| `gate` | 信号、較正済みの閾値か heuristic の下限とどちらが効いたか (`origin`)、プールの大きさ、候補ごとの判定 (通ったか、理由付きで落ちたか: `below_gate`・`profile_small_pool`・`unscored_volume`)、`gate_fallback` が起きたか |
+| `gate` | 信号、較正済みの閾値か heuristic の下限とどちらが効いたか (`origin`)、プールの大きさ、候補ごとの判定 (通ったか、理由付きで落ちたか: `below_gate`・`profile_small_pool`・`unscored_volume`)、`gate_fallback` が起きたか。`thresholds` に信号ごとの閾値を 1 回だけ持つ。判定が自分の `threshold` を持つのは、それと違う時だけ (検索器 1 つだけが順位を付けた行では rrf の閾値に上限がかかる)。判定の閾値は `decision.threshold`、無ければ `thresholds[decision.signal]` |
 | `autocut` | 起きたか、どこで切ったか、何を落としたか |
 | `order` | 件数で切る前の最終の並びと、件数で落ちた ref |
 | `reservation` | 確保された別枠 (ブロック到達・時期の手がかり) で入った行 |
@@ -57,6 +58,8 @@ v0 はサーバーに保存しません。保存したい呼び出し側 (ベン
 | `suspected` | 実行中にループが疑った失敗と、その段、取った手 |
 | `coverage` | 問いのどの部分を返した記録が含むか: 部分 (位置と種類)、各部分を含む ref、どの記録も含まない部分 (§1.5) |
 | `timing_ms` | 段ごとの時間 |
+
+trace の数はすべて有効数字 4 桁で持つ。比較で決まる判定 (`passed`) と並び (`rank`・`order`) はそのまま記録するので、丸めても trace の読み方は変わらない。呼び出し側のトークンになるだけの桁を省いている。12,000 行のストアで記録した trace 200 件に当てると、返す時の大きさの平均は約 10.2 KB から約 7.7 KB になる。
 
 ### 1.3 疑いの失敗コードと確定の失敗コード { #13-suspected-and-confirmed-failure-codes }
 

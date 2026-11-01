@@ -107,14 +107,22 @@ async def _seed(agent: str, n: int, *, target_blob: bytes | None, filler_blobs: 
 
 
 def _decision(out: dict, ref: str) -> dict:
-    for d in out["trace"]["gate"]["decisions"]:
+    """The gate decision for `ref`, with its threshold read as the trace defines it:
+    its own where it differs, else its signal's (trace_version 2)."""
+    gate = out["trace"]["gate"]
+    for d in gate["decisions"]:
         if d["ref"] == ref:
-            return d
+            return {**d, "threshold": d.get("threshold", gate["thresholds"].get(d["signal"]))}
     raise AssertionError(f"no gate decision for {ref}: {out['trace']['gate']['decisions']!r}")
 
 
 def _contents(out: dict) -> list[str]:
     return [m["content"] for m in out.get("messages", [])]
+
+
+def _approx(value: float):
+    """The trace keeps 4 significant digits; the thresholds compared here differ by far more."""
+    return pytest.approx(value, rel=1e-3)
 
 
 def _heuristic(pool: int) -> float:
@@ -133,8 +141,8 @@ async def test_mode_none_returns_the_exact_match_on_a_small_pool(n):
     assert TARGET in _contents(out), (
         f"pool {n}: exact-text recall returned {_contents(out)!r}; gate {d!r}"
     )
-    assert d["passed"] is True and d["score"] == pytest.approx(ONE_VOTE)
-    assert d["threshold"] == pytest.approx(min(_heuristic(n), ONE_VOTE))
+    assert d["passed"] is True and d["score"] == _approx(ONE_VOTE)
+    assert d["threshold"] == _approx(min(_heuristic(n), ONE_VOTE))
 
 
 @pytest.mark.asyncio
@@ -147,7 +155,7 @@ async def test_query_embed_failure_returns_the_exact_match(monkeypatch):
     out = await M.do_recall(agent, TARGET, 5, trace=True)
     d = _decision(out, f"mem:{tid}")
     assert TARGET in _contents(out), f"outage recall returned {_contents(out)!r}; gate {d!r}"
-    assert d["threshold"] == pytest.approx(ONE_VOTE)
+    assert d["threshold"] == _approx(ONE_VOTE)
 
 
 @pytest.mark.asyncio
@@ -163,7 +171,7 @@ async def test_row_without_embedding_is_returned_while_the_vector_arm_runs(monke
     near = [a["ref"] for a in out["trace"]["arms"]["vector_near"]]
     assert near and f"mem:{tid}" not in near, near  # the vector arm ran and voted, not for it
     assert TARGET in _contents(out), f"null-embedding row not returned: {_contents(out)!r}; gate {d!r}"
-    assert d["threshold"] == pytest.approx(ONE_VOTE)
+    assert d["threshold"] == _approx(ONE_VOTE)
 
 
 @pytest.mark.asyncio
@@ -180,8 +188,8 @@ async def test_a_row_the_vector_arm_could_rank_keeps_the_three_vote_threshold(mo
     d = _decision(out, f"mem:{tid}")
     near = [a["ref"] for a in out["trace"]["arms"]["vector_near"]]
     assert near and f"mem:{tid}" not in near, near  # the vector arm ran and voted, not for it
-    assert d["score"] == pytest.approx(ONE_VOTE), d
-    assert d["threshold"] == pytest.approx(_heuristic(10)), d
+    assert d["score"] == _approx(ONE_VOTE), d
+    assert d["threshold"] == _approx(_heuristic(10)), d
     assert d["passed"] is False and TARGET not in _contents(out)
 
 
@@ -199,8 +207,8 @@ async def test_single_arm_cap_admits_the_first_rank_only():
     scope_stats.clear()
     out = await M.do_recall(agent, "kubernetes", 5, trace=True)
     first, second = _decision(out, f"mem:{ids[0]}"), _decision(out, f"mem:{ids[1]}")
-    assert first["passed"] is True and first["score"] == pytest.approx(ONE_VOTE), first
-    assert second["score"] == pytest.approx(1.0 / (config.RRF_K + 2)), second
+    assert first["passed"] is True and first["score"] == _approx(ONE_VOTE), first
+    assert second["score"] == _approx(1.0 / (config.RRF_K + 2)), second
     assert second["passed"] is False, second
     assert _contents(out) == ["kubernetes kubernetes kubernetes rollout notes"]
 
@@ -214,7 +222,7 @@ async def test_large_pool_threshold_is_unchanged_for_single_arm_rows():
     out = await M.do_recall(agent, TARGET, 5, trace=True)
     d = _decision(out, f"mem:{tid}")
     assert _heuristic(60) < ONE_VOTE
-    assert d["threshold"] == pytest.approx(_heuristic(60)), d
+    assert d["threshold"] == _approx(_heuristic(60)), d
     assert TARGET in _contents(out)
 
 
@@ -237,5 +245,5 @@ async def test_remote_answer_leaves_the_three_vote_threshold(monkeypatch):
     tid = await _seed(agent, 10, target_blob=None, filler_blobs=True)
     out = await M.do_recall(agent, TARGET, 5, trace=True)
     d = _decision(out, f"mem:{tid}")
-    assert d["threshold"] == pytest.approx(_heuristic(10)), d
+    assert d["threshold"] == _approx(_heuristic(10)), d
     assert d["passed"] is False

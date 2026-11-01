@@ -638,6 +638,30 @@ _VALUES_CHANGED_SINCE_GOLDEN = {
 }
 
 
+def _recorded_traces_as_v2(obj: Any) -> Any:
+    """A recorded recall trace (trace_version 1) in the layout version 2 returns.
+
+    Version 2 holds each signal's gate threshold once, in `gate.thresholds`, and a
+    decision repeats it only where it differs (docs/RECALL_PROCESS_DESIGN.md §1.2).
+    The recorded thresholds are moved, not changed: every decision still reads the
+    value it was recorded with, so the comparison keeps all of it. Version 2 also
+    cuts numbers to 4 significant digits; that is not applied here, and the
+    comparison allows for it inside a trace instead (test_equivalence_252).
+    """
+    from cpersona.recall_trace import _hoist_thresholds
+
+    if isinstance(obj, dict):
+        out = {k: _recorded_traces_as_v2(v) for k, v in obj.items()}
+        if out.get("trace_version") == 1 and isinstance(out.get("gate"), dict):
+            out["gate"] = json.loads(json.dumps(out["gate"]))
+            _hoist_thresholds(out["gate"])
+            out["trace_version"] = 2
+        return out
+    if isinstance(obj, list):
+        return [_recorded_traces_as_v2(v) for v in obj]
+    return obj
+
+
 def _drop_keys_added_since_golden(obj: Any, recorded: Any = None) -> Any:
     """Recursively remove post-golden keys the golden does not hold here.
 

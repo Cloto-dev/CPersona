@@ -228,6 +228,23 @@ def active() -> Providers:
     return _active
 
 
+_builtin_digest: str | None = None
+
+
+def builtin_digest() -> str:
+    """The digest of the built-in set, whatever is installed now.
+
+    A trace records a set's slots only when its digest differs from this one: the
+    built-in set is the same in every call, so its slots told the caller nothing.
+    """
+    global _builtin_digest
+    if _builtin_digest is None:
+        from . import builtin_providers
+
+        _builtin_digest = resolve(builtin_providers.ALLOWLIST).digest
+    return _builtin_digest
+
+
 def install(providers: Providers) -> Providers:
     """Install `providers` for requests that start from now on; returns the set it replaced."""
     global _active

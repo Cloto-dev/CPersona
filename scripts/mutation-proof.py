@@ -1256,7 +1256,12 @@ MUTATIONS += [
         tests=("tests/test_trace_seams.py",),
         target="trace seams — a traced recall names the provider set",
         file=_MH,
-        find='    rec.set("providers", {"digest": active.digest, "slots": active.describe()})\n',
+        find=(
+            '    rec.set("providers", {\n'
+            '        "digest": active.digest,\n'
+            '        **({"slots": active.describe()} if active.digest != providers.builtin_digest() else {}),\n'
+            '    })\n'
+        ),
         replace="",
         breaks="a trace cannot say which providers produced it, so a replay cannot check it runs the same set",
         expect="test_trace_seams.py::test_a_traced_recall_names_the_provider_set",

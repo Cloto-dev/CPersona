@@ -37,13 +37,14 @@ benchmark harness, keeps it.
 The trace carries no stored text: references, ranks, scores and reasons only.
 What a trace may contain when it leaves the machine is decided separately.
 
-### 1.2 Shape (`trace_version` 1)
+### 1.2 Shape (`trace_version` 2)
 
 | Field | Content |
 | --- | --- |
-| `trace_version` | `1`. Raised only when an existing field changes meaning; adding a field does not raise it |
+| `trace_version` | `2`. Raised only when an existing field changes meaning; adding a field does not raise it. 2 cut the numbers to 4 significant digits, moved each signal's threshold into `gate.thresholds`, and left `providers.slots` out for the built-in set |
 | `policy` | `{scoring, process}`: the scoring version and the recall-process policy the call ran under (`single-pass-v0` without a cue, `cued-v0.3` with one; `cued-v0.2` before §2.11, `cued-v0.1` before §2.10, `cued-v0` before §2.8) |
 | `server_version` | The version that answered |
+| `providers` | `digest` of the provider set the call ran with, and its `slots` (each slot's provider, role, contract and policy) only when the set is not the built-in one |
 | `scope` | `agent_id`, `project_id`, `channel`, `source_id` as resolved |
 | `request` | `limit`, the recall depth, `deep`, the fusion mode, the confidence ordering, the prior's settings, whether the episode penalty is on, and the `time_cue` when given |
 | `config` | Embedding mode and model, scan window, reach and far-list limit, and whether the fused gate and autocut are enabled |
@@ -52,7 +53,7 @@ What a trace may contain when it leaves the machine is decided separately.
 | `block_source` | Present when the block arm ran: where its examined rows came from. `file` (the block index file, [contract §3.4](BLOCK_CANDIDATES_CONTRACT.md#34-how-the-file-stays-exact)) with `changed_records` and `live_rows`, the records changed since the build and their rows read from SQLite beside it; or `sqlite` with the `reason` the file was not read: `off`, `no_file`, `unusable`, `width`, `no_log`, `logging_off`, `generation`, `newer_than_snapshot`, `pruned`, `schema_changed`, `live_bound`, `unholdable_value`, `error`. The answer is the same either way |
 | `fusion` | Per candidate: the fused score and each arm's contribution |
 | `scoring` | The episode penalty's factor and the prior's weight per row, where applied |
-| `gate` | Signal, the calibrated threshold or the heuristic minimum and which one applied (`origin`), the pool size, one decision per candidate (admitted, or dropped with a reason: `below_gate`, `profile_small_pool`, `unscored_volume`), and whether `gate_fallback` fired |
+| `gate` | Signal, the calibrated threshold or the heuristic minimum and which one applied (`origin`), the pool size, one decision per candidate (admitted, or dropped with a reason: `below_gate`, `profile_small_pool`, `unscored_volume`), and whether `gate_fallback` fired. `thresholds` holds each signal's threshold once; a decision carries its own `threshold` only where it differs (the rrf threshold is capped for a row only one retriever ranked), so a decision's threshold is `decision.threshold`, else `thresholds[decision.signal]` |
 | `autocut` | Whether it fired, where it cut, and what it dropped |
 | `order` | The final order before the count cut, and the refs the count cut dropped |
 | `reservation` | Rows admitted by a held seat (block reach, time cue) |
@@ -60,6 +61,8 @@ What a trace may contain when it leaves the machine is decided separately.
 | `suspected` | Failures the loop suspected while it ran, with the stage and the action taken |
 | `coverage` | Which parts of the question the returned records hold: the parts (span and kind), the refs that hold each, and the parts none holds (§1.5) |
 | `timing_ms` | Time per stage |
+
+Every number in the trace keeps 4 significant digits. The verdicts that rest on a comparison (`passed`) and the orders (`rank`, `order`) are recorded as such, so the rounding changes no reading of the trace; it removes digits that cost the caller tokens. Applied to 200 traces logged on a 12,000-row store, version 2 brings their mean size as returned from about 10.2 KB to about 7.7 KB.
 
 ### 1.3 Suspected and confirmed failure codes
 
