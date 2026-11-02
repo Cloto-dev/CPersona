@@ -257,6 +257,26 @@ def test_confirm_separates_what_was_shown_from_what_the_reader_did():
     assert confirm(copy.deepcopy(tr), set()) == "UNATTRIBUTED"
 
 
+def test_autocut_is_the_cause_only_when_it_removed_every_copy_that_passed():
+    # Both copies passed the gate and autocut removed one; where the other went is not
+    # in the record, so the failure is not autocut's.
+    tr = _trace(arms=["mem:a", "ep:a"], decisions=[("mem:a", True), ("ep:a", True)],
+                autocut_dropped=["mem:a"], before_cut=["mem:c"], limit=10)
+    assert confirm(tr, {"mem:a", "ep:a"}) == "UNATTRIBUTED"
+
+
+def test_one_quote_of_the_answer_in_view_is_enough():
+    tr = _trace(arms=["mem:a"], decisions=[("mem:a", True)], before_cut=["mem:a"], limit=10)
+    quotes = ["the vault combination is 4-1-7", "the vault is behind the clock"]
+    shown = "the vault combination is 4-1-7, and nothing else"
+    assert confirm(tr, {"mem:a"}, shown_text=shown, quotes=quotes, correct=True) is None
+
+
+def test_a_wrong_answer_without_the_shown_text_is_unattributed_not_a_success():
+    tr = _trace(arms=["mem:a"], decisions=[("mem:a", True)], before_cut=["mem:a"], limit=10)
+    assert confirm(tr, {"mem:a"}, correct=False) == "UNATTRIBUTED"
+
+
 def test_every_gate_branch_records_its_signal_and_reason():
     """One row per branch of the quality gate, run with a recorder active: each decision
     carries the branch's signal and, when it fails, the reason the gate had."""
