@@ -271,15 +271,23 @@ def _spawn(env: dict[str, str], log: str) -> int:
             f"stdout=open({log!r},'a',encoding='utf-8'),stderr=subprocess.STDOUT,creationflags={flags});"
             "print(p.pid)"
         )
-        done = subprocess.run(
-            [sys.executable, "-c", launcher],
-            env=env,
-            capture_output=True,
-            text=True,
-            creationflags=_CREATE_BREAKAWAY_FROM_JOB | subprocess.CREATE_NO_WINDOW,
-            timeout=START_TIMEOUT_SECS,
-            check=False,
-        )
+        try:
+            done = subprocess.run(
+                [sys.executable, "-c", launcher],
+                env=env,
+                # Not the relay's stdin: when a relay starts a service again, its
+                # reader thread is blocked reading that pipe, and on Windows a new
+                # process that inherits a synchronous pipe with a read pending waits
+                # on it at startup -- the launcher never ran.
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                creationflags=_CREATE_BREAKAWAY_FROM_JOB | subprocess.CREATE_NO_WINDOW,
+                timeout=START_TIMEOUT_SECS,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            raise ServiceError(f"the service launcher failed: {type(e).__name__}: {e}") from None
         try:
             return int(done.stdout.strip())
         except ValueError:
@@ -361,7 +369,10 @@ def ensure(environ: dict[str, str] | None = None, *, connection: str | None = No
             }
         )
         child.pop("CPERSONA_AUTH_TOKEN", None)
-        pid = _spawn(child, log_path(key))
+        try:
+            pid = _spawn(child, log_path(key))
+        except OSError as e:
+            raise ServiceError(f"the CPersona service for {store} could not be started: {e}") from None
         deadline = time.monotonic() + START_TIMEOUT_SECS
         while True:
             seen = instance(port, token, connection, timeout=1.0)

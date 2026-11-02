@@ -419,6 +419,48 @@ def test_the_local_service_will_not_start_without_its_token(monkeypatch):
     server._preflight_http_auth()
 
 
+# --- the Windows launcher -----------------------------------------------------------
+
+
+@pytest.fixture
+def windows_spawn(monkeypatch, tmp_path):
+    """Run _spawn's Windows branch here, with subprocess.run recorded instead of run."""
+    for name, value in (("DETACHED_PROCESS", 0x8), ("CREATE_NEW_PROCESS_GROUP", 0x200), ("CREATE_NO_WINDOW", 0x08000000)):
+        monkeypatch.setattr(service.subprocess, name, value, raising=False)
+    monkeypatch.setattr(service.os, "name", "nt")
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(kwargs)
+        behaviour = calls_behaviour[0]
+        if isinstance(behaviour, BaseException):
+            raise behaviour
+        return service.subprocess.CompletedProcess(args, 0, stdout=behaviour, stderr="")
+
+    calls_behaviour = ["4242\n"]
+    monkeypatch.setattr(service.subprocess, "run", run)
+    return calls, calls_behaviour, str(tmp_path / "s.log")
+
+
+def test_the_windows_launcher_does_not_inherit_the_relay_stdin(windows_spawn):
+    # Restarting a service runs while the relay's reader thread has a read pending on
+    # its stdin; a launcher that inherits that pipe waited on it at startup on Windows.
+    calls, _, log = windows_spawn
+    assert service._spawn({}, log) == 4242
+    assert calls[0]["stdin"] is service.subprocess.DEVNULL
+    assert calls[0]["creationflags"] & service._CREATE_BREAKAWAY_FROM_JOB
+
+
+def test_a_launcher_that_hangs_or_fails_is_a_service_error(windows_spawn):
+    calls, behaviour, log = windows_spawn
+    behaviour[0] = service.subprocess.TimeoutExpired("python", 60)
+    with pytest.raises(service.ServiceError, match="launcher failed"):
+        service._spawn({}, log)
+    behaviour[0] = "not a pid"
+    with pytest.raises(service.ServiceError, match="launcher failed"):
+        service._spawn({}, log)
+
+
 # --- real services ------------------------------------------------------------------
 
 
