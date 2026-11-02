@@ -133,6 +133,10 @@ def alias_ledger_path() -> str:
 # annotation makes the host confirm the write. Set this for a hardened deployment.
 EXPORT_DIR = os.environ.get("CPERSONA_EXPORT_DIR", "")
 MAX_IMPORT_BYTES = _parse_int("CPERSONA_MAX_IMPORT_BYTES", 104857600)
+# The local service (docs/LOCAL_SERVICE_DESIGN.md) stops after this many minutes
+# with no request and no connected client; the next client starts it again. 0
+# keeps it running until it is stopped.
+SERVICE_IDLE_MINUTES = max(0, _parse_int("CPERSONA_SERVICE_IDLE_MINUTES", 30))
 # bug-085: MAX_MEMORIES is the vector retriever's SCAN WINDOW — how many of the
 # newest rows it fetches and cosine-ranks per recall — not a response size (that
 # is the per-call `limit`, clamped in the handlers). Rows older than the window
@@ -1233,6 +1237,10 @@ def transport() -> str:
 
 
 TRANSPORTS = ("stdio", "streamable-http")
+# The transport the stdio relay starts the local service with (cpersona/service.py).
+# Accepted, but not offered: it is not meant to be set by hand, so a refusal does
+# not list it.
+LOCAL_SERVICE_TRANSPORT = "local-service"
 
 
 def validate_transport() -> None:
@@ -1259,8 +1267,16 @@ def validate_transport() -> None:
             "Unknown transport: '' (CPERSONA_TRANSPORT is set but empty; unset it to use "
             f"stdio, or set one of {', '.join(TRANSPORTS)})"
         )
-    if name not in TRANSPORTS:
+    if name not in TRANSPORTS and name != LOCAL_SERVICE_TRANSPORT:
         raise ValueError(f"Unknown transport: {name} (expected one of {', '.join(TRANSPORTS)})")
+
+
+def serves_local_user() -> bool:
+    """True when this process serves the person on its own machine: the stdio
+    server, or the local service that stdio clients relay to. Such a process may
+    open a page in that person's browser and answers as the reserved "local"
+    principal; a server reached over the network does neither."""
+    return transport() in ("stdio", "local-service")
 
 
 def shared_transport() -> bool:

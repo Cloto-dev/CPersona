@@ -24,8 +24,10 @@ import contextlib
 import copy
 import hmac
 import ipaddress
+import json
 import logging
 import os
+import re
 import sys
 import time
 import webbrowser
@@ -38,6 +40,7 @@ from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl, ValidationError
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
+from cpersona import __version__
 from cpersona import acl
 from cpersona import associations as associations_module
 from cpersona import block_index
@@ -58,6 +61,7 @@ from cpersona._vendored_mcp_common.embedding_client import EmbeddingClient  # no
 from cpersona._vendored_mcp_common.mcp_utils import ToolRegistry, install_mgp_validation_filter
 from cpersona._vendored_mcp_common.validation import validate_int, validate_str
 
+from cpersona import service
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
@@ -3230,7 +3234,7 @@ def _dashboard_health(loop: asyncio.AbstractEventLoop):
 
 
 async def do_open_dashboard(open_browser: bool = False) -> dict:
-    if config.transport() != "stdio":
+    if not config.serves_local_user():
         return _open_remote_dashboard()
     try:
         url = dashboard_embedded.open_for(config.DB_PATH, _dashboard_health(asyncio.get_running_loop()))
@@ -3294,7 +3298,7 @@ def _secure_origin(url: str) -> bool:
 
 
 def _enable_dashboard(registry) -> None:
-    remote = config.transport() != "stdio"
+    remote = not config.serves_local_user()
     registry.auto_tool(
         "open_dashboard",
         _OPEN_REMOTE_DASHBOARD_DESCRIPTION if remote else _OPEN_DASHBOARD_DESCRIPTION,
@@ -3319,7 +3323,7 @@ def _enable_dashboard(registry) -> None:
 # Under stdio the page opens on the person's own machine. Over HTTP the server's
 # loopback is out of the person's reach, so the tool is there only with the remote
 # dashboard on, which serves the page from this server's own address.
-if config.DASHBOARD and (config.transport() == "stdio" or config.DASHBOARD_REMOTE):
+if config.DASHBOARD and (config.serves_local_user() or config.DASHBOARD_REMOTE):
     _enable_dashboard(registry)
 
 
@@ -4260,6 +4264,184 @@ async def _run_http_server():
     await server.serve()
 
 
+class _Activity:
+    """When the local service was last used, and whether a request is in progress."""
+
+    def __init__(self) -> None:
+        self.in_flight = 0
+        self.last = time.monotonic()
+
+    def idle_for(self) -> float:
+        return 0.0 if self.in_flight else time.monotonic() - self.last
+
+
+# A relay's connection name: what service.connection_id() makes (32 hex digits).
+# Anything else is ignored rather than refused; the name is a bucket, not a credential.
+_CONNECTION_NAME = re.compile(r"[0-9a-f]{8,64}")
+
+
+class LocalServiceMiddleware:
+    """The local service's door (docs/LOCAL_SERVICE_DESIGN.md §4).
+
+    Every request carries the service's token, which only the owner's relays can
+    read (the service directory is owner-only). The Host header must name the
+    loopback address, so a web page that rebinds a name of its own to 127.0.0.1
+    cannot reach the service through the person's browser. The relay's connection
+    name becomes the bucket of callers that declare no session key, and with an
+    ACL configured every request is the reserved "local" principal, as the stdio
+    process it replaces was.
+    """
+
+    def __init__(self, app, token: str, port: int, activity: _Activity):
+        self.app = app
+        self.token = token.encode("utf-8")
+        self.hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        self.activity = activity
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] != "http":
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+            return
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        token = _bearer_credential(headers.get("authorization", ""))
+        if (
+            headers.get("host", "") not in self.hosts
+            or not token
+            or not hmac.compare_digest(token.encode("utf-8"), self.token)
+        ):
+            from starlette.responses import JSONResponse
+
+            await JSONResponse({"error": "unauthorized"}, status_code=401)(scope, receive, send)
+            return
+        name = headers.get(service.CONNECTION_HEADER.lower(), "")
+        connection_token = session.CONNECTION.set(name if _CONNECTION_NAME.fullmatch(name) else None)
+        principal_token = acl.set_principal(acl.Principal(acl.LOCAL_CLIENT_ID)) if acl.is_active() else None
+        self.activity.in_flight += 1
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.activity.in_flight -= 1
+            self.activity.last = time.monotonic()
+            if principal_token is not None:
+                acl.reset_principal(principal_token)
+            session.CONNECTION.reset(connection_token)
+
+
+def _local_service_settings() -> dict:
+    try:
+        settings = json.loads(os.environ.get("CPERSONA_SERVICE_SETTINGS", "") or "{}")
+    except ValueError:
+        return {}
+    return settings if isinstance(settings, dict) else {}
+
+
+def _build_local_service_app(token: str, port: int, mcp_endpoint, lifespan, activity: _Activity, stop, stopping):
+    """The local service's app: the MCP endpoint and two small routes, behind one door.
+
+    No CORS (no browser page talks to it), no OAuth and no catch-all mount: a path
+    that is not listed answers 404 rather than reaching the MCP endpoint.
+    """
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
+
+    async def instance(_request):
+        if stopping():
+            # Still listening while it shuts down: a relay that took this answer
+            # would send its client's messages to a service about to close them.
+            return JSONResponse({"service": "cpersona", "stopping": True}, status_code=503)
+        return JSONResponse(
+            {
+                "service": "cpersona",
+                "version": __version__,
+                "key": os.environ.get("CPERSONA_SERVICE_KEY", ""),
+                "store": os.path.abspath(config.DB_PATH),
+                "pid": os.getpid(),
+                "settings": _local_service_settings(),
+                "idle_minutes": config.SERVICE_IDLE_MINUTES,
+            }
+        )
+
+    async def stop_service(_request):
+        stop()
+        return JSONResponse({"stopping": True})
+
+    return Starlette(
+        routes=[
+            Route("/api/v1/instance", instance, methods=["GET"]),
+            Route("/api/v1/stop", stop_service, methods=["POST"]),
+            Mount("/mcp", app=mcp_endpoint),
+        ],
+        middleware=[
+            Middleware(RequestBodyBudgetMiddleware),
+            Middleware(LocalServiceMiddleware, token=token, port=port, activity=activity),
+        ],
+        lifespan=lifespan,
+    )
+
+
+async def _idle_watch(activity: _Activity, stop, limit: float, interval: float = 60.0) -> None:
+    """Stop the service once nothing has used it for ``limit`` seconds (0 = never).
+
+    A relay's heartbeat is a request, so an open client keeps its service.
+    """
+    if limit <= 0:
+        return
+    while True:
+        await asyncio.sleep(min(interval, limit))
+        if activity.idle_for() >= limit:
+            logger.info("Local service idle for %.0f minute(s); stopping", limit / 60)
+            stop()
+            return
+
+
+async def _run_local_service():
+    """Run the local service that stdio clients relay to (cpersona/service.py)."""
+    import contextlib
+    from collections.abc import AsyncIterator
+
+    import uvicorn
+    from starlette.applications import Starlette
+
+    token = os.environ.get("CPERSONA_SERVICE_TOKEN", "")
+    port = _resolve_http_port()
+    session_manager = _http_session_manager()
+    activity = _Activity()
+    holder: dict = {}
+
+    def stop() -> None:
+        holder["stopping"] = True
+        if "server" in holder:
+            holder["server"].should_exit = True
+
+    async def mcp_endpoint(scope, receive, send):
+        await session_manager.handle_request(scope, receive, send)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        async with session_manager.run():
+            watch = asyncio.create_task(_idle_watch(activity, stop, config.SERVICE_IDLE_MINUTES * 60.0))
+            logger.info("CPersona local service ready on 127.0.0.1:%d (pid %d)", port, os.getpid())
+            try:
+                yield
+            finally:
+                watch.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watch
+
+    app = _build_local_service_app(
+        token, port, mcp_endpoint, lifespan, activity, stop, lambda: holder.get("stopping", False)
+    )
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    holder["server"] = server
+    await server.serve()
+
+
 def _preflight_http_auth() -> None:
     """Refuse an unauthenticated HTTP start before anything expensive happens.
 
@@ -4277,6 +4459,12 @@ def _preflight_http_auth() -> None:
     Runs for the HTTP transport only, and silently for stdio, which has no bind
     and no token.
     """
+    if config.transport() == "local-service":
+        # Started by a relay with a fresh token; without one every request would
+        # be refused, and a service nobody can reach should not hold the store.
+        if not os.environ.get("CPERSONA_SERVICE_TOKEN", ""):
+            raise RuntimeError("the local service needs CPERSONA_SERVICE_TOKEN; it is started by the stdio relay")
+        return
     if config.transport() != "streamable-http":
         return
     if os.environ.get("CPERSONA_ACL_FILE", ""):
@@ -4664,6 +4852,8 @@ async def main():
             await _run_stdio_server()
         elif transport == "streamable-http":
             await _run_http_server()
+        elif transport == "local-service":
+            await _run_local_service()
         else:
             raise ValueError(f"Unknown transport: {transport}")
     finally:
@@ -4688,19 +4878,17 @@ async def main():
             await vector._embedding_client.close()
 
 
-def run():
-    """Synchronous entry point for the ``cpersona`` console script and
-    ``python -m cpersona``.
-
-    ``cpersona dashboard [...]`` opens the read-only dashboard instead of starting
-    the server. Every other invocation starts the server as before; the server
-    takes no arguments, so no existing client configuration means anything else.
-    """
-    if sys.argv[1:2] == ["dashboard"]:
-        from cpersona.dashboard.__main__ import main as dashboard_main
-
-        sys.exit(dashboard_main(sys.argv[2:]))
+def serve():
+    """Start the server in this process (the transport the environment names)."""
     asyncio.run(main())
+
+
+def run():
+    """Kept for callers that import it (the repository's root ``server.py``);
+    the command's choices live in :mod:`cpersona.entry`."""
+    from cpersona.entry import run as entry_run
+
+    entry_run()
 
 
 if __name__ == "__main__":

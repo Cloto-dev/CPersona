@@ -844,8 +844,8 @@ async def do_get_session_findings(
     # literal TRANSPORT_KEY both resolve as undeclared precisely so they cannot mint a
     # bucket of their own; reading the raw argument here let both of them suppress the
     # honesty flag while sharing the bucket with every keyless caller (bug-272).
-    _key, declared = resolve_session_key(session_key)
-    if config.transport() != "stdio" and not declared:
+    key, declared = resolve_session_key(session_key)
+    if config.transport() != "stdio" and key == session.TRANSPORT_KEY:
         delivered["identity_shared"] = True
     delivered["_meta"] = {"server_version": _server_version(), "superauditor": findings_seam.SUPERAUDITOR_VERSION}
     return delivered

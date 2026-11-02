@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/design/index.md@blob:be3ee46a173bbb0a12af7858eff81ca38be27be5 -->
+<!-- i18n-source: docs/design/index.md@blob:c9b8db93f93a563d7d47c5772bd13a792213f79f -->
 
 # 設計と研究
 
@@ -54,6 +54,8 @@ CPersona の挙動がどう決まったか、これからどこへ向かうか�
 - [申告型セッション同一性](../SESSION_IDENTITY_DESIGN.md): streamable HTTP では
   1 プロセスが 1 セッションにならない理由と、`session_key` がプロセス全体のどの状態を
   分割し直すか。
+- [手元のサービス](../LOCAL_SERVICE_DESIGN.md): その人のマシンで記録先ごとに 1 つ動き、
+  stdio の起動が中継する先のサーバー。設定が違うクライアントを拒否する理由。
 - [アクセス元の記録](../MEMORY_ORIGIN_DESIGN.md): `agent_id` が誰も名指さない経路の
   ために、観測した呼び出し元を各行へ記録します。
 - [recall プレビュー階層](../RECALL_PREVIEW_TIER_DESIGN.md): プレビューの切り詰めと

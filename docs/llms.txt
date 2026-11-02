@@ -51,6 +51,7 @@ note and the pages above disagree, the pages above win.
 - [OAuth support](https://cloto-dev.github.io/CPersona/OAUTH_DESIGN/): resource-server metadata and token verification, the three routes weighed and why issuance is delegated to an external provider, the per-subject boundary
 - [Server-served operating context](https://cloto-dev.github.io/CPersona/OPERATING_CONTEXT_DESIGN/): distributing operator instructions to all connected MCP clients
 - [Declared session identity](https://cloto-dev.github.io/CPersona/SESSION_IDENTITY_DESIGN/): the declared `session_key`, why one process is not one session under streamable-HTTP, and which process-global state it re-partitions
+- [The local service](https://cloto-dev.github.io/CPersona/LOCAL_SERVICE_DESIGN/): the one server per store that stdio launches relay to from 2.7, which service a client uses, and why a client with other settings is refused
 - [Recorded access origin](https://cloto-dev.github.io/CPersona/MEMORY_ORIGIN_DESIGN/): recording the observed caller on each stored row, for the paths where `agent_id` names nobody
 - [Recall preview tier](https://cloto-dev.github.io/CPersona/RECALL_PREVIEW_TIER_DESIGN/): preview truncation and the get_contents expansion path
 - [Contiguous embedding index](https://cloto-dev.github.io/CPersona/CONTIGUOUS_INDEX_DESIGN/): moving the vector scan's read off SQLite rows onto a contiguous sidecar, with bit-identical answers

@@ -152,6 +152,7 @@ plugins:
             Server-served operating context: サーバー供給の運用コンテキスト
             Recall preview tier: recall プレビュー階層
             Declared session identity: 申告型セッション同一性
+            The local service: 手元のサービス
             Recorded access origin: アクセス元の記録
             Contiguous embedding index: 埋め込み索引の連続配置
             Reach and recency in the scan window: 走査窓の到達範囲と新しさの優遇
@@ -313,6 +314,7 @@ nav:
               - OAuth support: OAUTH_DESIGN.md
               - Server-served operating context: OPERATING_CONTEXT_DESIGN.md
               - Declared session identity: SESSION_IDENTITY_DESIGN.md
+              - The local service: LOCAL_SERVICE_DESIGN.md
               - Recorded access origin: MEMORY_ORIGIN_DESIGN.md
           - Retrieval and storage:
               - Recall preview tier: RECALL_PREVIEW_TIER_DESIGN.md

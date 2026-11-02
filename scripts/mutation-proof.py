@@ -4572,10 +4572,11 @@ MUTATIONS += [
         tests=('tests/test_http_body_budget.py',),
         target='HTTP transport — production builds its session manager through the shared factory (bug-805)',
         file='cpersona/server.py',
-        find='    session_manager = _http_session_manager()\n',
+        # The local service builds one too; the blank line after names the HTTP transport's.
+        find='    session_manager = _http_session_manager()\n\n',
         replace=(
             '    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager\n'
-            '    session_manager = StreamableHTTPSessionManager(app=registry.server, stateless=True)\n'
+            '    session_manager = StreamableHTTPSessionManager(app=registry.server, stateless=True)\n\n'
         ),
         breaks='production serves through a construction the transport tests never drive',
         expect='test_http_body_budget.py::test_production_serves_through_the_factory_the_transport_tests_drive',
@@ -5801,7 +5802,7 @@ MUTATIONS += [
         id='M570',
         tests=('tests/test_dashboard.py',),
         target='dashboard — cpersona dashboard opens the dashboard',
-        file='cpersona/server.py',
+        file='cpersona/entry.py',
         find='    if sys.argv[1:2] == ["dashboard"]:\n',
         replace='    if False:\n',
         breaks='`cpersona dashboard` starts the server instead',
@@ -5812,7 +5813,7 @@ MUTATIONS += [
         tests=('tests/test_dashboard.py',),
         target='dashboard — open_dashboard is not registered over HTTP',
         file='cpersona/server.py',
-        find='if config.DASHBOARD and (config.transport() == "stdio" or config.DASHBOARD_REMOTE):\n    _enable_dashboard(registry)\n',
+        find='if config.DASHBOARD and (config.serves_local_user() or config.DASHBOARD_REMOTE):\n    _enable_dashboard(registry)\n',
         replace='if config.DASHBOARD:\n    _enable_dashboard(registry)\n',
         breaks='a server reached over HTTP offers a page that opens on its own loopback',
         expect='test_dashboard.py::test_over_http_the_tool_is_not_registered',
@@ -5822,8 +5823,8 @@ MUTATIONS += [
         tests=('tests/test_dashboard.py',),
         target='dashboard — the setting off removes open_dashboard',
         file='cpersona/server.py',
-        find='if config.DASHBOARD and (config.transport() == "stdio" or config.DASHBOARD_REMOTE):\n    _enable_dashboard(registry)\n',
-        replace='if (config.transport() == "stdio" or config.DASHBOARD_REMOTE):\n    _enable_dashboard(registry)\n',
+        find='if config.DASHBOARD and (config.serves_local_user() or config.DASHBOARD_REMOTE):\n    _enable_dashboard(registry)\n',
+        replace='if (config.serves_local_user() or config.DASHBOARD_REMOTE):\n    _enable_dashboard(registry)\n',
         breaks='CPERSONA_DASHBOARD=false leaves the tool definition in place',
         expect='test_dashboard.py::test_the_setting_off_removes_the_tool',
     ),

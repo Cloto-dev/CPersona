@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:c10bed93e1b5a435cc26f825539a18251f3f374d -->
+<!-- i18n-source: docs/configuration.md@blob:e5ecf5de1e987a3c54d2dd6203657635d488b291 -->
 
 # 設定リファレンス
 
@@ -208,6 +208,19 @@
 |----------|---------|-------------|
 | `CPERSONA_OPERATING_CONTEXT` | *(未設定)* | `off` (大文字小文字を問わない) で、ファイルの有無にかかわらず機能を止めます。それ以外の値では有効のままです |
 | `CPERSONA_OPERATING_CONTEXT_PATH` | `~/.cpersona/` の `operating-context.toml` | 読むファイル。`~` は展開されます |
+
+## 手元のサービス { #the-local-service }
+
+2.7 から、stdio で `cpersona` を起動したクライアントは、同じマシンで記録先ごとに 1 つ動く
+サーバーへ中継されます。サーバーは最初に使われた時に起動し、使われなくなると止まります。
+クライアントがどのサービスを使うか、設定が違うクライアントをなぜ拒否するかは、
+[手元のサービス](LOCAL_SERVICE_DESIGN.md) を参照してください。
+
+| 変数 | 既定値 | 説明 |
+|----------|---------|-------------|
+| `CPERSONA_LOCAL_SERVICE` | *(未設定)* | `off` にすると、2.7 より前と同じく、stdio で起動したプロセスが自分でクライアントに応えます。プレリリースの間にサービスの問題を報告するためのもので、2.7.0b1 で消します |
+| `CPERSONA_SERVICE_IDLE_MINUTES` | `30` | 要求も接続しているクライアントも無い状態が何分続いたらサービスを止めるか。`0` にすると `cpersona service stop` まで動き続けます |
+| `CPERSONA_SERVICE_DIR` | `~/.cpersona/` の中の `services` | サービスを、トークンとログと一緒に記録する場所 (所有者だけが読める) |
 
 ## リモート (HTTP) トランスポート { #remote-http-transport }
 

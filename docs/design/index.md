@@ -56,6 +56,9 @@ guides disagree, the guides win.
 - [Declared session identity](../SESSION_IDENTITY_DESIGN.md) — why one process is
   not one session under streamable HTTP, and which process-global state
   `session_key` splits apart.
+- [The local service](../LOCAL_SERVICE_DESIGN.md) — one server per store on the
+  person's machine, which stdio launches relay to, and why a client with other
+  settings is refused.
 - [Recorded access origin](../MEMORY_ORIGIN_DESIGN.md) — recording the observed
   caller on each stored row, for the paths where `agent_id` names nobody.
 - [Recall preview tier](../RECALL_PREVIEW_TIER_DESIGN.md) — preview truncation and

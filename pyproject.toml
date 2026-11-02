@@ -142,7 +142,7 @@ addopts = "-ra"
 testpaths = ["tests"]
 
 [project.scripts]
-cpersona = "cpersona.server:run"
+cpersona = "cpersona.entry:run"
 
 [build-system]
 requires = ["hatchling"]

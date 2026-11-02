@@ -34,6 +34,7 @@ Authority: ``docs/SESSION_IDENTITY_DESIGN.md``.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 
 from cpersona._vendored_mcp_common import no_persist
@@ -61,6 +62,13 @@ TRANSPORT_KEY = "transport"
 # key before any handler runs. resolve_session_key does not re-check it: its
 # callers inside the process are the library, which decides its own keys.
 SESSION_KEY_MAX_CHARS = 256
+
+# The local service (docs/LOCAL_SERVICE_DESIGN.md) serves several stdio clients
+# from one process. Each client's relay names its connection, and the service sets
+# the name here for the request it is handling, so a caller that declares no key
+# lands in its own connection's bucket -- the bucket the stdio process it replaces
+# was. Unset everywhere else, where the transport bucket stays what it was.
+CONNECTION: ContextVar[str | None] = ContextVar("cpersona_connection", default=None)
 
 
 def resolve_session_key(declared: str | None) -> tuple[str, bool]:
@@ -93,6 +101,11 @@ def resolve_session_key(declared: str | None) -> tuple[str, bool]:
         stripped = declared.strip()
         if stripped and stripped != TRANSPORT_KEY:
             return stripped, True
+    connection = CONNECTION.get()
+    if connection:
+        # Undeclared still: the caller said nothing, and the bucket is the one its
+        # connection has, as the process was under stdio.
+        return f"connection:{connection}", False
     return TRANSPORT_KEY, False
 
 

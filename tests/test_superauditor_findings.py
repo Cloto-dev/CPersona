@@ -410,6 +410,24 @@ async def test_shared_transport_without_a_session_key_is_marked(db, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_a_local_service_connection_is_not_a_shared_identity(db, monkeypatch):
+    """A keyless caller of the local service has its connection's bucket, as each
+    stdio process had its own (docs/LOCAL_SERVICE_DESIGN.md); one with no
+    connection name is in the shared bucket and is marked."""
+    from cpersona import session
+
+    monkeypatch.setenv("CPERSONA_TRANSPORT", "local-service")
+    token = session.CONNECTION.set("0123abcd0123abcd")
+    try:
+        own = await maintenance_handlers.do_get_session_findings()
+    finally:
+        session.CONNECTION.reset(token)
+    assert "identity_shared" not in own
+    nameless = await maintenance_handlers.do_get_session_findings()
+    assert nameless["identity_shared"] is True
+
+
+@pytest.mark.asyncio
 async def test_a_key_that_resolves_to_the_shared_bucket_is_still_marked(db, monkeypatch):
     """bug-272: the flag follows resolution, not the raw argument's truthiness.
 

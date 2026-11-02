@@ -17,6 +17,8 @@ import logging
 import os
 import sys
 import threading
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from functools import partial
 from typing import NamedTuple
 
@@ -35,6 +37,27 @@ AUTH_TOKEN = os.environ.get("CPERSONA_AUTH_TOKEN", "")
 # far above what one MCP client has outstanding in practice (an initialize, a
 # few tool calls, the odd notification).
 DEFAULT_MAX_INFLIGHT = 8
+
+
+@dataclass
+class Target:
+    """Where the bridge forwards to.
+
+    The module-level ``REMOTE_URL`` / ``AUTH_TOKEN`` describe a remote server and
+    are the default. The local service relay (cpersona/service.py) passes its own:
+    the service's loopback address and token, the connection header, and
+    ``recover``, awaited once when the service does not answer. It returns True
+    when it found or started a service and updated ``url`` / ``token``.
+    """
+
+    url: str
+    token: str
+    headers: dict = field(default_factory=dict)
+    recover: Callable[["Target"], Awaitable[bool]] | None = None
+
+
+def _default_target() -> Target:
+    return Target(url=REMOTE_URL, token=AUTH_TOKEN)
 
 
 def _max_inflight() -> int:
@@ -202,6 +225,7 @@ async def _forward(
     session: dict,
     out_queue: asyncio.Queue,
     slots=None,
+    target: Target | None = None,
 ):
     """Forward one stdin message to the remote and queue whatever it owes back.
 
@@ -212,20 +236,35 @@ async def _forward(
     JSON-RPC allows several outstanding requests on one connection and the remote
     is stateless, so each message is now its own task.
     """
+    if target is None:
+        target = _default_target()
     try:
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        if AUTH_TOKEN:
-            headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
-        # Read at send time, not at loop time, so a session id established by an
-        # earlier response is picked up by later requests.
-        if session.get("id"):
-            headers["Mcp-Session-Id"] = session["id"]
+
+        def headers_now() -> dict:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                **target.headers,
+            }
+            if target.token:
+                headers["Authorization"] = f"Bearer {target.token}"
+            # Read at send time, not at loop time, so a session id established by
+            # an earlier response is picked up by later requests.
+            if session.get("id"):
+                headers["Mcp-Session-Id"] = session["id"]
+            return headers
 
         try:
-            response = await client.post(REMOTE_URL, content=line, headers=headers)
+            try:
+                response = await client.post(target.url, content=line, headers=headers_now())
+            except httpx.ConnectError:
+                # Nothing listens: the local service stopped (idle, crashed, or the
+                # machine slept through its idle period). Nothing was sent, so the
+                # message can go again once a service answers -- once, so a service
+                # that cannot start reports instead of looping.
+                if target.recover is None or not await target.recover(target):
+                    raise
+                response = await client.post(target.url, content=line, headers=headers_now())
         except (httpx.TransportError, httpx.HTTPError) as e:
             # bug-051: catch the whole transport/HTTP hierarchy, not just
             # ConnectError + ReadTimeout. ConnectTimeout/PoolTimeout/WriteTimeout
@@ -285,10 +324,12 @@ async def _forward(
             slots.release()
 
 
-async def main():
+async def main(target: Target | None = None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s: %(message)s", stream=sys.stderr)
+    if target is None:
+        target = _default_target()
     max_inflight = _max_inflight()
-    logger.info("Proxy starting: %s (max in-flight: %d)", REMOTE_URL, max_inflight)
+    logger.info("Proxy starting: %s (max in-flight: %d)", target.url, max_inflight)
 
     session: dict = {"id": None}
     queue: asyncio.Queue = asyncio.Queue()
@@ -322,7 +363,7 @@ async def main():
                     logger.error("stdout writer terminated unexpectedly; shutting down the bridge")
                     break
 
-                task = asyncio.create_task(_forward(client, line, session, out_queue, slots))
+                task = asyncio.create_task(_forward(client, line, session, out_queue, slots, target))
                 in_flight.add(task)
                 task.add_done_callback(in_flight.discard)
 
@@ -332,6 +373,20 @@ async def main():
     finally:
         out_queue.put_nowait(None)
         await writer
+
+
+async def refuse_all(reason: str):
+    """Answer every request on stdin with ``reason`` until the client closes it.
+
+    For a relay that has nothing to forward to: a client that launched a server
+    waits for answers, and a process that exits without one shows up as a server
+    that failed to start, with the reason only in a log the person may never open.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    threading.Thread(target=_read_stdin_lines, args=(queue, loop), daemon=True).start()
+    while (line := await queue.get()) is not None:
+        _write_error(line, reason)
 
 
 def _write_stdout(message: str):

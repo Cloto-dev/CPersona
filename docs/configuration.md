@@ -212,6 +212,19 @@ reports a file that does not parse.
 | `CPERSONA_OPERATING_CONTEXT` | *(unset)* | `off`, in any case, turns the feature off whether or not the file exists; any other value leaves it on |
 | `CPERSONA_OPERATING_CONTEXT_PATH` | `operating-context.toml` in `~/.cpersona/` | The file to read; `~` is expanded |
 
+## The local service
+
+From 2.7 a client that launches `cpersona` over stdio is relayed to one server per
+store on the same machine, started on first use and stopped when idle. See
+[the local service](LOCAL_SERVICE_DESIGN.md) for what decides which service a
+client uses and why a client with other settings is refused.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CPERSONA_LOCAL_SERVICE` | *(unset)* | `off` keeps the stdio launch serving its client in its own process, as before 2.7. For reporting problems with the service during the pre-releases; removed in 2.7.0b1 |
+| `CPERSONA_SERVICE_IDLE_MINUTES` | `30` | Minutes the service waits with no request and no connected client before it stops. `0` keeps it running until `cpersona service stop` |
+| `CPERSONA_SERVICE_DIR` | `services` in `~/.cpersona/` | Where the services are recorded, with their tokens and logs (owner-only) |
+
 ## Remote (HTTP) transport
 
 The default transport is stdio, where the MCP client owns the process and no

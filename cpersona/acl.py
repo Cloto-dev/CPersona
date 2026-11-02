@@ -638,8 +638,8 @@ ACL_CLASSIFICATION: dict[str, Demands] = {
 #   of the store, so it demands read on all of them) or, with the remote dashboard
 #   on, under HTTP (the page shows only the agents the caller reads, so any
 #   authenticated caller may open it).
-_DASHBOARD_LOCAL = config.DASHBOARD and config.transport() == "stdio"
-_DASHBOARD_REMOTE = config.DASHBOARD and config.DASHBOARD_REMOTE and config.transport() != "stdio"
+_DASHBOARD_LOCAL = config.DASHBOARD and config.serves_local_user()
+_DASHBOARD_REMOTE = config.DASHBOARD and config.DASHBOARD_REMOTE and not config.serves_local_user()
 CONDITIONAL_CLASSIFICATION: dict[str, Demands] = {
     "organize_folders": _scoped(PERM_WRITE),
     "open_dashboard": (lambda args: list(_AUTHENTICATED_ONLY)) if _DASHBOARD_REMOTE else _process_wide(

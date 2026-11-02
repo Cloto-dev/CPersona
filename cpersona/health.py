@@ -305,7 +305,10 @@ def maybe_advisory(session_key: str = "", declared: bool = False) -> dict | None
     if _state in (UNKNOWN, HEALTHY):
         return None
     shared = config.shared_transport()
-    if declared:
+    # A keyless caller of the local service still has a bucket of its own (its
+    # connection's, session.CONNECTION), so it is told once per connection, as each
+    # stdio process was.
+    if declared or session_key.startswith("connection:"):
         full = session_key not in _told_sessions
         _remember_told(session_key)
     else:
