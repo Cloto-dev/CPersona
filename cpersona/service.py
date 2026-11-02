@@ -260,7 +260,6 @@ def _spawn(env: dict[str, str], log: str) -> int:
                 stdout=out,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
-                close_fds=True,
             )
             return proc.pid
         flags = (
