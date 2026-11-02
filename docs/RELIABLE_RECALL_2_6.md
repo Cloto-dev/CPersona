@@ -1010,8 +1010,8 @@ The line closes when all of the following hold, in this order of importance:
 5. **Adaptive fusion beats the raw embedding on both models** on the same
    benchmark, or the section records why it did not and what replaces it.
 6. **Every failure on the benchmark has a code and a replayable trace**, the
-   unattributed rate is reported and falling, and the auditor profile's
-   schema is published.
+   unattributed rate is reported, every failure that stays unattributed says
+   why it cannot be attributed, and the auditor profile's schema is published.
 7. **The accuracy–token–latency–memory frontier has moved** relative to 2.5,
    with the per-slice regressions disclosed.
 8. **The open quality debt of the 2.5 baseline** — a query-relative score used
@@ -1019,6 +1019,14 @@ The line closes when all of the following hold, in this order of importance:
    scale, mixed-offset timestamps in a text comparison, the `limit` coupling,
    the missing comprehensive baseline — is each fixed, rejected with reasons,
    or carried forward with reasons.
+
+Condition 6 first asked that the unattributed rate be falling. Measured on
+the line's own LongMemEval-S run, the failures that stayed unattributed were
+the questions whose benchmark data marks no answer turn, a floor no tool that
+reads the data can lower, and teaching the tool four more codes left the rate
+where it was ([results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-failure-attribution-2611.md)).
+A falling rate would have been reachable only by changing the benchmark, so the
+condition asks for the reason behind each remaining failure instead.
 
 Two things are **not** completion conditions, on purpose. The Go index
 service belongs to the runtime axis of the [roadmap](roadmap.md#the-runtime-and-scale-ladder):

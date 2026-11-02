@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:76939e87eed02b189b345fe4459424c445d48590 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:cf52dcbc2561af77c24dbe3002473fcf0772b0dc -->
 
 # Reliable Recall — 2.6 系
 
@@ -807,14 +807,23 @@ tokens、tokens per correct answer)。そして cached と uncached、入力と�
    第 9 節の変異を持ち、その既定の件数とペイロード予算が sweep で選ばれている。
 5. **適応的融合が同じベンチマークで両方のモデルで生の埋め込みを上回っている**か、そうで
    なかった理由と何がそれに代わるかを節が記録している。
-6. **ベンチマーク上のすべての失敗がコードと再生可能な trace を持ち**、未帰属率が報告され
-   下がっており、auditor profile の schema が公開されている。
+6. **ベンチマーク上のすべての失敗がコードと再生可能な trace を持ち**、未帰属率が報告され、
+   未帰属のまま残る失敗はそれぞれ帰属できない理由を示し、auditor profile の schema が
+   公開されている。
 7. **精度–トークン–レイテンシ–メモリの frontier が 2.5 に対して動いており**、slice 別の
    デグレが開示されている。
 8. **2.5 baseline の未解決の品質債務** (絶対 gate として使われているクエリ相対のスコア、
    較正済みスケールに対する非正規化の埋め込み backend、テキスト比較の中の offset 混在の
    timestamp、`limit` の結合、包括的 baseline の欠如) がそれぞれ、修正、理由付きで棄却、
    または理由付きで持ち越しになっている。
+
+条件 6 は、はじめ未帰属率が下がっていることを求めていました。このライン自身の
+LongMemEval-S の実行で測ると、未帰属のまま残った失敗は、ベンチマークのデータが答えの
+発言に印を付けていない問いでした。データを読む道具では下げられない下限で、道具に
+コードを 4 つ足しても率は変わりませんでした
+([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-failure-attribution-2611.md))。
+率を下げるにはベンチマークを変えるしかないので、条件は残る失敗それぞれの理由を求める形に
+しました。
 
 2 つのものは、意図して完了条件では**ありません**。Go の索引サービスは
 [ロードマップ](roadmap.md#the-runtime-and-scale-ladder)のランタイム軸に属します。それは

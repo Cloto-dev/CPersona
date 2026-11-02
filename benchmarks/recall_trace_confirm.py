@@ -109,7 +109,9 @@ def confirm(
     `stored_texts`: the stored text of each gold reference the store holds; a gold
     reference missing from it was not stored.
     `searchable_chars`: per gold reference, how many leading characters of its stored
-    text any arm can search (for the embedding, where its window closes).
+    text semantic search reaches: where the record's embedding window closes, or the
+    end of its last block that carries bits, whichever is later. The lexical arm reads
+    the whole text and is not counted.
     `shown_by_ref`: the text the reader was shown for each returned record; it tells
     EVIDENCE_NOISE from RECONSTRUCTION_LOSS and stands in for `shown_text`.
     `degraded`: whether the recall ran degraded (a fault, timeout or misconfiguration),
