@@ -80,6 +80,19 @@ is used twice, and the two uses are kept apart:
   arm but ranked below the seats held for it), and the evidence and
   reader codes when it was returned but not used. The tool is
   `benchmarks/recall_trace_confirm.py`.
+- Four codes need what only the caller holds, and the tool assigns them only
+  when the caller passes it. `CAPTURE_MISS` needs the stored text of the
+  answer's records: the record is missing, or the answer did not survive the
+  write. `REPRESENTATION_MISS` also needs where each record's searchable part
+  ends: no arm reached the record, and every place the answer appears lies
+  past that point. `SYSTEM_DEGRADED` needs the caller's record of whether the
+  recall ran degraded, because the response's advisory is given once per
+  episode and so is not a per-call record. `EVIDENCE_NOISE` needs the text
+  shown for each returned record: the answer's record came back with nothing
+  of it in view, where `RECONSTRUCTION_LOSS` is a record in view without the
+  passage that holds the answer. `RECONSTRUCTION_UNSUPPORTED` is not assigned,
+  because a reconstruction only quotes stored text, and `STALE_CONFLICT` needs
+  a judgement of content.
 
 Keeping the two apart makes the loop's own judgement measurable: how often
 did what it suspected match what was confirmed? The history of confirmed

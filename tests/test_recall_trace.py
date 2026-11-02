@@ -277,6 +277,96 @@ def test_a_wrong_answer_without_the_shown_text_is_unattributed_not_a_success():
     assert confirm(tr, {"mem:a"}, correct=False) == "UNATTRIBUTED"
 
 
+_QUOTE = ["the vault combination is 4-1-7"]
+_TEXT = "notes from tuesday. the vault combination is 4-1-7, said the manager."
+
+
+def test_an_answer_the_store_does_not_hold_is_a_capture_miss():
+    tr = _trace(arms=["mem:b"], decisions=[("mem:b", True)], before_cut=["mem:b"], limit=10)
+    # The record was never stored.
+    assert confirm(tr, {"mem:a"}, stored_texts={}) == "CAPTURE_MISS"
+    # It was stored, but the answer did not survive the write (a write bound cut it).
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, stored_texts={"mem:a": "notes from tuesday."}) == "CAPTURE_MISS"
+    # One stored copy that holds the answer is enough; the stage is then found as before.
+    held = {"mem:a": "notes from tuesday.", "ep:a": _TEXT}
+    assert confirm(tr, {"mem:a", "ep:a"}, quotes=_QUOTE, stored_texts=held) == "CANDIDATE_MISS"
+    # Without `stored_texts` the code is never assigned.
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE) == "CANDIDATE_MISS"
+    # A copy that was never stored drops out; the stored one decides.
+    assert confirm(tr, {"mem:a", "ep:a"}, quotes=_QUOTE, stored_texts={"ep:a": _TEXT}) == "CANDIDATE_MISS"
+    assert confirm(tr, {"mem:a", "ep:a"}, quotes=_QUOTE, stored_texts={"ep:a": "notes from tuesday."}) == "CAPTURE_MISS"
+
+
+def test_an_answer_past_the_searchable_part_is_a_representation_miss():
+    tr = _trace(arms=["mem:b"], decisions=[("mem:b", True)], before_cut=["mem:b"], limit=10)
+    start = _TEXT.index("the vault")
+    stored = {"mem:a": _TEXT}
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, stored_texts=stored,
+                   searchable_chars={"mem:a": start}) == "REPRESENTATION_MISS"
+    # One character more and the answer begins inside the searchable part.
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, stored_texts=stored,
+                   searchable_chars={"mem:a": start + 1}) == "CANDIDATE_MISS"
+    # Every place the answer appears must lie past it, not only the last one.
+    twice = {"mem:a": "the vault combination is 4-1-7. " + _TEXT}
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, stored_texts=twice,
+                   searchable_chars={"mem:a": 5}) == "CANDIDATE_MISS"
+    # A copy whose searchable part is unknown cannot be blamed on its representation,
+    # even beside a copy whose answer lies past its window.
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, stored_texts=stored, searchable_chars={}) == "CANDIDATE_MISS"
+    assert confirm(tr, {"mem:a", "ep:a"}, quotes=_QUOTE, stored_texts={"mem:a": _TEXT, "ep:a": _TEXT},
+                   searchable_chars={"mem:a": start}) == "CANDIDATE_MISS"
+    # A copy that does not hold the answer has nothing to measure and does not decide.
+    assert confirm(tr, {"mem:a", "ep:a"}, quotes=_QUOTE,
+                   stored_texts={"mem:a": "notes from tuesday.", "ep:a": _TEXT},
+                   searchable_chars={"mem:a": 100, "ep:a": start}) == "REPRESENTATION_MISS"
+    # A record an arm reached is not a representation miss, however short its window.
+    reached = _trace(arms=["mem:a"], decisions=[("mem:a", False)], before_cut=[], limit=10)
+    assert confirm(reached, {"mem:a"}, quotes=_QUOTE, stored_texts=stored,
+                   searchable_chars={"mem:a": 0}) == "FILTER_DROP"
+
+
+def test_the_searchable_part_is_measured_in_the_stored_text_not_the_normalised_one():
+    tr = _trace(arms=["mem:b"], decisions=[("mem:b", True)], before_cut=["mem:b"], limit=10)
+    spaced = "a\n\n\n\n\n\n\n\nb the vault   combination is 4-1-7"
+    start = spaced.index("the vault")
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, stored_texts={"mem:a": spaced},
+                   searchable_chars={"mem:a": start}) == "REPRESENTATION_MISS"
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, stored_texts={"mem:a": spaced},
+                   searchable_chars={"mem:a": start + 1}) == "CANDIDATE_MISS"
+
+
+def test_a_degraded_recall_that_lost_the_answer_is_system_degraded():
+    missed = _trace(arms=["mem:b"], decisions=[("mem:b", True)], before_cut=["mem:b"], limit=10)
+    assert confirm(missed, {"mem:a"}, degraded=True) == "SYSTEM_DEGRADED"
+    assert confirm(missed, {"mem:a"}, degraded=False) == "CANDIDATE_MISS"
+    # The answer came back anyway: what went wrong after that is not the fault's.
+    got = _trace(arms=["mem:a"], decisions=[("mem:a", True)], before_cut=["mem:a"], limit=10)
+    assert confirm(got, {"mem:a"}, degraded=True, shown_text=_TEXT, quotes=_QUOTE, correct=False) == "AGENT_MISUSE"
+    # A record that was never stored is a capture miss whatever the system's state.
+    assert confirm(missed, {"mem:a"}, degraded=True, stored_texts={}) == "CAPTURE_MISS"
+
+
+def test_a_returned_record_with_nothing_of_it_in_view_is_evidence_noise():
+    tr = _trace(arms=["mem:a", "mem:b"], decisions=[("mem:a", True), ("mem:b", True)],
+                before_cut=["mem:b", "mem:a"], limit=10)
+    # The payload went to the other record; the answer's record is a bare reference.
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, shown_by_ref={"mem:b": "something else", "mem:a": ""}) == "EVIDENCE_NOISE"
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, shown_by_ref={"mem:b": "something else"}) == "EVIDENCE_NOISE"
+    # Some of it was shown, but not the passage that holds the answer.
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, shown_by_ref={"mem:a": "notes from tuesday."}) == "RECONSTRUCTION_LOSS"
+    # Another copy of the answer in view is enough.
+    both = _trace(arms=["mem:a", "ep:a"], decisions=[("mem:a", True), ("ep:a", True)],
+                  before_cut=["mem:a", "ep:a"], limit=10)
+    assert confirm(both, {"mem:a", "ep:a"}, quotes=_QUOTE, shown_by_ref={"mem:a": "", "ep:a": _TEXT}, correct=True) is None
+    assert confirm(both, {"mem:a", "ep:a"}, quotes=_QUOTE, shown_by_ref={"mem:a": "", "ep:a": _TEXT}, correct=False) == "AGENT_MISUSE"
+    # One copy shown without the answer and the other not shown at all: the record was
+    # in view, so the passage was lost, not crowded out.
+    assert confirm(both, {"mem:a", "ep:a"}, quotes=_QUOTE,
+                   shown_by_ref={"mem:a": "", "ep:a": "notes from tuesday."}) == "RECONSTRUCTION_LOSS"
+    # The text shown for a record that is not the answer's does not count.
+    assert confirm(tr, {"mem:a"}, quotes=_QUOTE, shown_by_ref={"mem:b": _TEXT, "mem:a": "x"}) == "RECONSTRUCTION_LOSS"
+
+
 def test_every_gate_branch_records_its_signal_and_reason():
     """One row per branch of the quality gate, run with a recorder active: each decision
     carries the branch's signal and, when it fails, the reason the gate had."""
