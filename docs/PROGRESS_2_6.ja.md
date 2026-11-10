@@ -1,16 +1,17 @@
-<!-- i18n-source: docs/PROGRESS_2_6.md@blob:af41edee02ab8af2af316484fb72ab4715e94f07 -->
+<!-- i18n-source: docs/PROGRESS_2_6.md@blob:624692bb4c91b199d2eafdf574b6492a8d5f09e0 -->
 
 # 2.6 系はいまどこまで来ているか
 
 > **翻訳について**: 原文は英語版です。この日本語版は参照用の翻訳で、内容が食い違う場合は英語版が優先されます。
 
-更新日: 2026-11-01。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
+更新日: 2026-11-10。このページは、2.6 系がどこまで進んだかを、項目ごとに証拠つきで
 示します。このラインが何を作り、何をもって完了とするかは
 [ラインのページ](RELIABLE_RECALL_2_6.md) が、各リリースに何が入っているかは
 [リリースノート](https://github.com/Cloto-dev/cpersona/releases) が述べます。このページと
 リリースが食い違う場合、正しいのはリリースです。
 
 2.6.0 はこのラインの最初の final リリースです。同じ日に 2.6.1、翌日 (2026-10-01) に 2.6.2、その翌日 (2026-10-02) に 2.6.3、2026-10-03 に 2.6.4、2026-10-05 に 2.6.5、2026-10-07 に 2.6.6、2026-10-08 に 2.6.7、2026-10-11 に 2.6.8 と 2.6.9、2026-10-12 に 2.6.10、2026-10-19 に 2.6.11、2026-10-21 に 2.6.12、2026-10-23 に 2.6.13、2026-10-26 に 2.6.14、2026-10-29 に 2.6.15、2026-11-01 に 2.6.16 が続き、バージョンを指定しない導入は 2.6.16 になります。
+2.6.17a1 (2026-11-10) は pre-release で、バージョンを指定した時だけ入ります。
 pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI にあります。2.5 系は Candidate になりました
 ([SUPPORT.md](https://github.com/Cloto-dev/cpersona/blob/master/SUPPORT.md))。
 
@@ -100,6 +101,7 @@ pre-release は末尾に `aN` か `bN` の付いたバージョンとして PyPI
 | 2.6.16a3 | pre-release。スキーマと依存は変えていません。ブラウザは Cookie を、ポートにかかわらず 127.0.0.1 のすべてのプログラムに送ります。そこで、ローカルのダッシュボードのセッションは、起動した時に作る鍵で署名し、止まると終わるようにしました。止まっている間にポートを取ったプログラムが受け取る Cookie では、何も開けません。動いている間は、127.0.0.1 のほかのプログラムが配るページにも Cookie が送られます。このことは運用の文書に書きました。HTTP では、`open_dashboard` が今のところ唯一のログインの手段であり、それを使わない手段を 2.7 より前に用意すると伝えるようにしました。`CPERSONA_DASHBOARD_STORES=false` にすると、サーバーは `~/.cpersona/stores.json` に書き足さなくなります。記録は書き換えません。精度は主張しません | [#562](https://github.com/Cloto-dev/cpersona/pull/562) |
 | 2.6.16a4 | pre-release。スキーマと依存は変えていません。2.6.16a2 と 2.6.16a3 では、Windows の `cpersona dashboard --install-shortcut` がショートカットを作っていませんでした。台本を標準入力で Windows PowerShell 5.1 に渡していたためです。この渡し方では複数行にまたがる塊が実行されず、それでも終了コードは 0 でした。台本は `-EncodedCommand` で渡すようにしました。Windows 11 で確かめました。ショートカットはデスクトップとスタートメニューにでき、コンソールの窓を出さずにダッシュボードを開き、もう一度使うと動いているものを開き、`--remove-shortcut` で消えます。記録は書き換えません。精度は主張しません | [#564](https://github.com/Cloto-dev/cpersona/pull/564) |
 | 2.6.16 | 2.6.16 系の final。2.6.16a4 からパッケージのコードは変えていません。スキーマと依存も変えていません。2.6.15 に比べ、バージョンを指定しない導入にも上の 4 つの pre-release が入ります。ダッシュボードはエピソード・エンティティ・エージェントごとのプロフィールを一覧して開き、時刻を閲覧者のタイムゾーンで表示し、ストアの状態のページを持ち、WCAG 2.2 AA のコントラストを満たします。`cpersona dashboard` はエージェントなしでポート 48700 で開き、デスクトップのショートカットとアプリとして入れられるページがあり、ローカルのセッションは起動時に作り停止で消える鍵で署名します。`open_dashboard` は非推奨で、2.7 で削除します。記録は書き換えません。精度は主張しません。2.6.16a4 を本番で約 15 時間使い、再起動もエラーもないことを確かめてから出しました。Linux のデスクトップでショートカットをダブルクリックする動作は確かめていません | [#551](https://github.com/Cloto-dev/cpersona/pull/551), [#552](https://github.com/Cloto-dev/cpersona/pull/552), [#553](https://github.com/Cloto-dev/cpersona/pull/553), [#554](https://github.com/Cloto-dev/cpersona/pull/554), [#556](https://github.com/Cloto-dev/cpersona/pull/556), [#557](https://github.com/Cloto-dev/cpersona/pull/557), [#558](https://github.com/Cloto-dev/cpersona/pull/558), [#559](https://github.com/Cloto-dev/cpersona/pull/559), [#561](https://github.com/Cloto-dev/cpersona/pull/561), [#562](https://github.com/Cloto-dev/cpersona/pull/562), [#564](https://github.com/Cloto-dev/cpersona/pull/564) |
+| 2.6.17a1 | pre-release です。環境変数 `CPERSONA_RECALL_LOG=true` で起動すると、`recall` と `reconstruct` を呼ぶたびに、そのトレース (参照・順位・スコア・理由。記録の本文は含みません) を、時刻・範囲・質問の文・返した参照と一緒に、ストアの横のファイル (`<db>.recall-log.db`) に残します。この記録は既定でオフであり、質問の文はほかのどこにも残りませんがこの記録には残り、呼び出し側が受け取る応答は変わりません。12,000 件のストアで測ると、オンにすると想起 1 回が約 5 分の 1 長くかかりました。ダッシュボードには「想起の履歴」のページが加わり、記録された各想起について結果がどう形作られたかを見られるほか、記録を開いた引き出しからは「この記録が候補になった想起」を一覧できます。また、求めたトレース (`trace=true`) が約 4 分の 1 小さくなり (記録した 200 件のトレースで平均 10,193 字から 7,737 字)、`trace_version` は 2 になり、数値は有効数字 4 桁、ゲートの閾値は 1 回だけ持ちます。ライトのテーマでは記憶のネットワークを明るい背景の上に描くようになり、想起の回数はあるが最後に想起した時刻が無い記録では回数だけを表示するようになりました。さらに、README を CPersona に初めて触れる人向けに書き直し、導入の手順はライセンスが MIT であることを理由に埋め込みモデルに bge-m3 を勧めるようになりました。`benchmarks/` の失敗コードを確定する道具は、呼び出し側が必要なものを渡せばさらに 4 つのコードを付けられるようになり、完了条件 6 は帰属できないまま残る失敗のそれぞれに帰属できない理由を求めるようになりました。スキーマと依存は変えていません。記録は書き換えません。精度は主張しません | [#567](https://github.com/Cloto-dev/cpersona/pull/567), [#568](https://github.com/Cloto-dev/cpersona/pull/568), [#569](https://github.com/Cloto-dev/cpersona/pull/569), [#570](https://github.com/Cloto-dev/cpersona/pull/570), [#571](https://github.com/Cloto-dev/cpersona/pull/571), [#572](https://github.com/Cloto-dev/cpersona/pull/572), [#573](https://github.com/Cloto-dev/cpersona/pull/573), [#575](https://github.com/Cloto-dev/cpersona/pull/575), [#576](https://github.com/Cloto-dev/cpersona/pull/576) |
 
 連想の層はリリース済みで、既定では off です。既定にするかどうかは専用の A/B で決め
 ますが、その結果はまだ記録されていません。
