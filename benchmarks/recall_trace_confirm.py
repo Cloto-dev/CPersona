@@ -29,11 +29,19 @@ The codes that need an argument are assigned only when the caller passes it, so 
 caller that passes only the trace gets the same code as before they existed.
 
 Usage as a library: `confirm(trace, gold_refs, shown_text=..., quotes=..., correct=...)`.
+`attribution_record(case, trace, gold_refs, ...)` writes the same verdict as a record of
+the auditor profile (docs/schemas/recall-failure-attribution-v1.schema.json).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
+
+# The auditor profile's record format this module writes; it reads trace_version 2.
+PROFILE_VERSION = 1
+PROFILE_TRACE_VERSION = 2
 
 _WS = re.compile(r"\s+")
 
@@ -183,3 +191,69 @@ def confirm(
     if correct is False:
         return "UNATTRIBUTED"
     return None
+
+
+def trace_digest(trace: dict) -> str:
+    """The first 16 hex digits of the SHA-256 of `trace` as JSON with sorted keys and no
+    whitespace: names the exact trace a record was read from without carrying it."""
+    body = json.dumps(trace, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def attribution_record(
+    case: str,
+    trace: dict,
+    gold_refs: set[str] | list[str],
+    *,
+    shown_text: str | None = None,
+    quotes: list[str] | None = None,
+    correct: bool | None = None,
+    stored_texts: Mapping[str, str] | None = None,
+    searchable_chars: Mapping[str, int] | None = None,
+    shown_by_ref: Mapping[str, str] | None = None,
+    degraded: bool | None = None,
+    unattributed_reason: str | None = None,
+    replay: dict | None = None,
+) -> dict | None:
+    """One failure as a record of the auditor profile, or None when the recall did not fail.
+
+    The code is `confirm`'s. An UNATTRIBUTED failure needs `unattributed_reason`: the tool
+    knows that nothing it was given establishes a stage, not why (for example, that the
+    benchmark marks no answer turn), so the auditor states it. `replay` is passed through
+    as the profile's replay outcome.
+    """
+    gold = sorted(set(gold_refs))
+    if not gold:
+        raise ValueError("a failure needs the reference of at least one record that holds the answer")
+    if trace.get("trace_version") != PROFILE_TRACE_VERSION:
+        raise ValueError(f"the profile reads trace_version {PROFILE_TRACE_VERSION}, not {trace.get('trace_version')!r}")
+    code = confirm(
+        trace, gold, shown_text=shown_text, quotes=quotes, correct=correct, stored_texts=stored_texts,
+        searchable_chars=searchable_chars, shown_by_ref=shown_by_ref, degraded=degraded,
+    )
+    if code is None:
+        return None
+    if code == "UNATTRIBUTED" and not unattributed_reason:
+        raise ValueError("an unattributed failure needs the reason it cannot be attributed")
+    record = {
+        "profile_version": PROFILE_VERSION,
+        "case": case,
+        "code": code,
+        "gold_refs": gold,
+        "inputs": {
+            "shown_text": shown_text is not None,
+            "quotes": bool(quotes),
+            "correct": correct,
+            "stored_texts": stored_texts is not None,
+            "searchable_chars": searchable_chars is not None,
+            "shown_by_ref": shown_by_ref is not None,
+            "degraded": degraded,
+        },
+        "trace_version": PROFILE_TRACE_VERSION,
+        "trace_digest": trace_digest(trace),
+    }
+    if code == "UNATTRIBUTED":
+        record["unattributed_reason"] = unattributed_reason
+    if replay is not None:
+        record["replay"] = replay
+    return record

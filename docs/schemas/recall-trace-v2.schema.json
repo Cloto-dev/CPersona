@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Cloto-dev/cpersona/blob/master/docs/schemas/recall-trace-v2.schema.json",
+  "title": "CPersona recall trace, trace_version 2",
+  "description": "The trace a recall returns with trace=true (recall), or under trace.recall (reconstruct). It records which rows each stage kept, dropped and reordered, and why, by reference, rank, score and reason; it never carries stored text. This schema fixes the part a failure audit reads: the arms, the fusion, the gate, autocut, the count cut, the held places, the stages and the per-stage input digests. Objects stay open, so a field added later does not break a reader; a field listed here keeps its meaning and type for trace_version 2. Numbers carry four significant digits.",
+  "type": "object",
+  "required": ["trace_version", "policy", "scope", "request", "config", "arms", "fusion", "gate", "autocut", "order", "reservation", "stages", "suspected", "stage_inputs", "timing_ms"],
+  "properties": {
+    "trace_version": {"const": 2},
+    "server_version": {"type": ["string", "null"], "description": "The server version that answered."},
+    "policy": {
+      "type": "object",
+      "description": "The policies the call ran under, by name: `scoring`, and `process` (single-pass-v0 without a time cue, the cue loop's own name with one).",
+      "properties": {"scoring": {"type": "string"}, "process": {"type": "string"}}
+    },
+    "scope": {
+      "type": "object",
+      "description": "The isolation scope the call read.",
+      "properties": {
+        "agent_id": {"type": "string"},
+        "project_id": {"type": ["string", "null"]},
+        "channel": {"type": ["string", "null"]},
+        "source_id": {"type": ["string", "null"]}
+      }
+    },
+    "request": {
+      "type": "object",
+      "description": "What the call asked for and the switches it ran with.",
+      "properties": {
+        "limit": {"type": "integer", "minimum": 0},
+        "deep": {"type": "boolean"},
+        "mode": {"type": "string", "description": "The fusion mode: rrf, rsf or cascade."},
+        "depth": {"type": "integer", "minimum": 0, "description": "The per-arm candidate depth (Recall Depth)."},
+        "time_cue": {"type": ["object", "null"]}
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "The configuration that shapes the result: embedding mode and model, the scan window, the vector reach, whether the fused gate and autocut were on.",
+      "properties": {
+        "embedding_model": {"type": ["string", "null"]},
+        "scan_window": {"type": "integer"},
+        "vector_reach": {"type": "integer"},
+        "fused_gate_enabled": {"type": "boolean"},
+        "autocut_enabled": {"type": "boolean"}
+      }
+    },
+    "arms": {
+      "type": "object",
+      "description": "Each retrieval arm's ranked list as the fusion received it, by arm name (for example vector_near, vector_far, episode_fts, memory_keyword, block, cue). An arm that found nothing is an empty list.",
+      "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/armRow"}}
+    },
+    "fusion": {
+      "type": "array",
+      "description": "The fused list in fused order, with each arm's contribution where the fusion computed one.",
+      "items": {
+        "type": "object",
+        "required": ["ref", "score"],
+        "properties": {
+          "ref": {"$ref": "#/$defs/ref"},
+          "score": {"type": ["number", "null"]},
+          "votes": {"type": "object", "additionalProperties": {"type": ["number", "null"]}}
+        }
+      }
+    },
+    "scoring": {"type": "object", "description": "Per-row adjustments a stage applied, by kind (for example prior, episode_penalty), each a map from reference to value."},
+    "gate": {
+      "type": "object",
+      "required": ["decisions"],
+      "description": "The quality gate. A decision's threshold is its own `threshold` when present, else `thresholds[signal]`.",
+      "properties": {
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ref", "signal", "score", "passed"],
+            "properties": {
+              "ref": {"$ref": "#/$defs/ref"},
+              "signal": {"type": ["string", "null"], "description": "The score the gate keyed on: rsf, cosine or rrf."},
+              "score": {"type": ["number", "null"]},
+              "threshold": {"type": ["number", "null"]},
+              "passed": {"type": "boolean"},
+              "reason": {"type": ["string", "null"], "description": "Why a row that did not pass was dropped."}
+            }
+          }
+        },
+        "thresholds": {"type": "object", "additionalProperties": {"type": "number"}}
+      }
+    },
+    "autocut": {
+      "type": "object",
+      "required": ["fired"],
+      "properties": {
+        "fired": {"type": "boolean"},
+        "kept": {"type": "integer", "minimum": 0},
+        "dropped": {"type": "array", "items": {"$ref": "#/$defs/ref"}}
+      }
+    },
+    "order": {
+      "type": "object",
+      "description": "The order before the count cut, the count, and the rows the count cut dropped. Empty when the call ended before the cut.",
+      "properties": {
+        "before_cut": {"type": "array", "items": {"type": "object", "required": ["ref"], "properties": {"ref": {"$ref": "#/$defs/ref"}}}},
+        "limit": {"type": "integer", "minimum": 0},
+        "cut_by_count": {"type": "array", "items": {"$ref": "#/$defs/ref"}}
+      }
+    },
+    "reservation": {
+      "type": "array",
+      "description": "Rows returned in places held beside the count, and the kind of place (block, keyword, far, cue, propagation or depth).",
+      "items": {"type": "object", "required": ["ref", "kind"], "properties": {"ref": {"$ref": "#/$defs/ref"}, "kind": {"type": "string"}}}
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The recall process's stages. A call without a time cue is one pass, recorded as stage 0.",
+      "items": {
+        "type": "object",
+        "required": ["stage", "searched"],
+        "properties": {
+          "stage": {"type": "integer", "minimum": 0},
+          "searched": {"type": "string"},
+          "next": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "suspected": {
+      "type": "array",
+      "description": "Failure codes the server suspected on its own, by stage. A suspicion is not a confirmed code: only a caller that knows the answer confirms one.",
+      "items": {
+        "type": "object",
+        "required": ["stage", "code"],
+        "properties": {"stage": {"type": "integer"}, "code": {"type": "string"}, "reason": {"type": "string"}}
+      }
+    },
+    "stage_inputs": {
+      "type": "object",
+      "description": "What each stage received: how many rows, and a digest of which rows in which order. A replay that starts from a stage checks its input against this; a stage whose input digest matches and whose output differs is where two runs parted.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["rows", "order"],
+        "properties": {"rows": {"type": "integer", "minimum": 0}, "order": {"type": "string", "pattern": "^[0-9a-f]{16}$"}}
+      }
+    },
+    "timing_ms": {"type": "object", "additionalProperties": {"type": "number"}},
+    "providers": {"type": "object", "properties": {"digest": {"type": "string"}}},
+    "cue": {
+      "type": "object",
+      "description": "The time cue's effect: the bound it ran under, the rows it moved and the rows it seated.",
+      "properties": {
+        "bound": {"type": "integer"},
+        "confidence": {"type": "string"},
+        "lifted": {"type": "array", "items": {"type": "object", "required": ["ref", "from", "to"], "properties": {"ref": {"$ref": "#/$defs/ref"}, "from": {"type": "integer"}, "to": {"type": "integer"}}}},
+        "seated": {"type": "array", "items": {"$ref": "#/$defs/ref"}}
+      }
+    },
+    "coverage": {"type": "object", "description": "The coverage ledger over the returned records, recorded after the recall answered."}
+  },
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "pattern": "^(?:(?:mem|ep):[0-9]+|profile)$",
+      "description": "A record's reference as the response spells it."
+    },
+    "armRow": {
+      "type": "object",
+      "required": ["ref", "rank"],
+      "properties": {
+        "ref": {"$ref": "#/$defs/ref"},
+        "rank": {"type": "integer", "minimum": 0},
+        "raw": {"type": ["number", "null"], "description": "The arm's own score for the row, where it has one."}
+      }
+    }
+  }
+}
