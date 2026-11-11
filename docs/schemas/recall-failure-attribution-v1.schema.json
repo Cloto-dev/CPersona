@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Cloto-dev/cpersona/blob/master/docs/schemas/recall-failure-attribution-v1.schema.json",
+  "title": "CPersona recall failure attribution, profile version 1",
+  "description": "One audited recall failure: the failure code confirmed for it, the evidence the auditor had for that code, the trace it was read from, and, when the recall was replayed, the replay's outcome. Only a caller that knows the answer can confirm a failure, so this record is written outside the server (by a benchmark or a production review), not by the recall. The codes are the failure taxonomy of the 2.6 design (section 8). benchmarks/recall_trace_confirm.py assigns the codes it can establish from a trace and the inputs below and writes this record with attribution_record().",
+  "type": "object",
+  "required": ["profile_version", "case", "code", "gold_refs", "inputs", "trace_version", "trace_digest"],
+  "additionalProperties": false,
+  "properties": {
+    "profile_version": {"const": 1},
+    "case": {"type": "string", "minLength": 1, "description": "The auditor's identifier for the failed case (a benchmark question id, a report id). Opaque to this profile."},
+    "code": {"$ref": "#/$defs/code"},
+    "gold_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^(?:(?:mem|ep):[0-9]+|profile)$"},
+      "description": "References of the records that hold the answer; any one of them suffices."
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Which evidence the auditor passed besides the trace. A code that needs an input is assigned only when the input was passed (CAPTURE_MISS: stored_texts; REPRESENTATION_MISS: stored_texts, quotes and searchable_chars; SYSTEM_DEGRADED: degraded; EVIDENCE_NOISE: shown_by_ref and quotes; RECONSTRUCTION_LOSS and AGENT_MISUSE: the shown text and quotes).",
+      "required": ["shown_text", "quotes", "correct", "stored_texts", "searchable_chars", "shown_by_ref", "degraded"],
+      "properties": {
+        "shown_text": {"type": "boolean", "description": "The text the reader was shown was passed."},
+        "quotes": {"type": "boolean", "description": "The answer's text in the record was passed."},
+        "correct": {"type": ["boolean", "null"], "description": "Whether the reader answered correctly; null when no reader was run."},
+        "stored_texts": {"type": "boolean", "description": "The stored text of each gold reference was passed."},
+        "searchable_chars": {"type": "boolean", "description": "How much of each gold record semantic search reaches was passed."},
+        "shown_by_ref": {"type": "boolean", "description": "The text shown for each returned record was passed."},
+        "degraded": {"type": ["boolean", "null"], "description": "Whether the recall ran degraded, as recorded; null when not recorded."}
+      }
+    },
+    "unattributed_reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Why the failure cannot be attributed. Required when code is UNATTRIBUTED, and only then."
+    },
+    "trace_version": {"const": 2},
+    "trace_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "The first 16 hex digits of the SHA-256 of the trace serialised as JSON with sorted keys and no whitespace, so the record names the exact trace it was read from without carrying it."
+    },
+    "replay": {"$ref": "#/$defs/replay"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"code": {"const": "UNATTRIBUTED"}}},
+      "then": {"required": ["unattributed_reason"]},
+      "else": {"not": {"required": ["unattributed_reason"]}}
+    }
+  ],
+  "$defs": {
+    "code": {
+      "description": "A confirmed failure code. The first twelve are the taxonomy every recall shares; the last eight belong to the recall process (the time cue's loop).",
+      "enum": [
+        "CAPTURE_MISS", "REPRESENTATION_MISS", "CANDIDATE_MISS", "RANKING_MISS", "FILTER_DROP", "EVIDENCE_NOISE",
+        "RECONSTRUCTION_LOSS", "RECONSTRUCTION_UNSUPPORTED", "STALE_CONFLICT", "AGENT_MISUSE", "SYSTEM_DEGRADED",
+        "UNATTRIBUTED",
+        "INTENT_MISLEADING", "WINDOW_TOO_NARROW", "WINDOW_TOO_WIDE", "WIDENING_PREMATURE", "WIDENING_INSUFFICIENT",
+        "PRIOR_DOMINANCE", "PRIOR_IGNORED", "INTENT_NORMALIZATION_ERROR"
+      ]
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identical"],
+      "description": "The outcome of replaying the recall. `identical` says whether running the recorded request again reproduced what the reader was shown; a code read from a replay that did not reproduce is weaker evidence. A counterfactual replay changes one condition and records the code before and after.",
+      "properties": {
+        "identical": {"type": "boolean"},
+        "change": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": ["depth", "threshold", "arm_alone", "fusion_weight", "raw_evidence", "budget", "cue_disabled",
+                       "embedding", "baseline_code", "oracle_evidence", "attribution_tool"],
+              "description": "The one condition changed: raise the depth, lift a threshold, run one arm alone, change a fusion weight, return the raw evidence instead of the reconstruction, widen the budget, disable a cue, substitute the embedding, run the baseline code, hand the reader the oracle evidence, or re-attribute with a different version of the attribution tool."
+            },
+            "value": {"description": "The changed value, in the kind's own terms."}
+          }
+        },
+        "code_before": {"$ref": "#/$defs/code"},
+        "code_after": {"$ref": "#/$defs/code"}
+      },
+      "dependentRequired": {"change": ["code_before", "code_after"]}
+    }
+  }
+}

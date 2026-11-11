@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:cf52dcbc2561af77c24dbe3002473fcf0772b0dc -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:f37fb421081e1ebe4cde51f9cbbc64a23883cee5 -->
 
 # Reliable Recall — 2.6 系
 
@@ -739,7 +739,7 @@ replay。
 profile が trace、分類、原因の証拠、replay の結果を固定します。この層分けは意図的です。
 core は小さく汎用のまま、profile が recall 固有のすべてを運び、第 2 の記憶システムは
 このサーバーの内部を採用せずに profile を実装できます。profile は、標準自身がそうであった
-ように、その第 2 の実装が存在してから書きます。
+ように、その第 2 の実装が存在してから書きます。ただし、§10 (完了の条件) が求めているため、profile の文書そのものより先に schema を公開しています。[recall trace の schema](schemas/recall-trace-v2.schema.json) は `trace_version` 2 の trace のうち監査が読む部分を固定し、[失敗の帰属の記録の schema](schemas/recall-failure-attribution-v1.schema.json) は監査した失敗 1 件 (上の分類から付けたコード、監査する人がそのコードの根拠として持っていた入力、digest で示す読んだ trace、未帰属のまま残る時の理由、replay の結果) を固定します。`benchmarks/recall_trace_confirm.py` は、判定をこの形で書き出します。
 
 ## 9. このラインの測り方 { #9-how-the-line-is-measured }
 

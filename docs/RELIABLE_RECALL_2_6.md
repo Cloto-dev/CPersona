@@ -919,7 +919,14 @@ and the replay outcome. The layering is deliberate. The core stays
 small and general, the profile carries everything recall-specific, and a
 second memory system could implement the profile without adopting this
 server's internals. The profile is written once its second implementation
-exists, as the standard itself was.
+exists, as the standard itself was. Its schema is published ahead of it,
+because section 10 asks for it: the [recall trace](schemas/recall-trace-v2.schema.json)
+fixes the part of a `trace_version` 2 trace that an audit reads, and the
+[failure-attribution record](schemas/recall-failure-attribution-v1.schema.json)
+fixes one audited failure — its code from the taxonomy above, the evidence the
+auditor had for it, the trace it was read from (by digest), the reason when it
+stays unattributed, and the replay's outcome.
+`benchmarks/recall_trace_confirm.py` writes its verdicts in that form.
 
 ## 9. How the line is measured
 
