@@ -289,6 +289,19 @@ invariant, the gate's rank cut removed, a measured lexical-weight constant and a
 default-off conditional-evidence mode — is decided there, against the success
 condition fixed above.
 
+Adaptive fusion did not ship in 2.6, and [condition 5](#10-what-done-means)
+closes on its second branch: this paragraph records why and what replaces it.
+The research located the losses and showed what can decide the fusion, but the
+reference panel as first specified identified no null and was replaced before
+any code was built on it. The structural fixes the design ships first, the
+reservation invariant and the removal of the gate's rank cut, have not shipped,
+so the pre-registered comparison against the success condition was never run.
+What 2.6 ships in their place is the fixed reciprocal-rank fusion with held
+places for rows it would otherwise bury — the block arm's reservation, the time
+cue's seats and the keyword seat, each measured under a rule fixed before its
+run — and the token caps of `mode`. The fusion programme moves to a later line,
+with its success condition unchanged.
+
 ## 6. Associations and overflow chains as cues
 
 Two features of this line were designed as retrieval paths; the recall process
