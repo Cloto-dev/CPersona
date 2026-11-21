@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:b738cac59f03e926325cf56e46c8b3bb9af9a730 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:73815e20461007ae5f9cb1fb87a3d5d97d63e5fb -->
 
 # Reliable Recall — 2.6 系
 
@@ -375,8 +375,9 @@ effective_budget = min(budget_base, max_budget)
   それらは `max_evidence` が制限します。
 - preview tier の抜粋 1 つ分に満たない予算、または最大を超える既定・強制の予算は起動時の
   エラーであって、黙った clamp ではありません。したがって最初の item は必ず収まります。
-  既定と最大の予算にはまだ値がありません。どちらも第 9 節の sweep で選び、下の例の数値は
-  説明のためのものです。
+  既定の予算は 4,000 文字、最大は 20,000 文字です (`CPERSONA_RECONSTRUCT_DEFAULT_BUDGET`、
+  `CPERSONA_RECONSTRUCT_MAX_BUDGET`)。どちらも第 9 節の sweep で決めた値ではなく設定値であり
+  ([「完了」の意味](#10-what-done-means))、下の例の数値は例示です。
 - item は head claim を `content` に運び、保持した他の claim の原文抜粋を
   `excerpts` に関連度の高い順で運びます。2.6 からは head claim を、そのレコードのうち
   クエリに一致した箇所から引用します。ブロックの支配範囲を順位順に、その item の
@@ -588,8 +589,8 @@ export。適応化は、固定 policy が再現可能な baseline と監査契�
 実験的な v1 の出口は v0 の 4 段階を維持します。関係の走査は宣言された関係を辿り
 ([連想記憶](ASSOCIATIVE_MEMORY_DESIGN.md#3-where-the-graph-is-read-reconstructive-recall))、
 宣言が無ければ恒等です。
-v1.1 からペイロード予算を上記のとおり実装しています。既定値 4,000 字と最大値 20,000 字は、
-§9 の掃引が選ぶまでの暫定値です。呼び出し側の予算が見出しの引用 1 つ分
+v1.1 からペイロード予算を上記のとおり実装しています。既定の 4,000 文字と最大の 20,000 文字は、
+§9 の掃引で決めた値ではなく設定値です。呼び出し側の予算が見出しの引用 1 つ分
 (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`。充填が off のときはプレビュー層の抜粋 1 つ分) に満たない場合は
 その分まで引き上げ、`budget_policy` で申告します。レコードが現行の overflow tree ノードを
 完全に持つ claim は、クエリに最も合うノードから引用します。ノードをクエリ埋め込みとの
@@ -821,7 +822,7 @@ tokens、tokens per correct answer)。そして cached と uncached、入力と�
    機構で、ベンチマーク記録が本番 regime で取り直されている。
 3. **深さと件数が分離され** (第 4 節)、結合の不変条件がテストの下にある。
 4. **再構成想起がツールとして存在し**、第 7 節の件数契約、役割の語彙、9 つの不変条件、
-   第 9 節の変異を持ち、その既定の件数とペイロード予算が sweep で選ばれている。
+   第 9 節の変異を持ち、既定の件数とペイロード予算がそれぞれの決め方とともに明記されている。
 5. **適応的融合が同じベンチマークで両方のモデルで生の埋め込みを上回っている**か、そうで
    なかった理由と何がそれに代わるかを節が記録している。
 6. **ベンチマーク上のすべての失敗がコードと再生可能な trace を持ち**、未帰属率が報告され、
@@ -841,6 +842,19 @@ LongMemEval-S の実行で測ると、未帰属のまま残った失敗は、ベ
 ([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-failure-attribution-2611.md))。
 率を下げるにはベンチマークを変えるしかないので、条件は残る失敗それぞれの理由を求める形に
 しました。
+
+条件 4 は、はじめ既定の件数とペイロード予算を第 9 節の sweep で決めることを求めていました。
+そのうち件数の側は実行しました。LongMemEval-S の 500 問で、回答呼び出しの前に事前登録した
+判定則のもと、8 item では文脈のトークンが 19% 少ないまま正答率を保ち、4 item では
+4.60 ポイント下がりました
+([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-count-curve.md))。
+この結果は既定の 10 を動かさず、既定は契約上の選択として保っています。予算の側は
+実行しませんでした。既定の予算は計測ではなく設定値です。4,000 文字、または窓の item の
+head の引用の合計の方が大きければその値 (既定の件数では 6,000) となり、どの item の head
+も収まります。呼び出し側が読む量を計測で抑える上限は、代わりに `mode` のトークン上限であり、
+Lite と Pro の上限はテスト問題を走らせる前に事前登録した判定則に照らして判定しました
+([結果](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-2_6_9.md))。
+したがってこの条件は、各既定値をその決め方とともに明記することを求めています。
 
 2 つのものは、意図して完了条件では**ありません**。Go の索引サービスは
 [ロードマップ](roadmap.md#the-runtime-and-scale-ladder)のランタイム軸に属します。それは

@@ -443,9 +443,11 @@ effective_budget = min(budget_base, max_budget)
   counted; `max_evidence` bounds them.
 - A budget below one preview-tier excerpt, or a default or forced budget
   above the maximum, is a startup error, not a silent clamp. The first item
-  therefore always fits. The default and the maximum budget have no value yet:
-  both are chosen by the sweep in section 9, and the figure in the example
-  below is illustrative.
+  therefore always fits. The default budget is 4,000 characters and the
+  maximum 20,000 (`CPERSONA_RECONSTRUCT_DEFAULT_BUDGET`,
+  `CPERSONA_RECONSTRUCT_MAX_BUDGET`). Both are set, not chosen by the sweep in
+  section 9 ([what "done" means](#10-what-done-means)), and the figure in the
+  example below is illustrative.
 - An item carries its head claim in `content` and verbatim excerpts of its
   other retained claims in `excerpts`, most relevant first. Since 2.6 the head
   claim is quoted from the parts of its record that matched the query: the
@@ -735,8 +737,8 @@ policy has a reproducible baseline and an audit contract.
 The experimental v1 exit retains v0's four stages; the relation walk follows
 declared relations ([associative memory](ASSOCIATIVE_MEMORY_DESIGN.md#3-where-the-graph-is-read-reconstructive-recall))
 and is the identity where none are declared. Since v1.1 it implements the payload budget as
-described above, with a provisional default of 4,000 and maximum of 20,000
-characters until the section 9 sweep chooses them; a caller's budget below one
+described above, with a default of 4,000 and a maximum of 20,000
+characters, set rather than chosen by the section 9 sweep; a caller's budget below one
 head quote (`CPERSONA_RECONSTRUCT_QUOTE_CHARS`, or one preview-tier excerpt with
 filling off) is raised to it and `budget_policy` says so. A claim whose
 record has a current overflow-tree node set is quoted from the node that best
@@ -1035,8 +1037,8 @@ The line closes when all of the following hold, in this order of importance:
    under test.
 4. **Reconstructive Recall exists as a tool** with the count contract, the
    role vocabulary, the nine invariants of section 7 and the mutations of
-   section 9, and its default count and payload budget were chosen by the
-   sweep.
+   section 9, and its default count and payload budget are stated with how
+   each was chosen.
 5. **Adaptive fusion beats the raw embedding on both models** on the same
    benchmark, or the section records why it did not and what replaces it.
 6. **Every failure on the benchmark has a code and a replayable trace**, the
@@ -1057,6 +1059,20 @@ reads the data can lower, and teaching the tool four more codes left the rate
 where it was ([results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-failure-attribution-2611.md)).
 A falling rate would have been reachable only by changing the benchmark, so the
 condition asks for the reason behind each remaining failure instead.
+
+Condition 4 first asked that the default count and payload budget be chosen
+by the sweep of section 9. Its count half ran: on LongMemEval-S's 500
+questions, under a rule registered before any answer call, 8 items held
+accuracy at 19% fewer context tokens and 4 items fell 4.60 points
+([results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-count-curve.md)).
+It did not move the default of ten, which is kept as a contract choice. Its
+budget half was not run. The default budget is set, not measured: 4,000
+characters, or the window's head quotes summed when that is more, which at the
+default count is 6,000, so every item's head fits. The measured bound on what
+a caller reads is the token cap of `mode` instead, whose Lite and Pro caps were
+judged against rules registered before the test questions ran
+([results](https://github.com/Cloto-dev/cpersona/blob/master/benchmarks/measurements/results-omnimemeval-lme-2_6_9.md)).
+So the condition asks that each default be stated with how it was chosen.
 
 Two things are **not** completion conditions, on purpose. The Go index
 service belongs to the runtime axis of the [roadmap](roadmap.md#the-runtime-and-scale-ladder):
