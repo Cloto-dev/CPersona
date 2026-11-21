@@ -81,9 +81,44 @@ and answers 36.2 points more. Pro spends 2.89 times the context and answers
 No type fell. In every type some questions 2.5.12 answered were lost: 22 in
 all for Pro and 29 for Lite, at most 11 in one type.
 
-Search latency on the development machine that ran the benchmark (not the
-reference hardware), median / p95: 2.5.12 197 / 687 ms, Pro 699 / 1,362 ms,
-Lite 405 / 648 ms. Peak memory was not measured in this run.
+Search latency on the development machine that ran the benchmark, median /
+p95: 2.5.12 197 / 687 ms, Pro 699 / 1,362 ms, Lite 405 / 648 ms. Latency and
+peak memory on the reference machine are [below](#latency-and-peak-memory-on-the-reference-machine).
+
+## Latency and peak memory on the reference machine
+
+Measured on 2026-11-21, reported beside the rule and not part of it. The
+machine is the reference Intel N150 (4 cores, 16 GB), with its virtual machine
+shut down for the run, as in the earlier latency records.
+
+- **Corpus**: the 100,000 real-length records of the
+  [2.6.7 latency record](results-recall-latency-block-index-file.md) (2,691
+  characters on average, 768-dimension vectors), not LongMemEval. 2.6.16 opened
+  a copy as it was. 2.5.12 received the same text and the same vectors in a
+  store of its own schema; 2.5.12 builds no blocks.
+- **Calibration**: each version was started once on its store and calibrated
+  by its own default procedure, global threshold and this user's gate; every
+  timed run restored that calibration.
+- **Timing**: each version ran as a server, and a client on the same machine
+  called it over MCP once per question, timing the round trip, which includes
+  embedding the question (the same embedding server for both). Peak memory is
+  the server process's high-water mark. The 53 questions of the 2.6.7 record,
+  each condition run twice on a fresh server, in the order 2.5.12, Pro, Lite,
+  then again; one untimed call first, and the load average below 1.0 before
+  timing.
+
+| Condition | Median | p95 | Max | Peak memory | Median against 2.5.12 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2.5.12 `recall`, `limit: 10` | 1,711 ms | 2,236 ms | 2,650 ms | 88 MB | — |
+| 2.6.16 Pro | 2,232 ms | 2,597 ms | 2,930 ms | 267 MB | +30% |
+| 2.6.16 Lite | 1,502 ms | 1,865 ms | 2,244 ms | 261 MB | −12% |
+
+The two passes' medians agree within 3%. No call failed and no embedding
+request failed. Lite answers faster than 2.5.12 and Pro slower; both 2.6.16
+modes hold about three times 2.5.12's memory (its parts were not measured).
+These figures time the whole tool call from outside the server, so they are not
+comparable with the 2.6.7 record's, which timed the recall path inside the
+process.
 
 ## What the comparison measures
 
@@ -112,6 +147,9 @@ known.
   reading Lite's cap of 3,000 tokens as its size. Lite's context had measured
   705.5 tokens on 2.6.11's run. The expectation was corrected before the first
   search; the rule did not change.
+- **The reference-machine timing** could not reuse the 2.6.7 latency driver,
+  which calls 2.6's internals that 2.5.12 does not have. Both versions were
+  timed as servers from a client instead, as described above.
 - **The first answer pass failed** on an expired API key: every call was
   refused, none succeeded, and nothing was charged. The pass was set aside and
   rerun from the start with a new key. Every condition then answered and was
@@ -135,5 +173,4 @@ known.
 
 - Nothing about 2.5.12 used with `get_contents`, which this harness does not
   call.
-- Nothing about latency or memory on the reference hardware.
 - Nothing about other benchmarks.
