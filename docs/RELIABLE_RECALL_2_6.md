@@ -984,6 +984,16 @@ returned count always reported as the effective count; excerpts allocated
 before every head is placed; an excerpt taken from outside its item; the
 allocation sequence re-ordered by the budget.
 
+**The exit's parts** are judged one at a time by ablation, under a rule
+registered before the questions are drawn: each part is turned off in
+`mode: "pro"` at the same cap, and the measure is the share of questions
+whose evidence records were all quoted, counted without a reader. On 2.6.16
+the block arm and the evidence allocation each contributed, and the block
+arm's reach alone, an exploratory arm, did not show a contribution
+(`benchmarks/measurements/results-block-evidence-ablation.md`). Two parts are
+not tested, because neither can be turned off: bundling rows into items, and
+quoting from overflow nodes.
+
 **Tokens** are measured as the [project direction](roadmap.md) defines them:
 recall payload tokens, downstream input tokens, end-to-end memory tokens,
 amortised write tokens, and tokens per correct answer. They are reported with

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:f37fb421081e1ebe4cde51f9cbbc64a23883cee5 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:247b06336984b017db6f692f673621973848c0f0 -->
 
 # Reliable Recall — 2.6 系
 
@@ -781,6 +781,13 @@ flat recall。2.6 の検索のみ。再構成なしの証拠選択。`count = 1`
 の優先順位を入れ替える。候補の上限を count に再結合する。重複排除を無効にする。provenance
 を落とす。返却数を常に有効数として報告する。すべての head を置く前に抜粋を割り当てる。
 item の外から抜粋を取る。割り当ての列を予算によって並べ替える。
+
+**出口の部品**は、問いを抜き出す前に登録した判定則のもとで、ablation で 1 つずつ判定します。
+`mode: "pro"` で同じ上限のまま部品を 1 つ切り、根拠の記録がすべて引用された問いの割合を、
+読み手を使わずに数えます。2.6.16 では、block のアームと根拠の配分がそれぞれ寄与し、探索として
+測った block のアームの到達だけは寄与を示せませんでした
+(`benchmarks/measurements/results-block-evidence-ablation.md`)。行を item に束ねることと、
+overflow node から引用することの 2 つは、切る仕組みが無いので検証していません。
 
 **トークン**は[プロジェクトの方向](roadmap.md)が定義するとおりに測ります (recall
 payload tokens、downstream input tokens、end-to-end memory tokens、amortised write
