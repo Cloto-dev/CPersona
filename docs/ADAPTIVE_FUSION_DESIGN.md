@@ -6,7 +6,10 @@ success condition of the
 [2.6 design page](RELIABLE_RECALL_2_6.md#5-adaptive-fusion) is met on the
 measurement this document pre-registers. The structural fixes D1 and D2
 (section 1), which section 4 ships first and default-on, have not shipped yet:
-recall still uses the pool-size gate that D2 replaces.
+recall still uses the pool-size gate that D2 replaces. Nothing in this design
+shipped in 2.6, and the line closed its condition with the reasons and what
+replaces it ([section 5](RELIABLE_RECALL_2_6.md#5-adaptive-fusion)); the design
+carries to a later line with its success condition unchanged.
 
 The facts this design rests on are in two research notes: the
 [frozen-stage replay](research/frozen-stage-replay-2026-09.md), which located

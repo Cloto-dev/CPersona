@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ADAPTIVE_FUSION_DESIGN.md@blob:d68d0b953841647c452a55c697a9e6ed06d82946 -->
+<!-- i18n-source: docs/ADAPTIVE_FUSION_DESIGN.md@blob:6c1476441666a59c2559c84fa466b94c57aa5220 -->
 
 # 適応的融合 — 設計 { #adaptive-fusion-design }
 
@@ -7,6 +7,9 @@ default-off で出荷される。出荷済みの融合は、本ドキュメン�
 [2.6 設計ページ](RELIABLE_RECALL_2_6.md#5-adaptive-fusion)の成功条件が満たされるまで
 触られない。第 1 節の構造的な修正 D1・D2 は、第 4 節が既定オンで先に出すとしているが、まだ
 出荷されていない。recall は今も、D2 が置き換えるプールの大きさによる門を使っている。
+この設計は 2.6 では何も出荷されず、2.6 ラインは理由と代わりを書いてこの条件を閉じた
+([5 節](RELIABLE_RECALL_2_6.md#5-adaptive-fusion))。設計は、成功条件を変えずに後のラインへ
+持ち越す。
 
 本設計が拠って立つ事実は、2 本の研究ノートにある。
 [凍結段リプレイ](research/frozen-stage-replay-2026-09.md) はベンチマークの損失を段ごとに
