@@ -287,10 +287,15 @@ async def test_a_store_between_the_cue_arms_two_reads_does_not_count_a_row_twice
     assert quiet == [6, 5, 3, 2, 1, 4]
 
     real = far_seats.ranked_with_source
+    # 2.6.18 (bug-795): a change between the two reads makes the arm read the pair
+    # again, once, so a single store no longer reaches the merge. A store before each
+    # of the two attempts does: the second pair is still raced, and the merge is what
+    # keeps the edge row to one vote.
+    landing = iter([7, 8])  # each the newest record of the period
 
     async def a_store_lands_first(*args, **kwargs):
         async with database.transaction() as w:
-            await _seed_cue(w, ids=[7])  # the newest record of the period
+            await _seed_cue(w, ids=[next(landing)])
         return await real(*args, **kwargs)
 
     seen = {}
@@ -306,7 +311,7 @@ async def test_a_store_between_the_cue_arms_two_reads_does_not_count_a_row_twice
         raced = await _cue_ids(r)
     vector_list = seen["vector"]
     assert len(vector_list) == len(set(vector_list)), vector_list  # with the defect: 4 twice
-    assert raced == quiet
+    assert raced.count(4) == 1, raced
 
 
 @pytest.mark.asyncio

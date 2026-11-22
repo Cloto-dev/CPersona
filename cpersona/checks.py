@@ -4796,7 +4796,13 @@ async def deep_calibration_staleness(db, agent_id: str, fix: bool) -> dict:
             "runtime_scoring_version": runtime_scoring_version,
             "hint": hint,
         }
-    calibrated_at = state.get("calibrated_at")
+    # bug-611: an agent's own measurement time when the file records one (2.6.18 and
+    # later), else the file's stamp, which older versions restamped on every agent's
+    # calibration and which now records the last global measurement.
+    agent_times = state.get("agent_calibrated_at")
+    calibrated_at = (agent_times.get(agent_id) if isinstance(agent_times, dict) else None) or state.get(
+        "calibrated_at"
+    )
     try:
         age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(
             calibrated_at

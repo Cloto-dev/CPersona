@@ -156,7 +156,10 @@ memory.
 
 **Standalone.** `declare_associations` takes the same object plus an optional
 `anchor_ref`, for declarations made after the fact or from the dashboard, and
-`retract` — a list of relation ids and mention pairs to remove. Retraction is
+`retract` — a list of relation ids and mention pairs to remove. An `anchor_ref`
+that is not a record of the agent is reported in `dropped`, and the declaration
+is recorded without an anchor; declaring it again with a correct one adds a
+second relation, since the anchor is part of a relation's key. Retraction is
 the only way a declaration leaves the store; there is no automatic expiry, and
 a wrong declaration stays wrong until retracted.
 

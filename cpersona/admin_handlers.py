@@ -1039,6 +1039,12 @@ def _purge_agent_calibration(agent_id: str) -> bool:
                 _sub = state.get(_key)
                 if isinstance(_sub, dict):
                     removed_cal = (_sub.pop(agent_id, None) is not None) or removed_cal
+            # bug-611: the agent's own calibration time goes with its entries. It is not
+            # a reason to rewrite on its own: a time with no threshold beside it is read
+            # by nothing.
+            _times = state.get("agent_calibrated_at")
+            if isinstance(_times, dict):
+                _times.pop(agent_id, None)
             if removed_cal:
                 purged = _save_calibration_state(
                     state.get("embedding_dim"),
@@ -1057,6 +1063,8 @@ def _purge_agent_calibration(agent_id: str) -> bool:
                     # calibration from this one stamp, so restamping it here made a
                     # months-old calibration of every other agent read as fresh.
                     calibrated_at=state.get("calibrated_at"),
+                    agent_calibrated_at=state.get("agent_calibrated_at") or {},
+                    gate_unavailable=state.get("gate_unavailable"),
                 )
                 # The removal is on disk, so it is no longer pending: a later calibration
                 # of a same-id agent by another process must not be deleted again here.
@@ -1725,6 +1733,8 @@ def _save_calibration_state(
     agent_betas: dict | None = None,
     scoring_version: str | None | object = _LIVE,
     calibrated_at: str | None | object = _LIVE,
+    agent_calibrated_at: dict | None = None,
+    gate_unavailable: dict | None = None,
 ) -> bool:
     """Persist calibrated thresholds + the embedding fingerprint to the sidecar.
 
@@ -1752,6 +1762,18 @@ def _save_calibration_state(
     stored value through, so dropping an agent cannot launder a stale sidecar into
     looking freshly calibrated. ``calibrated_at`` follows the same rule: it defaults
     to now, and the rewrite passes the stored time through.
+
+    bug-611 (2.6.18): ``calibrated_at`` is one stamp for the whole file, and every
+    per-agent calibration restamped it, so calibrating one agent made every other
+    agent's months-old calibration read as fresh. ``agent_calibrated_at`` records when
+    each agent was last measured; ``calibrated_at`` stays the time of the last global
+    measurement, and deep_check reads an agent's own time first. Additive: older code
+    ignores the key, and an agent without an entry falls back to ``calibrated_at``.
+
+    bug-807 (2.6.18): ``gate_unavailable`` records that the startup guard tried to
+    calibrate the recall gate and the store gave too few samples, with the embedded-row
+    count it saw, so the next boot restores instead of recalibrating the whole store
+    again until the store has grown (``_gate_worth_retrying``).
     """
     if scoring_version is _LIVE:
         scoring_version = _live_fingerprint()
@@ -1768,7 +1790,10 @@ def _save_calibration_state(
         "fused_gate_signal": fused_gate_signal,
         "agent_betas": agent_betas or {},
         "calibrated_at": calibrated_at,
+        "agent_calibrated_at": agent_calibrated_at or {},
     }
+    if gate_unavailable:
+        payload["gate_unavailable"] = gate_unavailable
     path = _calibration_sidecar_path()
     tmp = f"{path}.tmp.{os.getpid()}"
     try:
@@ -2558,6 +2583,25 @@ async def do_calibrate_threshold(
                 agent_betas.pop(agent_id, None)
             elif precision_override is not _CURRENT_PRECISION:
                 agent_betas[agent_id] = precision_override
+            # bug-611: only the entry this call measured is stamped now; every other
+            # agent keeps the time stored for it, read from the file under the same lock.
+            # A stale or absent payload carries nothing, as for the thresholds. An agent
+            # this process removed since its last write is not carried back.
+            measured_at = datetime.now(timezone.utc).isoformat()
+            agent_times = dict((stored_state or {}).get("agent_calibrated_at") or {}) if carried else {}
+            for removed in vector._calibration_pending["agent_thresholds"]:
+                if removed not in vector._agent_thresholds:
+                    agent_times.pop(removed, None)
+            if agent_id:
+                agent_times[agent_id] = measured_at
+            stored_global_time = (stored_state or {}).get("calibrated_at") if carried else None
+            # bug-807: the record of a gate the store could not calibrate stays until a
+            # gate exists; a calibration that measured one has nothing left to record.
+            gate_unavailable = (
+                None
+                if vector._fused_gate_signal is not None or not carried
+                else (stored_state or {}).get("gate_unavailable")
+            )
             sidecar_persisted = _save_calibration_state(
                 embedding_dim,
                 config.EMBEDDING_MODEL,
@@ -2570,6 +2614,11 @@ async def do_calibrate_threshold(
                 },
                 fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
                 agent_betas=agent_betas,
+                calibrated_at=(
+                    measured_at if not agent_id or stored_global_time is None else stored_global_time
+                ),
+                agent_calibrated_at=agent_times,
+                gate_unavailable=gate_unavailable,
             )
             if sidecar_persisted:
                 vector._clear_calibration_pending()
@@ -2889,6 +2938,71 @@ def _restore_calibration_state(state: dict) -> None:
     vector._claim_global_calibration(*vector._CALIBRATION_GLOBAL_AXES)
 
 
+async def _embedded_memory_count() -> int:
+    """How many memories in the whole store carry an embedding (bug-807).
+
+    Deliberately global, like ``_corpus_embedding_dim``: the startup guard calibrates
+    the whole store, and what it records about a gate it could not calibrate is about
+    the store, not one agent.
+    """
+    iso = isolation_where(agent_id=None)
+    async with connection() as db:
+        rows = await db.execute_fetchall(
+            f"SELECT COUNT(*) FROM memories WHERE embedding IS NOT NULL{iso.and_clause}", iso.params
+        )
+    return int(rows[0][0]) if rows else 0
+
+
+#: bug-807: the store must grow by this share of the embedded rows the last attempt saw,
+#: and by at least GATE_RETRY_MIN_NEW_ROWS rows, before the startup guard tries again to
+#: calibrate a recall gate it found too few samples for.
+GATE_RETRY_GROWTH = 0.25
+GATE_RETRY_MIN_NEW_ROWS = 10
+
+
+def _gate_worth_retrying(record: object, embedded_rows: int) -> bool:
+    """Whether the store has grown enough since a gate attempt that lacked samples.
+
+    The gate needs pseudo-queries with a recalled row stored close to them in time
+    (``_calibrate_fused_gate``); a store that gave too few has to grow before another
+    attempt can find more. A record that cannot be read is worth retrying, so a damaged
+    field costs one calibration rather than suppressing every later one.
+    """
+    if not isinstance(record, dict):
+        return True
+    seen = record.get("embedded_rows")
+    if not isinstance(seen, int) or isinstance(seen, bool) or seen < 0:
+        return True
+    return embedded_rows >= max(seen + GATE_RETRY_MIN_NEW_ROWS, math.ceil(seen * (1 + GATE_RETRY_GROWTH)))
+
+
+def _record_gate_unavailable(embedded_rows: int) -> bool:
+    """Add the bug-807 record to the sidecar this boot just wrote, under its lock."""
+    with _calibration_sidecar_locked() as lock_held:
+        if not lock_held:
+            return False
+        state, unreadable = _read_calibration_sidecar()
+        if state is None or unreadable:
+            return False
+        return _save_calibration_state(
+            state.get("embedding_dim"),
+            state.get("embedding_model"),
+            state.get("global_threshold"),
+            state.get("agent_thresholds") or {},
+            global_fused_gate=state.get("global_fused_gate"),
+            agent_fused_gates=state.get("agent_fused_gates") or {},
+            fused_gate_signal=state.get("fused_gate_signal"),
+            agent_betas=state.get("agent_betas") or {},
+            scoring_version=state.get("scoring_version"),
+            calibrated_at=state.get("calibrated_at"),
+            agent_calibrated_at=state.get("agent_calibrated_at") or {},
+            gate_unavailable={
+                "embedded_rows": embedded_rows,
+                "at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
 async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bool) -> dict:
     """Startup guard for the vector-similarity threshold (Tier 4, v2.4.24).
 
@@ -2929,6 +3043,20 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         # would otherwise fire.)
         if not (config.FUSED_GATE_ENABLED and vector._fused_gate_signal is None):
             return {"action": "restored", "embedding_dim": state.get("embedding_dim")}
+        # bug-807: a store too small or too sparse in time to give the gate its samples
+        # gave none at the last boot either, and recalibrating it again re-ran a full
+        # calibration of every agent beside serving and redrew the store-wide threshold
+        # on every restart, while the gate stayed uncalibrated. The attempt is recorded,
+        # and the next one waits until the store has grown.
+        record = state.get("gate_unavailable")
+        if record is not None:
+            embedded_rows = await _embedded_memory_count()
+            if not _gate_worth_retrying(record, embedded_rows):
+                return {
+                    "action": "restored",
+                    "embedding_dim": state.get("embedding_dim"),
+                    "gate_unavailable": record,
+                }
         logger.info("Calibration sidecar has no recall-gate signal; calibrating the gate.")
 
     # bug-184 follow-on: skipping the restore drops the operator's knob-3 precision
@@ -3040,6 +3168,14 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             if r.get("ok"):
                 agents.append(aid)
 
+    # bug-807: a calibration that ran and still produced no gate is recorded, so the
+    # next boot does not repeat it on the same store.
+    gate_unavailable = None
+    if global_result.get("ok") and config.FUSED_GATE_ENABLED and vector._fused_gate_signal is None:
+        embedded_rows = await _embedded_memory_count()
+        if _record_gate_unavailable(embedded_rows):
+            gate_unavailable = {"embedded_rows": embedded_rows}
+
     if replaced is not None:
         # The per-calibration log lines above each printed
         # "old -> new" where old is the runtime default, because the stale restore
@@ -3083,7 +3219,9 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
 
     return {
         "action": (
-            "gate_calibrated" if restored
+            # bug-807: a restored boot that tried the gate and got none did not
+            # calibrate one, and must not say it did.
+            ("gate_unavailable" if gate_unavailable is not None else "gate_calibrated") if restored
             else "recalibrated" if dim_changed
             else "recalibrated_scoring" if scoring_stale
             # bug-347: an existing file that did not parse is not a first-ever boot, and
@@ -3102,6 +3240,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
         # the boots (initial, plain auto-calibrate) that replace nothing stale.
         "sidecar_backup": sidecar_backup,
         "calibration_replaced": replaced,
+        "gate_unavailable": gate_unavailable,
     }
 
 

@@ -1876,7 +1876,9 @@ async def do_reconstruct(
         # The default budget fits one head per item of the window; the held places
         # are items too, so the default is taken for both. A budget the caller or an
         # operator named is not widened (resolve_budget takes it as given) -- it
-        # bounds the payload, and the held items, being last, are cut first.
+        # bounds the payload, and the held items, being last, are cut first -- in item
+        # order. Under a mode a held item with a short record joins the floor of records
+        # shown whole and can be quoted before a window item's passage (bug-580, below).
         effective_budget, budget_policy = resolve_budget(budget, effective_count + len(held), mode_budget)
         response["effective_budget"], response["budget_policy"] = effective_budget, budget_policy
     # Under a mode the walk is not followed: its evidence would count against the
@@ -2000,6 +2002,14 @@ async def do_reconstruct(
         ]
         record_sets = [passages for _, _, passages in records]
         if sequence == SEQUENCE_WHOLE:
+            # bug-580: the floor takes held items too, deliberately. A held item whose
+            # record is short is quoted whole after the window's short records and ahead
+            # of the passages of its longer ones, so it can leave out a window item the
+            # call would otherwise have returned. That is the order the registered tests
+            # of 2.6.9 (lite and pro) and 2.6.13 (pro) measured; held items after every
+            # window passage would leave lite's 2,800 characters almost nothing for the
+            # keyword seat, whose record the window does not hold. Pro's 15 default items
+            # put its held items past the first 10 the floor reaches.
             floor_items = PRO_WHOLE_FLOOR_ITEMS if mode == MODE_PRO else len(records)
             order = whole_order(
                 record_sets, [basis == "whole" and i < floor_items for i, (_, basis, _) in enumerate(records)]
@@ -2113,7 +2123,8 @@ async def do_reconstruct(
             # Beside the window, not in it: returned_count may exceed effective_count by this.
             out["reserved_count"] = held_returned
         if len(held) > held_returned:
-            # Held items come last, so a budget that cuts anything cuts them first. Not a
+            # Held items come last in item order, so a budget that cuts heads in item order
+            # cuts them first (under a mode see bug-580 where the floor is drawn). Not a
             # short window, but a bound dropped them, and invariant 4 says which bound.
             out["reserved_omitted"] = len(held) - held_returned
         if effective_count == 0:

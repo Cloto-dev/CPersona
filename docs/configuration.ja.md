@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/configuration.md@blob:c10bed93e1b5a435cc26f825539a18251f3f374d -->
+<!-- i18n-source: docs/configuration.md@blob:1f8c9159e1ca2a9773302b4dd4b3e46fc4a4572d -->
 
 # 設定リファレンス
 
@@ -83,7 +83,7 @@
 | `CPERSONA_EPISODE_DECAY_RATE` | `0.01` | 境界より前の記憶に対する 1 時間あたりの減衰率 |
 | `CPERSONA_EPISODE_DECAY_FLOOR` | `0.5` | ペナルティの下限 (古い記憶でも最大で半分まで) |
 | `CPERSONA_PRIOR_FAR_WEIGHT` | `1.0` | far リストの票の重み (`0`〜`1`)。両方の融合に効きます ([一本化した事前分布](PRIOR_FUNCTION_DESIGN.md#2-the-prior))。`CPERSONA_VECTOR_REACH` が窓より大きく設定されている時だけ意味を持ちます。`1` は割り引かない far の票、`0` は両方の融合から far リストを外し、窓と reach の間の領域を走査しません。窓の外の席の開始位置は動かず、reach が終わる位置から始まるままです。席を有効にしている時に reach を切るには `CPERSONA_VECTOR_REACH` を `0` にしてください |
-| `CPERSONA_PRIOR_AGE_RATE` | `0` | 経過時間の重み `max(floor, 1 / (1 + age_hours × rate))` の率。品質ゲートが通した行の順序だけを入れ替え、行を通しも除きもしません。`0` で無効 |
+| `CPERSONA_PRIOR_AGE_RATE` | `0` | 経過時間の重み `max(floor, 1 / (1 + age_hours × rate))` の率。品質ゲートが通した行の順序だけを入れ替え、行を通しも除きもしません。`0` で無効になり、`deep` の recall では適用されません |
 | `CPERSONA_PRIOR_AGE_FLOOR` | `0.3` | 経過時間の重みの下限 |
 | `CPERSONA_PRIOR_AGE_ANCHOR` | `newest` | 経過時間をどこから測るか。想起のスコープで最も新しい記憶 (`newest`。放置したストアも最後に使った時と同じ順位になる) か、現在時刻 (`now`) |
 
