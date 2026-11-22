@@ -386,7 +386,9 @@ effective = min(base, max_count)
   rows never takes a place in the window; up to the reservation, clusters the
   window left out that hold one follow it as items marked
   `admission: "reservation"`, and `reserved_count` says how many came back. They
-  displace no item of the window, a short window is judged without them, and
+  take no place in the window, a short window is judged without them (under a
+  `mode` a short held record can still take a window item's share of the payload,
+  [below](#breadth-before-depth-the-payload-budget)), and
   `returned_count` can exceed `effective_count` by at most `held_places`. The
   default budget widens by one head per held item; a budget the caller or an
   operator named does not, and a held item it leaves out is reported as
@@ -520,6 +522,19 @@ effective_budget = min(budget_base, max_budget)
     floor of every item spent the cap on the short records of the last items.
     Whether `pro` ships in a release is decided by a test registered before it
     was built.
+  - Under a mode a held item is not always cut first. The floor of records
+    shown whole takes held items as it takes the window's: a held item whose
+    record is short is quoted whole after the window's short records and ahead
+    of the passages of the window's longer records. Within the budget or the
+    cap it can therefore leave out a window item that a call without the held
+    place would have returned, with the shortfall reason `budget_exhausted`.
+    This is the order the registered tests of 2.6.9 and 2.6.13 measured.
+    Held items after every window passage would leave `lite`'s 2,800 characters
+    almost nothing for them, and the keyword seat exists for a record the window
+    does not hold. With `count` omitted `pro` reads 15 items, so its held items
+    sit past the 10 the floor reaches unless the window holds fewer than 10. A
+    call that names no mode quotes heads in item order, so its held items come
+    last and are cut first.
   - Both ask their candidate recall for one **keyword seat** (2.6.9), and so
     does a call that names no mode from 2.6.12: a place
     held, like the block arm's reservation, for a row only the keyword arms

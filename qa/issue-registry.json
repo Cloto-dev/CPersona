@@ -4279,7 +4279,7 @@
       "expected": "present",
       "status": "open",
       "category": "temporal-integrity",
-      "note": "Deferred deliberately, and not because it is hard. Changing what age a future stamp is scored at is a change to the scoring semantics, which is the axis the pre-release ladder is meant to keep readable: a soak cannot tell 'the behaviour changed' from 'the behaviour broke' while two scoring changes are in flight. The same reasoning already holds bug-247 for the 2.6 scoring line, and this belongs beside it. It is also the smaller half now: on a default install the clamp is unreachable (confidence off means the span is never computed), the write seam refuses new rows once the mode is flipped, and the health check names and repairs the rows already stored. What remains uncovered is a row an operator chooses not to repair, and an episode start_time — for which there is no check yet."
+      "note": "Deferred deliberately, and not because it is hard. Changing what age a future stamp is scored at is a change to the scoring semantics, which is the axis the pre-release ladder is meant to keep readable: a soak cannot tell 'the behaviour changed' from 'the behaviour broke' while two scoring changes are in flight. The same reasoning already holds bug-247 for the 2.6 scoring line, and this belongs beside it. It is also the smaller half now: on a default install the clamp is unreachable (confidence off means the span is never computed), the write seam refuses new rows once the mode is flipped, and the health check names and repairs the rows already stored. What remains uncovered is a row an operator chooses not to repair, and an episode start_time — for which there is no check yet. Re-judged 2026-11-22 for 2.6.18 and carried to 2.7. A fix was built (a stamp further ahead than CPERSONA_FUTURE_TIMESTAMP_SKEW_SECONDS taking the bug-207 imputed age) and withdrawn before release: it moves the confidence distribution, so SCORING_VERSION must move with it, and every deployment's stored calibration would then be redrawn on its first start after the upgrade, for a change that reaches only confidence-enabled deployments that chose legacy ordering. The 2.7 line redesigns confidence and moves the version anyway, and takes this with it."
     },
     {
       "id": "bug-295",
@@ -6644,12 +6644,13 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/associations.py",
-      "pattern": "is not a record of this agent",
+      "pattern": "the declaration is recorded as if no anchor had been named",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Either drop the items that needed the anchor, as documented, or change the documented contract.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Re-judged 2026-09-30 and left open for a decision rather than for lack of a fix. Three sources disagree: the docstring says every item that needed the anchor is dropped; the tool description says malformed items are reported and skipped and nothing else in the call is refused for them; and tests/test_associations_declare.py::test_an_anchor_that_is_not_this_agents_record_is_dropped_and_nothing_is_anchored pins the unanchored insert. Dropping the relations avoids the duplicate a later, correct declaration creates, but it refuses items the published description says are not refused and rewrites a test written to hold the present behaviour; making the docstring match the code keeps the contract and leaves the duplicate. Either is a contract decision, which a fix release does not take on its own."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Re-judged 2026-09-30 and left open for a decision rather than for lack of a fix. Three sources disagree: the docstring says every item that needed the anchor is dropped; the tool description says malformed items are reported and skipped and nothing else in the call is refused for them; and tests/test_associations_declare.py::test_an_anchor_that_is_not_this_agents_record_is_dropped_and_nothing_is_anchored pins the unanchored insert. Dropping the relations avoids the duplicate a later, correct declaration creates, but it refuses items the published description says are not refused and rewrites a test written to hold the present behaviour; making the docstring match the code keeps the contract and leaves the duplicate. Either is a contract decision, which a fix release does not take on its own.",
+      "fix_note": "2.6.18: settled by correcting the docstring. anchor_ref is optional, and the published tool description says malformed items are reported and skipped and nothing else in the call is refused for them, which is what the code does: the anchor is reported in dropped and the declaration is recorded unanchored. tests/test_associations_declare.py::test_an_anchor_that_is_not_this_agents_record_is_dropped_and_nothing_is_anchored already pinned it. The docstring and the associative memory design now say so, including that a later declaration with a correct anchor adds a second relation because the anchor is part of the key."
     },
     {
       "id": "bug-452",
@@ -7042,12 +7043,13 @@
       "discovered": "2026-09-29T00:00:00Z",
       "version": "2.6.0a8",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "if PRIOR_AGE_RATE <= 0 or not results or _confidence_orders\\(\\):",
+      "pattern": "if PRIOR_AGE_RATE > 0 and not deep and not _confidence_orders\\(\\):",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-gap",
       "fix_sketch": "Decide whether deep disables the age weight and document it.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code.",
+      "fix_note": "2.6.18: a deep recall leaves the age weight off. deep is documented to disable time decay, and a deep search for old, weak matches should not push them back by their age, so do_recall reads no span under deep and _apply_prior returns the list untouched. The deep description and the CPERSONA_PRIOR_AGE_RATE row say so. Removing `not deep` turns tests/test_2618_deep_age_weight.py::test_a_deep_recall_is_not_reordered_by_age red; its control (the same weight without deep reorders) keeps the equality from holding vacuously."
     },
     {
       "id": "bug-477",
@@ -7217,7 +7219,7 @@
       "status": "open",
       "category": "dead-code",
       "fix_sketch": "Use them (window in the currency rule when no fingerprint is known, or a check of the invariant) or stop maintaining them.",
-      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code."
+      "note": "Found by the 2026-09-29 review of the code added in 2.6.0a1..a8. Confirmed by reading the code. Carried to 2.7 (judged 2026-11-22) with bug-500: recording that a record fits the embedding window is what bug-500 needs, and token_count is the natural place for it, so the two columns are decided with that design rather than removed or given a separate check now."
     },
     {
       "id": "bug-488",
@@ -8691,12 +8693,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/reconstruct.py",
-      "pattern": "basis == \"whole\" and i < floor_items for i",
+      "pattern": "bug-580: the floor takes held items too, deliberately",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Restrict the whole-record floor to window positions, or order held items' passages after every window passage, so held items sit at the end of the cut sequence as the contract says. Add the two-arm comparison (with and without the held row) as a regression test.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced end to end without patching the candidate list. Related: bug-464, bug-708."
+      "note": "Found by the 2026-10-13 audit of 2.6.10 and reproduced end to end without patching the candidate list. Related: bug-464, bug-708.",
+      "fix_note": "2.6.18: settled by correcting the contract, not the code. The floor of records shown whole has taken held items since mode lite and pro shipped in 2.6.8a1 (01ea99e), so the registered tests of 2.6.9 (keyword seat, lite and pro) and 2.6.13 (pro) measured this order; putting held items after every window passage would leave lite's 2,800 characters almost nothing for the keyword seat, whose record the window does not hold. docs/RELIABLE_RECALL_2_6.md section 7 now says a short held record is quoted whole ahead of the window's longer records under a mode and can leave out a window item, and that a call without a mode keeps held items last; the comments at the floor, the default-budget widening and reserved_omitted say the same. tests/test_2618_held_short_record_floor.py pins the audit's reproduction (lite, count 3: one window item and the held record, budget_exhausted; two window items without the seat) and the call without a mode."
     },
     {
       "id": "bug-581",
@@ -9185,12 +9188,13 @@
       "discovered": "2026-10-13T10:00:00Z",
       "version": "2.6.10",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "calibrated_at: str \\| None \\| object = _LIVE,",
+      "pattern": "agent_times\\[agent_id\\] = measured_at",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "timestamp-correctness",
       "fix_sketch": "Let `_save_calibration_state` take a `calibrated_at` and have rewrites that measure nothing (the purge) pass the stored value through. Consider recording the time per agent, so calibrating one agent does not reset the age of the others.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-184 (the same laundering, closed for scoring_version). Partly fixed in 2.6.11a2: _purge_agent_calibration passes the stored calibrated_at through the new calibrated_at parameter of _save_calibration_state, so dropping a deleted or moved-out agent keeps the stored time. Reverting it turns tests/test_2611a2_x02.py::test_dropping_an_agent_keeps_the_stored_calibration_time and ::test_a_move_that_empties_its_source_keeps_the_stored_calibration_time red. Remaining half (one stamp for all agents, restamped by a per-agent calibration) is not fixed. The open anchor now names the remaining half."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-184 (the same laundering, closed for scoring_version). Partly fixed in 2.6.11a2: _purge_agent_calibration passes the stored calibrated_at through the new calibrated_at parameter of _save_calibration_state, so dropping a deleted or moved-out agent keeps the stored time. Reverting it turns tests/test_2611a2_x02.py::test_dropping_an_agent_keeps_the_stored_calibration_time and ::test_a_move_that_empties_its_source_keeps_the_stored_calibration_time red. Remaining half (one stamp for all agents, restamped by a per-agent calibration) is not fixed. The open anchor now names the remaining half.",
+      "fix_note": "2.6.11a2 fixed the rewrites that measure nothing (a purge passes the stored time through). 2.6.18 fixes the other half: the sidecar records each agent's own measurement time in agent_calibrated_at, a per-agent calibration stamps only the agent it measured (other agents keep the time stored for them, read under the sidecar lock), calibrated_at stays the time of the last global measurement, a purge drops the agent's time, and deep_calibration_staleness reads an agent's own time first, falling back to calibrated_at for a sidecar written before 2.6.18. tests/test_2618_calibration_time.py pins it; five mutations of the stamp, the global time, the reader, the purge and the carry each turn one of its tests red. tests/test_2611a2_x02.py::test_a_calibration_still_stamps_the_time_it_measured now reads the agent's own time, since the file-wide stamp no longer moves on a per-agent calibration."
     },
     {
       "id": "bug-612",
@@ -10610,7 +10614,7 @@
       "status": "open",
       "category": "correctness",
       "fix_sketch": "Call `generation.refresh()` (or a cheap rate-limited variant) at the start of the async read paths that judge currency, `_current_sets` and `blocks.search`, as the build side already does.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-461. Partly fixed in 2.6.11a2: _current_sets asks the backend for its identity (bounded by the refresh interval) before judging node/block currency, so sets stamped by a model the backend no longer runs are not quoted as current; removing it turns test_a_node_set_from_before_a_redeploy_is_not_current_to_the_quotation_reader and test_a_block_set_from_before_a_redeploy_is_not_current_to_the_quotation_reader red. blocks.search (block arm) is still open, pinned by the strict xfail test_the_block_arm_does_not_examine_blocks_from_before_a_redeploy. The open anchor now names the remaining half."
+      "note": "Found by the 2026-10-13 audit of 2.6.10. Confirmed by reading the code, not reproduced. Related: bug-461. Partly fixed in 2.6.11a2: _current_sets asks the backend for its identity (bounded by the refresh interval) before judging node/block currency, so sets stamped by a model the backend no longer runs are not quoted as current; removing it turns test_a_node_set_from_before_a_redeploy_is_not_current_to_the_quotation_reader and test_a_block_set_from_before_a_redeploy_is_not_current_to_the_quotation_reader red. blocks.search (block arm) is still open, pinned by the strict xfail test_the_block_arm_does_not_examine_blocks_from_before_a_redeploy. The open anchor now names the remaining half. Carried to 2.7 (judged 2026-11-22): the remaining half would have blocks.search ask the embedding backend for its identity, which breaks the pinned rule that an untraced recall never asks it (test_trace_embedding_model). The fix that keeps the rule is the backend naming its model on the embedding response the recall already makes, a change to the companion embedding server that the 2.7 line takes with it."
     },
     {
       "id": "bug-701",
@@ -11309,10 +11313,11 @@
       "file": "cpersona/vector_index.py",
       "pattern": "return os\\.name != \"nt\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Correct the comment and design doc to say the Windows cost scales with the whole corpus, and drop the stale cache entry before loading the replacement to remove the 2x peak. A fuller fix keeps the memory mapping on Windows by having the builder write a new file name per build instead of replacing a mapped file.",
-      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. A consequence of the bug-503 fix, which switched Windows from mapping to reading. Partly fixed in 2.6.11a2: cached_index (and cached_coarse_index) pop the replaced entry before reading the rebuilt file, so a Windows reload never holds two copies; the doc and docstring now state the whole-corpus resident cost. Reverting turns test_2611a2_x13.py::test_a_reload_lets_go_of_the_replaced_index_before_reading_the_new_one red. The open anchor now names the remaining half."
+      "note": "Found by the 2026-10-13 audit of 2.6.10; reproduced. A consequence of the bug-503 fix, which switched Windows from mapping to reading. Partly fixed in 2.6.11a2: cached_index (and cached_coarse_index) pop the replaced entry before reading the rebuilt file, so a Windows reload never holds two copies; the doc and docstring now state the whole-corpus resident cost. Reverting turns test_2611a2_x13.py::test_a_reload_lets_go_of_the_replaced_index_before_reading_the_new_one red. The open anchor now names the remaining half.",
+      "fix_note": "Both defects the entry names were fixed in 2.6.11a2: the doc and docstring now state that on Windows the whole index stays resident, and cached_index drops the replaced entry before reading the rebuilt file, so a reload no longer holds two copies (test_2611a2_x13.py::test_a_reload_lets_go_of_the_replaced_index_before_reading_the_new_one). Closed in 2.6.18. What remains is an improvement, not a defect: keeping the memory mapping on Windows by writing a new file name per build instead of replacing a mapped file, which changes how the index files are laid out and cleaned up. It is a candidate for 2.7."
     },
     {
       "id": "bug-745",
@@ -12111,12 +12116,12 @@
       "discovered": "2026-10-14T12:00:00Z",
       "version": "2.6.11a1",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "source_id=source_id, floor=floor, start=MAX_MEMORIES, period=\\(start, end\\),",
+      "pattern": "            far_hits = await far_seats.ranked\\(",
       "expected": "present",
       "status": "open",
       "category": "index-divergence",
       "fix_sketch": "Apply the same change stamp (PRAGMA data_version, total_changes) around the window and remainder reads and read the pair again once when it moved.",
-      "note": "Found while fixing bug-742 (a sibling the fix did not cover); confirmed by reading the code."
+      "note": "Found while fixing bug-742 (a sibling the fix did not cover); confirmed by reading the code. Partly fixed in 2.6.18: the time cue's capped part and remainder are two adjacent reads in _search_cue_arm, and the pair is now read again, once, when PRAGMA data_version or the connection's total_changes moved between them, as bug-742 does for the vector windows (tests/test_2618_cue_reread.py; with the check removed, a delete between the reads leaves record 3 in neither). The far seats are the remaining half and stay open: their read past the scan window is separated from the vector arm's window read by the whole fusion (both lexical arms, scoring, the gate), so reading the pair again means running the vector arm again. The far seats are off by default (CPERSONA_FAR_SEATS_ENABLED). Carried to 2.7. The open anchor now names the remaining half."
     },
     {
       "id": "bug-796",
@@ -12298,12 +12303,13 @@
       "discovered": "2026-10-19T13:00:00Z",
       "version": "2.6.11",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "if not \\(config\\.FUSED_GATE_ENABLED and vector\\._fused_gate_signal is None\\):",
+      "pattern": "def _gate_worth_retrying",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "calibration",
       "fix_sketch": "Record in the calibration file that the gate was attempted and lacked samples, with the record counts it saw, and restore such a file without recalibrating until the store has changed enough to give the gate new samples. Name that boot 'restored', not 'gate_calibrated'.",
-      "note": "Found on the LoCoMo stores of the OmniMemEval runs (benchmarks/measurements/results-omnimemeval-2_6_11.md): the original searches ran beside this recalibration, and a rerun that waited for it returned the same context for every question. The sample minimum and the adjacency labelling are in _calibrate_fused_gate."
+      "note": "Found on the LoCoMo stores of the OmniMemEval runs (benchmarks/measurements/results-omnimemeval-2_6_11.md): the original searches ran beside this recalibration, and a rerun that waited for it returned the same context for every question. The sample minimum and the adjacency labelling are in _calibrate_fused_gate.",
+      "fix_note": "2.6.18: a startup recalibration that still produced no gate records gate_unavailable {embedded_rows, at} in the sidecar, and a later boot restores the sidecar without recalibrating until the store holds at least the larger of 10 more embedded rows and a quarter more (_gate_worth_retrying); a record it cannot read is retried. A runtime calibration keeps the record while no gate exists and drops it once one does; a purge carries it. The boot that tried and failed reports action gate_unavailable instead of gate_calibrated, and the skipped boot reports restored. tests/test_2618_gate_unavailable.py pins the attempt, the skip, both sides of the bound, the unreadable record, the carry through a purge and the drop on a measured gate."
     },
     {
       "id": "bug-808",

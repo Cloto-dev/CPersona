@@ -1485,7 +1485,7 @@ registry.auto_tool(
             },
             "deep": {
                 "type": "boolean",
-                "description": "Deep recall — halves the quality gate (and the calibrated fused gate), so weaker matches are admitted. It also disables time and completion decay, which are inert unless CPERSONA_CONFIDENCE_ENABLED=true, and it does NOT widen the scan window (CPERSONA_MAX_MEMORIES) — deep is about how weak a match may be, not how far back the search reaches.",
+                "description": "Deep recall — halves the quality gate (and the calibrated fused gate), so weaker matches are admitted. It also disables time and completion decay, which are inert unless CPERSONA_CONFIDENCE_ENABLED=true, and the age weight (CPERSONA_PRIOR_AGE_RATE, off by default), and it does NOT widen the scan window (CPERSONA_MAX_MEMORIES) — deep is about how weak a match may be, not how far back the search reaches.",
                 "default": False,
             },
             "channel": {

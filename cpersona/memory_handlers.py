@@ -1478,6 +1478,7 @@ def _apply_prior(
     Called after the quality gate and autocut, before the count cut, so it moves rows
     within what was admitted and never admits or removes one (§3). Returns ``results``
     untouched -- the same list, in the same order -- when the age rate is 0, when
+    the recall is deep (the caller leaves ``span`` empty, bug-476), when
     confidence still orders (``legacy``), when the list is not uniformly fusion-scored
     (cascade keeps its stage order, bug-018), or when the scope has no dated row.
 
@@ -2318,6 +2319,45 @@ async def _period_has_remainder(db, iso, src, start: str, end: str) -> bool:
     return bool(rows)
 
 
+async def _cue_vector_reads(db, qv, iso, src, in_window, start, end, floor, depth, mode, *,
+                            agent_id, project_id, channel, source_id):
+    """The time cue's two vector reads of its period: the capped part and the remainder.
+
+    Returns ``(ranked, remainder, supplier)``; with the remainder off (``mode == "off"``)
+    the remainder is empty and the supplier None. The caller reads the pair again when
+    the database changed between them (bug-795).
+    """
+    survivors = await vector._chunked_cosine_scan(
+        db,
+        f"""SELECT id, embedding FROM memories
+           WHERE {iso.clause} AND embedding IS NOT NULL{src.and_clause} AND {in_window}
+           ORDER BY created_at DESC, id ASC
+           LIMIT ?""",
+        (*iso.params, *src.params, start, end, MAX_MEMORIES),
+        qv,
+        len(qv),
+        floor,
+        depth,
+    )
+    ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
+    if mode == "off":
+        return ranked, [], None
+    # The period's remainder (docs/BINARY_COARSE_SEARCH_DESIGN.md §6): the records
+    # past the cap above, in the same scan of the same period, searched through the
+    # coarse supplier and re-ranked by their stored vectors' cosine against the
+    # same floor. Both lists hold exact cosines, so they merge on that; a tie goes
+    # to the capped list (its rows sit earlier in the scan), then by scan position.
+    # In the default mode (auto) only a usable coarse index is asked: without one
+    # the remainder is empty, as with the setting off, and the stage notes whether
+    # the period had one to leave out (design §7).
+    remainder, supplier = await far_seats.ranked_with_source(
+        db, qv, agent_id=agent_id, project_id=project_id, channel=channel,
+        source_id=source_id, floor=floor, start=MAX_MEMORIES, period=(start, end),
+        live=mode == "on",
+    )
+    return ranked, remainder, supplier
+
+
 async def _search_cue_arm(
     db,
     agent_id: str,
@@ -2359,34 +2399,26 @@ async def _search_cue_arm(
 
         qv = np.array(query_vec[0], dtype=np.float32)
         floor = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
-        survivors = await vector._chunked_cosine_scan(
-            db,
-            f"""SELECT id, embedding FROM memories
-               WHERE {iso.clause} AND embedding IS NOT NULL{src.and_clause} AND {in_window}
-               ORDER BY created_at DESC, id ASC
-               LIMIT ?""",
-            (*iso.params, *src.params, start, end, MAX_MEMORIES),
-            qv,
-            len(qv),
-            floor,
-            depth,
-        )
-        ranked = sorted(survivors, key=lambda s: (-s[2], s[0]))
         mode = config.CUE_COARSE_MODE
-        if mode != "off":
-            # The period's remainder (docs/BINARY_COARSE_SEARCH_DESIGN.md §6): the records
-            # past the cap above, in the same scan of the same period, searched through the
-            # coarse supplier and re-ranked by their stored vectors' cosine against the
-            # same floor. Both lists hold exact cosines, so they merge on that; a tie goes
-            # to the capped list (its rows sit earlier in the scan), then by scan position.
-            # In the default mode (auto) only a usable coarse index is asked: without one
-            # the remainder is empty, as with the setting off, and the stage notes whether
-            # the period had one to leave out (design §7).
-            remainder, supplier = await far_seats.ranked_with_source(
-                db, qv, agent_id=agent_id, project_id=project_id, channel=channel,
-                source_id=source_id, floor=floor, start=MAX_MEMORIES, period=(start, end),
-                live=mode == "on",
+        # bug-795: the capped part and the remainder are two reads of a live table cut by
+        # scan position, as the near and far vector windows are (bug-742). A delete
+        # committed between them moves the remainder's first record into the capped
+        # part's last place after that part was read, so neither read sees it. The pair
+        # is read again, once, when the database changed while it was read.
+        for attempt in (1, 2):
+            stamp = await vector._change_stamp(db) if mode != "off" else None
+            ranked, remainder, supplier = await _cue_vector_reads(
+                db, qv, iso, src, in_window, start, end, floor, depth, mode,
+                agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id,
             )
+            if mode == "off" or await vector._change_stamp(db) == stamp:
+                break
+            if attempt == 2:
+                logger.warning(
+                    "The database changed while a time cue's capped part and remainder were "
+                    "read, twice; a record at the boundary between them may be in neither"
+                )
+        if mode != "off":
             note = _cue_remainder_note.get()
             if note is not None:
                 # Noted when the remainder was searched, or when records were left out:
@@ -2831,8 +2863,11 @@ async def _do_recall(
 
         # 2.6.0a7: the span the age weight is measured against, read inside this
         # connection (cached per scope). Nothing is read while the weight is off.
+        # bug-476: deep recall disables time decay, and the age weight is a time term
+        # of the same family, so a deep recall leaves the span unread and the weight
+        # off: a search for old, weak matches is not pushed back by their age.
         prior_span: tuple[datetime | None, datetime | None] = (None, None)
-        if PRIOR_AGE_RATE > 0 and not _confidence_orders():
+        if PRIOR_AGE_RATE > 0 and not deep and not _confidence_orders():
             span_min, span_max = await scope_stats.get_span(
                 db, agent_id, project_id=project_id, channel=channel
             )

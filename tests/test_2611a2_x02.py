@@ -197,7 +197,10 @@ async def test_a_calibration_still_stamps_the_time_it_measured(sidecar, corpus, 
     result = await admin_handlers.do_calibrate_threshold(AGENT, method="percentile")
 
     assert result["ok"] is True and result["sidecar_persisted"] is True, result
-    stamp = datetime.datetime.fromisoformat(_read(sidecar)["calibrated_at"])
+    # 2.6.18 (bug-611's other half): a per-agent calibration stamps that agent's own
+    # time; the file-wide stamp is the global measurement's and is left as it was
+    # (tests/test_2618_calibration_time.py pins both).
+    stamp = datetime.datetime.fromisoformat(_read(sidecar)["agent_calibrated_at"][AGENT])
     assert datetime.datetime.now(datetime.timezone.utc) - stamp < datetime.timedelta(minutes=5)
 
 

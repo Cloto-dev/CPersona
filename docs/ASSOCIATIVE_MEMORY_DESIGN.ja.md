@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:71a4422c8f8354416bc37e88bed34a906aa52919 -->
+<!-- i18n-source: docs/ASSOCIATIVE_MEMORY_DESIGN.md@blob:856ae43ad44a946ffa9f9e7b00e606d445c40239 -->
 # 連想記憶 — 設計 { #associative-memory-design }
 
 状態: 2.6 系。宣言 (§1–2)、§3 の再構成の段、`traverse` (§4) は実装済みです。
@@ -139,7 +139,7 @@ memory を失う理由にはなりません。
 
 **単独**。`declare_associations` は同じオブジェクトと任意の `anchor_ref` を受け取り、
 後からの宣言や dashboard からの宣言に使います。加えて `retract` (取り消す関係 id と言及の
-対のリスト) も受け取ります。取り消しは宣言がストアを離れる唯一の経路で、自動失効はなく、誤った宣言は
+対のリスト) も受け取ります。そのエージェントの記録ではない `anchor_ref` は `dropped` で報告され、宣言はアンカーなしで記録されます。アンカーは関係のキーの一部であるため、正しいアンカーで再度宣言すると 2 つ目の関係が追加されます。取り消しは宣言がストアを離れる唯一の経路で、自動失効はなく、誤った宣言は
 取り消されるまで誤ったままです。
 
 ## 3. グラフが読まれる場所: 再構成想起 { #3-where-the-graph-is-read-reconstructive-recall }

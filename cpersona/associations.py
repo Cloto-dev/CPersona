@@ -251,8 +251,14 @@ async def declare(
 
     `anchor_ref` names the record the declaration is evidenced by. Every
     entity named in `entities` is recorded as mentioned by it, and every
-    relation carries it as its `anchor_ref`. It must be a record of this agent;
-    otherwise every item that needed it is dropped with that reason.
+    relation carries it as its `anchor_ref`. It is optional, and it must be a
+    record of this agent: one that is not is reported in `dropped` with that reason
+    and the declaration is recorded as if no anchor had been named, every entity
+    and relation unanchored. The tool's description promises this ("malformed items
+    are reported and skipped; nothing else in the call is refused for them"), and
+    tests/test_associations_declare.py pins it (bug-451). An unanchored relation is
+    not removed with a record, and declaring it again with a correct anchor adds a
+    second row, because the anchor is part of a relation's key.
     """
     if declared_by not in DECLARED_BY:
         raise ValueError("declared_by must be one of " + ", ".join(DECLARED_BY))
