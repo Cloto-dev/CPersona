@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:9920823372dd14a5d8d9d38c4df83fa396186ab4 -->
+<!-- i18n-source: docs/RELIABLE_RECALL_2_6.md@blob:5f3c69e0f122409c05efa590771d8b820cd74db1 -->
 
 # Reliable Recall — 2.6 系
 
@@ -543,9 +543,9 @@ effective_budget = min(budget_base, max_budget)
   "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }  // 境界が作用した
 ```
 
-- `content` は引用です。エージェントが合成された文を望むなら、委託経路 (サーバーが
-  用意する brief、エージェントが返す verdict、別のツールがそれを適用する) がまさにその
-  ためにあり、任意です。
+- `content` は引用です。合成された文はエージェントが書くものです。そのためにロードマップで
+  計画されている委託経路 (サーバーが用意する brief、エージェントが返して別のツールが適用する
+  verdict) は、2.6 では作られていません。
 - **役割の語彙**は今固定し、段階的に埋めます。`supports`、`supersedes`、`corrects`、
   `qualifies`、`contradicts`、`temporal_predecessor`。このラインでサーバーが導出できるのは
   `supersedes` (メッセージ id と時間順) と `supports` (episode の包含) です。`corrects` と

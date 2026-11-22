@@ -176,23 +176,39 @@ Go index service — is written down in the
 [line's page](RELIABLE_RECALL_2_6.md#10-what-done-means); how far each
 condition has come is on [its progress page](PROGRESS_2_6.md).
 
-### 2.7 — memory intelligence
+### 2.7 — one resident service, then memory intelligence
 
-**Purpose.** Make the server able to say how much a memory should be trusted,
-and how it changed. 2.6 builds the recall process; 2.7 gives it the signals it
-lacks: confidence with evidence weighting, correction and contradiction
-handling, temporal state and history, forgetting and retention policy,
-feedback on what a recall was used for, and control of quality degradation as
-the corpus grows.
+**Purpose.** Make CPersona one service on the user's machine, with MCP as one
+of its entrances. Today every MCP client that starts the server over stdio
+starts a process of its own, so one database can have several writers, each
+with its own caches and calibration, and the dashboard reads the SQLite file
+directly. In 2.7.0 a resident service — the server that already runs over
+HTTP — holds the database and answers a versioned API. The stdio entrance
+relays to it, starting it when it is not running, and the dashboard is a
+client of the same API, so one path handles every request.
 
-Each of these becomes a cue the recall process can follow. The canonical
-account of the line — the five items, the design question in each, what is
-still open, and what "done" means — is
-[Memory Intelligence — the 2.7 line](MEMORY_INTELLIGENCE_2_7.md). This section
-is the index of it.
+**What it may break.** The tool contract, through the pre-release ladder:
+`open_dashboard`, deprecated in 2.6.16, is removed. The path on which a stdio
+server answers requests itself is replaced by the relay, on one condition: a
+user's existing MCP configuration keeps working without being edited. Not the
+database schema: a 2.6 database is used as it is, as the rule above requires.
+Not the remote HTTP transport or OAuth.
 
-Nothing in this line is implemented or measured yet. Its page is design, and
-says so where a question is undecided.
+**Still open.** Whether some environments cannot run a resident process — a
+client's sandbox, a container, a CI job. If they exist, the stdio entrance
+keeps answering on its own there, and the line has two paths again; that is
+measured before the design is fixed.
+
+**Memory intelligence follows in 2.7.x.** Confidence with evidence weighting,
+correction and contradiction handling, temporal state and history,
+forgetting and retention, feedback on what a recall was used for, and control
+of quality degradation as the corpus grows: each becomes a cue the recall
+process can follow. The canonical account — the five items, the design
+question in each, and what "done" means — is
+[Memory Intelligence — the 2.7 line](MEMORY_INTELLIGENCE_2_7.md).
+
+Nothing in this line is released yet, and work on it starts once 2.6 has
+closed.
 
 ### 2.8 — a candidate, not a line
 

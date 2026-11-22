@@ -692,9 +692,9 @@ layer is present. With no relations this stage is the identity.
   "bounds": { "top_k": 20, "max_hops": 2, "max_evidence": 40, "reached": ["top_k"] } }  // a bound acted
 ```
 
-- `content` is a quotation. If an agent wants a composed sentence, the
-  delegation route (a brief the server prepares, a verdict the agent returns
-  and a separate tool applies) exists for exactly that, and it is optional.
+- `content` is a quotation. A composed sentence is the agent's to write. The
+  delegation route the roadmap plans for it (a brief the server prepares, a
+  verdict the agent returns and a separate tool applies) was not built in 2.6.
 - The **role vocabulary** is fixed now and filled in stages: `supports`,
   `supersedes`, `corrects`, `qualifies`, `contradicts`,
   `temporal_predecessor`. In this line the server can derive `supersedes` (message id and time order) and
