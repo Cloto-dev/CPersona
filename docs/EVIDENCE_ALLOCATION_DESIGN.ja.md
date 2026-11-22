@@ -1,10 +1,10 @@
-<!-- i18n-source: docs/EVIDENCE_ALLOCATION_DESIGN.md@blob:519ccdbc22fc2d9c1250b69291c4f974842c7e3d -->
+<!-- i18n-source: docs/EVIDENCE_ALLOCATION_DESIGN.md@blob:b847b3f2384d2091e506c5d23f66493cfe018348 -->
 
 # 証拠の配分 — 設計 { #evidence-allocation-design }
 
 > **翻訳について**: 原文は英語版です。日本語版が古いときは英語版を参照してください。
 
-Status: 2.6.5 に向けた設計です。最初の pre-release (2.6.5a1) は、レコードをまたいで並べた引用の列
+Status: 2.6.5 で出荷済みで、2.6.8 以降は `mode` が切り詰める順序でもあります。最初の pre-release (2.6.5a1) は、レコードをまたいで並べた引用の列
 (第 3 節と第 4 節) を `CPERSONA_RECONSTRUCT_SEQUENCE=evidence` として既定 off で出荷しました。
 2.6.5a3 は、同じ順序にレコードの長さで引いた床を付けた列 (`whole`、第 4 節の末尾) を、
 これも既定 off で足し、それを 2,800 字で使う `reconstruct` の `lite=true` を加えます。第 5 節の被覆の段は

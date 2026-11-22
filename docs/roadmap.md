@@ -120,7 +120,9 @@ and chain nodes need them; restructuring is not planned.
   layers help a weak embedding model a lot and a strong one barely, and that
   the fixed-weight fusion cannot tell which case it is in. The goal is a
   fusion whose behaviour follows the model, the corpus and the query rather
-  than a constant.
+  than a constant. It did not ship in 2.6: the line closed this condition with
+  its reasons, and the design carries to a later line with its success
+  condition unchanged ([progress](PROGRESS_2_6.md)).
 - **Associative memory** — a declared graph layer: registered terms with
   aliases, and subject–predicate–object relations that the *agent* asserts and
   the server stores and walks. It is deterministic by design. Fuzzy expansion
@@ -139,7 +141,10 @@ and chain nodes need them; restructuring is not planned.
   measurement.
 - **Fusion depth separated from response size** — asking for five results
   today also fuses only five candidates per retriever, which measurably costs
-  accuracy. Depth becomes its own knob, and `limit` means what it says.
+  accuracy. Depth became its own knob in 2.6 (`CPERSONA_RECALL_DEPTH_FLOOR`).
+  A registered sweep found no gain from a deeper fusion at ten rows, so its
+  default keeps the 2.5 coupling, and `limit` still sets the depth unless the
+  knob is raised.
 - **Overflow chains** — the embedding window is shorter than the longest
   memory, so a long record's tail is invisible to vector search. Records past
   the window split into chained nodes that each carry their own embedding, and
@@ -156,10 +161,12 @@ and chain nodes need them; restructuring is not planned.
   candidates deterministically and hands the agent a brief; the agent (or a
   sub-agent it chooses) judges; a separate tool applies the verdict as an
   explicit, validated operation. This keeps the no-model rule while letting
-  maintenance use one.
+  maintenance use one. Not built in 2.6; it carries to a later line.
 
-Also at the start of this line, because it breaks more than one consumer: the
-MCP SDK 2.0 migration of the shared vendored layer. (The native
+Planned for the start of this line, because it breaks more than one consumer,
+and not done: the MCP SDK 2.0 migration of the shared vendored layer. The
+package still requires an `mcp` release below 2.0, and the migration carries
+to a later line. (The native
 `{attempted, ok, error}` outcome for embedding calls, once listed here, shipped
 in 2.5 as an additive second method that left the existing return type
 untouched.)
@@ -270,7 +277,7 @@ when its precondition is missing.
 | 0 | Full scan of embeddings read from SQLite | the baseline |
 | 1 | Chunked exact scan — bounded peak memory | shipped in 2.5 |
 | 2 | Exact float32 contiguous index beside the database — no approximation, several times faster | shipped in 2.5 |
-| 3 | Binary coarse candidates + exact re-rank — the first Go component, a sidecar process, and the first rung that needs a degradation gate | designed; triggers at roughly a million rows |
+| 3 | Binary coarse candidates + exact re-rank — a one-bit index beside the contiguous one, and the first rung that needs a degradation gate | shipped in 2.6.2 in Python, off by default ([design](BINARY_COARSE_SEARCH_DESIGN.md)); the Go sidecar it was first planned as is not built |
 | 4 | Approximate nearest neighbour | opt-in, or the dedicated embedding service |
 | 5 | The lexical layer's cost, which grows with matched rows rather than corpus size | under measurement |
 

@@ -1,6 +1,6 @@
 # One Prior Function — design
 
-**Status:** implemented on `master`, unreleased. The confidence change
+**Status:** released in 2.6.0a7. The confidence change
 (section 5) is in effect by default; the prior's weights (sections 2 to 4) are
 at identity defaults until the measurements in section 8 move them. The age
 weight has been measured (M2) and lost to no weight at every rate tried, so its

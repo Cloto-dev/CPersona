@@ -1,6 +1,6 @@
 # Evidence Allocation — design
 
-Status: design, for 2.6.5. The first pre-release (2.6.5a1) ships the payload
+Status: shipped in 2.6.5, and the order `mode` cuts since 2.6.8. The first pre-release (2.6.5a1) ships the payload
 sequence ordered across records (sections 3 and 4) as
 `CPERSONA_RECONSTRUCT_SEQUENCE=evidence`, off by default. 2.6.5a3 adds the same
 order behind a floor drawn by record length (`whole`, the end of section 4), also

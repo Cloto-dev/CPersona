@@ -1,10 +1,10 @@
-<!-- i18n-source: docs/PRIOR_FUNCTION_DESIGN.md@blob:40e541f03b852a49775835171bbe6559bc7bf287 -->
+<!-- i18n-source: docs/PRIOR_FUNCTION_DESIGN.md@blob:dad33a15bc97faf52bdb794079f6e4284bf44444 -->
 
 # 一本化した事前分布 — 設計 { #one-prior-function-design }
 
 > **翻訳について**: 原文は英語版です。
 
-**Status:** `master` に実装済み、未リリース。confidence の変更 (第 5 節) は既定で有効です。事前分布の重み
+**Status:** 2.6.0a7 でリリース済み。confidence の変更 (第 5 節) は既定で有効です。事前分布の重み
 (第 2〜4 節) は、第 8 節の計測が動かすまで恒等の既定値のままです。経過時間の重みは計測済み (M2) で、試した
 どの率も重み無しに負けたので、既定は無効のままです (第 8 節)。時間は代わりに、順位の空間で上限を付けた
 [時期の手がかり](RECALL_PROCESS_DESIGN.md) から順位に入ります。

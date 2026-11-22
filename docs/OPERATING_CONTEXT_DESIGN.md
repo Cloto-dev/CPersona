@@ -1,7 +1,7 @@
 # Server-Served Operating Context (Global Config + MCP Instructions Distribution)
 
-**Status**: implemented on `feature/2.5.1-operating-context` (target: 2.5.1,
-direct release — no pre-release ladder; merge and tag gated on 2.5.0 final)
+**Status**: shipped in 2.5.1 (a direct release, without a pre-release ladder,
+after 2.5.0 final)
 **Decision**: project owner, 2026-07-16 (design discussion immediately after the
 2.5.0b1 release)
 **Scope**: additive — no DB schema change, one new read tool, one sidecar config

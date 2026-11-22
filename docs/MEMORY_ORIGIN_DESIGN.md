@@ -1,6 +1,7 @@
 # Recorded Access Origin (`origin`)
 
-Status: proposed for a 2.5.x pre-release line. It is additive to the tool
+Status: proposed for a 2.5.x pre-release line and not built: neither the 2.5
+nor the 2.6 line took it. It is additive to the tool
 contract — no tool grows an argument, and no existing response changes shape.
 It does add a database column, so it is not rollback-free by the release
 standard's definition, and it takes the pre-release ladder

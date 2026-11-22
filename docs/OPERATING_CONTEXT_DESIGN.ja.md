@@ -1,9 +1,8 @@
-<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:921de151ba2e16d9224b9f9a8e49fa0c09a19962 -->
+<!-- i18n-source: docs/OPERATING_CONTEXT_DESIGN.md@blob:0e3a2b1da22a1f6fb4deb671914b64d6d251d52b -->
 
 # サーバー供給の運用コンテキスト (グローバル設定 + MCP instructions 配布)
 
-**ステータス**: `feature/2.5.1-operating-context` で実装済み (対象: 2.5.1、直接
-リリース。pre-release の段階は踏まない。merge / tag は 2.5.0 final の後に行う)
+**ステータス**: 2.5.1 で出荷済み (2.5.0 final の後の、pre-release の段階を踏まない直接リリース)
 **決定**: プロジェクトオーナー、2026-07-16 (2.5.0b1 リリース直後の設計討議)
 **範囲**: 加算的。DB スキーマ変更なし、新規の読み取りツール 1 つ、sidecar 設定
 ファイル 1 つ。`SUPPORT.md` にある 2.5.x ラインの宣言 ("DB schema and MCP tool
