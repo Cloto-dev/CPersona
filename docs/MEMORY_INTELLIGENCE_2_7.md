@@ -11,7 +11,10 @@ release is right and the disagreement is a defect in this page.
 
 Each section stands on its own so that it can be read, cited and injected
 separately. The [roadmap](roadmap.md) says where 2.7 sits among the lines;
-this page says what it is.
+this page says what it is. The line's first release, 2.7.0, makes the server
+one resident service
+([roadmap](roadmap.md#27-one-resident-service-then-memory-intelligence)); the
+items on this page follow in the 2.7 releases after it.
 
 ## 0. Why this line exists
 

@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/MEMORY_INTELLIGENCE_2_7.md@blob:3fd2a8445e9923edfbf55120dc9fc742aa258f67 -->
+<!-- i18n-source: docs/MEMORY_INTELLIGENCE_2_7.md@blob:a82c28987280210567b4553a75eaa2e6dce6a6ba -->
 
 # Memory Intelligence — 2.7 系
 
@@ -13,7 +13,7 @@ Status: 設計であって、挙動ではない。本ページは、2.7 系が�
 欠陥です。
 
 各節は単独で読み、引用し、注入できるように書いてあります。2.7 がラインの中でどこに
-位置するかは [ロードマップ](roadmap.md) が、2.7 が何であるかは本ページが述べます。
+位置するかは [ロードマップ](roadmap.md) が、2.7 が何であるかは本ページが述べます。このラインの最初のリリースである 2.7.0 では、サーバーを 1 つの常駐サービスとし ([ロードマップ](roadmap.md#27-one-resident-service-then-memory-intelligence))、本ページの項目はそれ以降の 2.7 リリースで続きます。
 
 ## 0. なぜこのラインがあるのか { #0-why-this-line-exists }
 
