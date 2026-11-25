@@ -34,6 +34,7 @@ from cpersona import config
 from cpersona import fileperms
 from cpersona import generation
 from cpersona import nodes
+from cpersona import recall_log
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
@@ -1207,7 +1208,7 @@ async def _purge_agent_remote_namespace(agent_id: str) -> None:
 
 
 async def do_delete_agent_data(agent_id: str, session_key: str = "") -> dict:
-    """Delete ALL data for a specific agent (memories, profiles, episodes)."""
+    """Delete ALL data for a specific agent (memories, profiles, episodes, recall log rows)."""
     key, _declared = resolve_session_key(session_key)
     if session.is_paused_for(key):
         return session.make_skipped_response(
@@ -1235,6 +1236,7 @@ async def do_delete_agent_data(agent_id: str, session_key: str = "") -> dict:
     _purge_agent_calibration(agent_id)
     dropped_indexes = _purge_local_vector_index(counts)
     await _purge_agent_remote_namespace(agent_id)
+    recall_log.purge_agent(agent_id)  # bug-913: its query text goes with it
 
     result = {"ok": True, "agent_id": agent_id, **counts}
     if dropped_indexes:
@@ -3357,6 +3359,27 @@ def _imported_label(record: dict, blob: bytes | None) -> str:
     return label
 
 
+def _restorable_embedding(
+    record: dict, tally: "_ImportTally", line_num: int, kind: str, stored: str, original: str
+) -> bytes | None:
+    """The file's embedding, if it still describes the text being stored.
+
+    bug-813: the vector was computed from the file's text. When sanitising changed
+    that text (cap, annotation strip, trim), the vector describes words the row no
+    longer holds, so the row is stored without one and the null-embedding repair
+    re-embeds it from the stored text.
+    """
+    if stored != original:
+        if record.get("embedding_b64"):
+            tally.errors.append(
+                f"Line {line_num}: {kind} embedding not restored (the text was changed on "
+                "import); the row is stored without one and check_health's null-embedding "
+                "repair can re-embed it"
+            )
+        return None
+    return _decode_embedding(record, tally, line_num, kind)
+
+
 def _decode_embedding(record: dict, tally: "_ImportTally", line_num: int, kind: str) -> bytes | None:
     """Decode a base64 embedding blob from an export record.
 
@@ -4303,6 +4326,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     last_recalled_at = _optional_text(record, "last_recalled_at")
     created_at = _optional_text(record, "created_at")
 
+    file_content = content
     content, truncated = sanitize_content_with_flag(content)
     if not content:
         tally.skipped_memories += 1
@@ -4360,7 +4384,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         # bug-092: created_at and the recall stats ride along too — the
         # old INSERT re-stamped every restored row with import time and
         # zeroed its recall-frequency boost.
-        blob = _decode_embedding(record, tally, line_num, "memory")
+        blob = _restorable_embedding(record, tally, line_num, "memory", content, file_content)
         cur = await db.execute(
             "INSERT OR IGNORE INTO memories"
             " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
@@ -4478,6 +4502,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     end_time = _optional_text(record, "end_time")
     created_at = _optional_text(record, "created_at")
 
+    file_summary = summary
     summary, truncated = sanitize_content_with_flag(summary)
     if not summary:
         tally.skipped_episodes += 1
@@ -4502,7 +4527,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
         )
 
     if not tally.dry_run:
-        blob = _decode_embedding(record, tally, line_num, "episode")
+        blob = _restorable_embedding(record, tally, line_num, "episode", summary, file_summary)
         cur = await db.execute(
             "INSERT INTO episodes"
             " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
@@ -5456,6 +5481,7 @@ async def do_merge_memories(
         if not any(left_at_source.values()):
             _purge_agent_calibration(source_agent_id)
             await _purge_agent_remote_namespace(source_agent_id)
+            recall_log.purge_agent(source_agent_id)  # bug-913
         else:
             # bug-346: the source is still live, so the namespace must stay -- but the
             # rows this move took out of it must not. The purge above is the teardown

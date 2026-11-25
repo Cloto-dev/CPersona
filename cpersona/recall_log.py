@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import time
 import zlib
@@ -120,6 +121,30 @@ def write(
     except Exception as exc:  # noqa: BLE001 — the recall was answered; the log must not fail it
         logger.warning("recall log not written: %s", type(exc).__name__)
         return False
+
+
+def purge_agent(agent_id: str) -> int:
+    """Delete one agent's rows (bug-913). Returns how many went.
+
+    delete_agent_data removes everything belonging to an agent, and the query text
+    here is stored nowhere else. Runs whether or not logging is on now, since a log
+    written earlier is still on disk; with no log file there is nothing to do and
+    none is created.
+    """
+    path = log_path()
+    if path is None or not os.path.exists(path):
+        return 0
+    try:
+        conn = sqlite3.connect(path, timeout=5)
+        try:
+            with conn:
+                cur = conn.execute("DELETE FROM recall_log WHERE agent_id = ?", (agent_id,))
+            return cur.rowcount
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — post-commit, as the other purges
+        logger.warning("recall log rows of %s not purged: %s", agent_id, type(exc).__name__)
+        return 0
 
 
 def read_trace(blob: bytes) -> dict:
