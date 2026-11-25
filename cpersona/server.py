@@ -3079,12 +3079,18 @@ def _enable_declared_folders(registry) -> None:
         folder = arguments.pop("folder")
         result = await storing(arguments)
         if result.get("result") == "stored" and isinstance(result.get("id"), int):
-            result["folder"] = await folders_module.file_stored(
-                result.get("resolved_agent_id") or arguments.get("agent_id") or "",
-                result.get("resolved_project_id", arguments.get("project_id", "")),
-                f"mem:{result['id']}",
-                folder,
-            )
+            # bug-834: the memory has committed, so a filing failure is reported in
+            # `folder`, as the other riders report theirs, not raised over the store.
+            try:
+                result["folder"] = await folders_module.file_stored(
+                    result.get("resolved_agent_id") or arguments.get("agent_id") or "",
+                    result.get("resolved_project_id", arguments.get("project_id", "")),
+                    f"mem:{result['id']}",
+                    folder,
+                )
+            except Exception as exc:
+                logger.warning("store: folder rider failed for mem:%s: %r", result["id"], exc)
+                result["folder"] = {"filed": False, "reason": f"filing failed: {exc}"}
         return result
 
     registry._handlers["store"] = store
