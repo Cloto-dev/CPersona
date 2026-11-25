@@ -140,8 +140,8 @@ def test_a_code_or_a_stop_needs_the_owners_proof(served):
         assert _get(port, f"/api/{action}", {"X-Dashboard-Proof": "1.forged"})[0] == 403
         # A proof for one action does not do the other, and an old one is refused.
         other = "stop" if action == "code" else "code"
-        assert _get(port, f"/api/{action}", {"X-Dashboard-Proof": local.proof(db, other)})[0] == 403
-        stale = local.proof(db, action, now=time.time() - local.PROOF_SECONDS - 5)
+        assert _get(port, f"/api/{action}", {"X-Dashboard-Proof": local.proof(db, other, port)})[0] == 403
+        stale = local.proof(db, action, port, now=time.time() - local.PROOF_SECONDS - 5)
         assert _get(port, f"/api/{action}", {"X-Dashboard-Proof": stale})[0] == 403
     assert thread.is_alive()
     status, body = local.ask(port, "code", db)

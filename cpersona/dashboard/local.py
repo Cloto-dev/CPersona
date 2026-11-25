@@ -10,7 +10,9 @@ A second ``cpersona dashboard`` for the same store starts nothing: it asks the
 running one for a code and opens the browser on it. That request, and the one that
 stops the dashboard, carry a proof made with the store's session key, a file only
 its owner can read, so another user of the machine can reach the port but can do
-neither.
+neither. A proof names the port it is sent to, and a dashboard takes only one made
+for its own port since it started: a program that answers on a port in its place
+cannot pass the proof on.
 
 Cookies are not kept apart by port (RFC 6265 section 8.5): a browser sends this
 one to every program listening on 127.0.0.1. So the session is signed with a key
@@ -40,6 +42,8 @@ DEFAULT_PORT = 48700
 APP = "cpersona-dashboard"
 #: How long a proof made by the command line is taken.
 PROOF_SECONDS = 60
+#: A proof's stamp counts milliseconds, so one made before a dashboard started is told apart.
+_STAMP_UNIT = 1000
 _DOMAIN = b"cpersona-dashboard-local"
 
 
@@ -48,23 +52,34 @@ def store_id(db_path: str) -> str:
     return hashlib.sha256(os.path.abspath(db_path).encode()).hexdigest()[:16]
 
 
-def _mac(db_path: str, action: str, stamp: str) -> str:
-    raw = hmac.new(remote._signing_key(db_path), b"\0".join((_DOMAIN, action.encode(), stamp.encode())), hashlib.sha256)
+def _mac(db_path: str, action: str, port: int, stamp: str) -> str:
+    # bug-914: the port the proof is sent to is signed, so no other port takes it.
+    message = b"\0".join((_DOMAIN, action.encode(), str(port).encode(), stamp.encode()))
+    raw = hmac.new(remote._signing_key(db_path), message, hashlib.sha256)
     return base64.urlsafe_b64encode(raw.digest()).decode().rstrip("=")
 
 
-def proof(db_path: str, action: str, now: float | None = None) -> str:
-    stamp = str(int(time.time() if now is None else now))
-    return f"{stamp}.{_mac(db_path, action, stamp)}"
+def proof(db_path: str, action: str, port: int, now: float | None = None) -> str:
+    """A proof for the dashboard of ``db_path`` on ``port`` to do ``action``."""
+    stamp = str(int((time.time() if now is None else now) * _STAMP_UNIT))
+    return f"{stamp}.{_mac(db_path, action, port, stamp)}"
 
 
-def proof_ok(db_path: str, action: str, value: str, now: float | None = None) -> bool:
+def proof_ok(
+    db_path: str, action: str, value: str, port: int, now: float | None = None, since: float = 0.0
+) -> bool:
+    """Whether ``value`` is a proof for ``action`` on ``port``, made at ``since`` or later
+    and within PROOF_SECONDS."""
     try:
         stamp, mac = value.split(".")
-        age = (time.time() if now is None else now) - int(stamp)
+        made = int(stamp)
     except ValueError:
         return False
-    return 0 <= age <= PROOF_SECONDS and hmac.compare_digest(mac.encode(), _mac(db_path, action, stamp).encode())
+    age = (time.time() if now is None else now) - made / _STAMP_UNIT
+    # bug-914: one made before ``since`` (the dashboard's start) was made for another
+    # program that held the port then.
+    fresh = made >= int(since * _STAMP_UNIT) and 0 <= age <= PROOF_SECONDS
+    return fresh and hmac.compare_digest(mac.encode(), _mac(db_path, action, port, stamp).encode())
 
 
 class Sessions:
@@ -82,9 +97,11 @@ class Sessions:
         self.store = store_id(db_path)
         self.cookie = f"cp_dash_{self.store[:12]}"
         self.key = secrets.token_bytes(32)
+        self.started = time.time()
 
-    def proof_ok(self, action: str, value: str) -> bool:
-        return proof_ok(self.db_path, action, value)
+    def proof_ok(self, action: str, value: str, port: int) -> bool:
+        """Whether ``value`` proves ``action`` to this dashboard, listening on ``port``."""
+        return proof_ok(self.db_path, action, value, port, since=self.started)
 
     def issue(self) -> str:
         return remote.issue_link("")
@@ -143,4 +160,4 @@ def probe(port: int) -> dict | str | None:
 
 def ask(port: int, action: str, db_path: str) -> tuple[int, dict]:
     """Ask the running dashboard of ``db_path`` for a code ("code") or to stop ("stop")."""
-    return _get(port, f"/api/{action}", {"X-Dashboard-Proof": proof(db_path, action)})
+    return _get(port, f"/api/{action}", {"X-Dashboard-Proof": proof(db_path, action, port)})

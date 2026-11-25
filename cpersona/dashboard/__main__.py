@@ -72,7 +72,7 @@ def _database(args) -> str:
 def _open(url: str, no_browser: bool) -> None:
     print(f"CPersona dashboard (read-only): {url}", flush=True)
     if not no_browser:
-        webbrowser.open(url)
+        webbrowser.open(web.browser_address(url))  # bug-918: not the code itself
 
 
 def main(argv: list[str] | None = None) -> int:

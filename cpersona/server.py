@@ -48,6 +48,7 @@ from cpersona.dashboard import embedded as dashboard_embedded
 from cpersona.dashboard import remote as dashboard_remote
 from cpersona.dashboard import scope as dashboard_scope
 from cpersona.dashboard import store as dashboard_store
+from cpersona.dashboard import web as dashboard_web
 from cpersona import tokens as tokens_module
 from cpersona import generation
 from cpersona import recall_log
@@ -3245,7 +3246,8 @@ async def do_open_dashboard(open_browser: bool = False) -> dict:
         url = dashboard_embedded.open_for(config.DB_PATH, _dashboard_health(asyncio.get_running_loop()))
     except dashboard_store.StoreError as e:
         return error_response(str(e))
-    opened = bool(open_browser) and webbrowser.open(url)
+    # bug-918: the browser is given a page that sends it on, not the token's address.
+    opened = bool(open_browser) and webbrowser.open(dashboard_web.browser_address(url))
     return {
         "ok": True,
         "url": url,
