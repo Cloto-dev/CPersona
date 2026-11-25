@@ -46,3 +46,20 @@ async def test_bug_923_a_reader_whose_worker_ended_is_replaced(getter):
             if getattr(database, name) is first:
                 setattr(database, name, None)
                 setattr(database, name + "_owner", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+async def test_bug_923_closing_skips_a_reader_whose_worker_ended():
+    """close_db() runs at every teardown; awaiting close() on such a reader never returns."""
+    first = await database._get_background_read_db()
+    if first is await database.get_db():
+        pytest.skip("an in-memory database reads on the write connection")
+    _end_worker(first)
+    try:
+        await asyncio.wait_for(database.close_db(), 5)
+        rows = await asyncio.wait_for((await database.get_db()).execute_fetchall("SELECT 1"), 5)
+        assert [tuple(r) for r in rows] == [(1,)]
+    finally:
+        if database._bg_read_db is first:
+            database._bg_read_db, database._bg_read_db_owner = None, None

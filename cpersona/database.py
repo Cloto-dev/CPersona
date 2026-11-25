@@ -1735,21 +1735,24 @@ async def close_db():
     # The connections are going away; whatever was cached against them describes
     # a database this process may never see again.
     _write_generation += 1
+    # bug-923: a connection whose worker thread has ended would wait forever on close();
+    # it holds no thread to keep the process alive, so it is dropped instead.
     if _read_db is not None:
-        if _read_db is not _db:
+        if _read_db is not _db and _serving(_read_db):
             await _read_db.close()
         _read_db = None
     _read_db_owner = None
     if _bg_read_db is not None:
-        if _bg_read_db is not _db:
+        if _bg_read_db is not _db and _serving(_bg_read_db):
             await _bg_read_db.close()
         _bg_read_db = None
     _bg_read_db_owner = None
     if _side_read_db is not None:
-        if _side_read_db is not _db:
+        if _side_read_db is not _db and _serving(_side_read_db):
             await _side_read_db.close()
         _side_read_db = None
     _side_read_db_owner = None
     if _db is not None:
-        await _db.close()
+        if _serving(_db):
+            await _db.close()
         _db = None
