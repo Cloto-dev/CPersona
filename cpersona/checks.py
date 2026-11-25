@@ -244,6 +244,24 @@ def _note_effect(owner: str, row_id: int, text: str | None) -> None:
         effects.append((owner, row_id, text))
 
 
+async def _carry_declarations(db, agent: str, row_id: int, keep: int) -> None:
+    """Move what is declared about memory `row_id` to the equal row `keep` before a delete.
+
+    The associations follow, and so does the folder filing (bug-815): the delete
+    trigger takes both with the row. The survivor is in the same agent and project,
+    so it can hold the filing; one it already has is kept (OR IGNORE on the key).
+    """
+    await associations.repoint(db, agent, {f"mem:{row_id}": f"mem:{keep}"})
+    await db.execute(
+        "UPDATE OR IGNORE folder_members SET ref = ? WHERE ref = ?", (f"mem:{keep}", f"mem:{row_id}")
+    )
+
+
+def _filed_sql(column: str) -> str:
+    """SQL that is true when the memory whose id is `column` is filed in a folder."""
+    return f"EXISTS (SELECT 1 FROM folder_members WHERE ref = 'mem:' || {column})"
+
+
 # bug-028: the content-rewriting fixers below (annotation/mention/oversized)
 # must NULL the embedding alongside the content edit. The BLOB still encodes the
 # OLD text, and no other fixer repairs a content/embedding mismatch
@@ -277,7 +295,7 @@ async def _rewrite_or_delete_on_collision(db, row_id: int, new_content: str) -> 
             (row_id, new_content),
         )
         if survivor:
-            await associations.repoint(db, survivor[0][1], {f"mem:{row_id}": f"mem:{survivor[0][0]}"})
+            await _carry_declarations(db, survivor[0][1], row_id, survivor[0][0])
         cursor = await db.execute("DELETE FROM memories WHERE id = ? AND locked = 0", (row_id,))
         written = None
     if owner is not None and cursor.rowcount:
@@ -412,8 +430,8 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
         # row is the channel '' copy the group keeps when there is one, and otherwise
         # the copy kept in the deleted row's own channel -- never a sibling channel's
         # copy, which no reader of this row's channel sees. Each keeps a locked copy
-        # first, as the predicate above does. Only rows something declares about are
-        # read.
+        # first, as the predicate above does. Only rows something declares about, or
+        # that are filed in a folder (bug-815), are read.
         for row_id, agent, keep in await db.execute_fetchall(
             "SELECT id, agent_id, (SELECT COALESCE("
             "MIN(CASE WHEN k.channel = '' AND k.locked != 0 THEN k.id END),"
@@ -421,10 +439,11 @@ async def check_duplicate_content(db, agent_id: str, fix: bool) -> list[dict]:
             " MIN(CASE WHEN k.channel = memories.channel AND k.locked != 0 THEN k.id END),"
             " MIN(CASE WHEN k.channel = memories.channel THEN k.id END))"
             " FROM memories k WHERE k.agent_id = memories.agent_id AND k.project_id = memories.project_id"
-            f" AND k.content = memories.content) {surplus} AND {associations.names_memory_sql('memories.id')}",
+            f" AND k.content = memories.content) {surplus}"
+            f" AND ({associations.names_memory_sql('memories.id')} OR {_filed_sql('memories.id')})",
             iso.params,
         ):
-            await associations.repoint(db, agent, {f"mem:{row_id}": f"mem:{keep}"})
+            await _carry_declarations(db, agent, row_id, keep)
         # The same predicate, read under the same transaction just before the
         # DELETE, is the set the DELETE removes (bug-539).
         doomed = []
@@ -1238,6 +1257,20 @@ async def check_null_episode_embedding(db, agent_id: str, fix: bool, embedding_c
     return [issue]
 
 
+def _is_lock_error(exc: sqlite3.OperationalError) -> bool:
+    """Whether `exc` is another connection holding the lock, not a statement failure.
+
+    bug-816: the integrity-check statement takes the write lock, so a writer in
+    another process makes it fail with "database is locked". That is a probe that
+    did not run, never a build without the command; it propagates, and the runner
+    reports the check as crashed instead of the table as healthy.
+    """
+    code = getattr(exc, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    return "locked" in str(exc)
+
+
 async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
     """Content-level FTS5 index verification via the ``integrity-check`` command.
 
@@ -1296,12 +1329,17 @@ async def check_fts_integrity(db, agent_id: str, fix: bool) -> list[dict]:
         else:
             try:
                 await db.execute(f"INSERT INTO {fts}({fts}, rank) VALUES('integrity-check', 1)")
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as exc:
+                if _is_lock_error(exc):
+                    await _release_probe_transaction()
+                    raise
                 # Enhanced (external-content) form unsupported — structural check only.
                 try:
                     await db.execute(f"INSERT INTO {fts}({fts}) VALUES('integrity-check')")
-                except sqlite3.OperationalError:
+                except sqlite3.OperationalError as exc2:
                     await _release_probe_transaction()
+                    if _is_lock_error(exc2):
+                        raise
                     continue  # the command itself is unavailable on this build
                 except sqlite3.DatabaseError:
                     corrupt = True
@@ -3341,7 +3379,8 @@ async def check_vector_index(db, agent_id: str = "", fix: bool = False) -> list[
                     "type": "vector_index_unusable",
                     "severity": "warn",
                     "table": table,
-                    "detail": str(exc),
+                    # bug-921: the loader's message begins with the file's full path.
+                    "detail": _without_server_path(str(exc), vector_index.index_path(table), agent_id),
                     "hint": "delete the file; it is a derived artifact and is rebuilt, never repaired",
                 }
             ]
@@ -3573,7 +3612,8 @@ async def check_coarse_index(db, agent_id: str = "", fix: bool = False) -> list[
         issue = {
             "type": "coarse_index_unusable",
             "severity": "warn",
-            "detail": str(exc),
+            # bug-921: the loader's message begins with the file's full path.
+            "detail": _without_server_path(str(exc), coarse_index.index_path("memories"), agent_id),
             "rows_past_window": far_rows,
             "repairable": repairable,
             "hint": hint,
@@ -3739,7 +3779,9 @@ async def check_block_index(db, agent_id: str = "", fix: bool = False) -> list[d
     try:
         index = block_index.cached_block_index()
     except vector_index.IndexUnusable as exc:
-        return [{"type": "block_index_unusable", "detail": str(exc), "repairable": 0, "hint": hint}]
+        # bug-921: the loader's message begins with the file's full path.
+        detail = _without_server_path(str(exc), block_index.index_path(), agent_id)
+        return [{"type": "block_index_unusable", "detail": detail, "repairable": 0, "hint": hint}]
     if index is None:
         return [{
             "type": "block_index_absent",

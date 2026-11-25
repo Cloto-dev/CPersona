@@ -87,6 +87,8 @@ DOC_FILES = [
     ROOT / "docs" / "configuration.md",
     ROOT / "docs" / "faq.md",
     ROOT / "docs" / "quality-assurance.md",
+    # bug-838: the upgrade guide states the schema version a migration ends at.
+    ROOT / "docs" / "upgrading-to-2.6.md",
     ROOT / "docs" / "llms.txt",
     # Translations restate the same measurable claims, so they rot the same
     # way. The checks below key on `CPERSONA_*` cells and on the numbers
@@ -101,6 +103,7 @@ DOC_FILES = [
     ROOT / "docs" / "roadmap.ja.md",
     ROOT / "docs" / "tools.ja.md",
     ROOT / "docs" / "quality-assurance.ja.md",
+    ROOT / "docs" / "upgrading-to-2.6.ja.md",
 ]
 
 # Packaging manifests are not docs, but they carry the same current-state
@@ -388,6 +391,12 @@ TOOL_COUNT_CLAIMS = (
 )
 
 
+SCHEMA_VERSION_CLAIMS = re.compile(
+    r"(?<!from )\b[Ss]chema version (\d+)\b"
+    r"|スキーマのバージョン\s*(\d+)(?!\d)(?!\s*から)"
+)
+
+
 def check_tool_and_schema_claims(tool_count: int, schema_version: int) -> None:
     # `tool_count` is measured and printed for the log, but no page may state it:
     # the number was kept true everywhere this gate could read and went stale on
@@ -407,6 +416,15 @@ def check_tool_and_schema_claims(tool_count: int, schema_version: int) -> None:
         for m in re.finditer(r"\b[Ss]chema v(\d+)\b", text):
             if int(m.group(1)) != schema_version:
                 fail(f"{rel}: claims '{m.group(0)}' but SCHEMA_VERSION is {schema_version}")
+        # bug-838: the spelled-out forms too. A table row and a migration's
+        # starting point ("from schema version 13", and the Japanese form ending
+        # in "kara") are history, not a claim about the current schema.
+        for line in text.splitlines():
+            if line.lstrip().startswith("|"):
+                continue
+            for m in SCHEMA_VERSION_CLAIMS.finditer(line):
+                if int(m.group(1) or m.group(2)) != schema_version:
+                    fail(f"{rel}: claims '{m.group(0)}' but SCHEMA_VERSION is {schema_version}")
 
 
 def check_manifest_version(project_version: str) -> None:

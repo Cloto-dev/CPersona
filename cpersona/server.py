@@ -48,6 +48,7 @@ from cpersona.dashboard import embedded as dashboard_embedded
 from cpersona.dashboard import remote as dashboard_remote
 from cpersona.dashboard import scope as dashboard_scope
 from cpersona.dashboard import store as dashboard_store
+from cpersona.dashboard import web as dashboard_web
 from cpersona import tokens as tokens_module
 from cpersona import generation
 from cpersona import recall_log
@@ -3079,12 +3080,18 @@ def _enable_declared_folders(registry) -> None:
         folder = arguments.pop("folder")
         result = await storing(arguments)
         if result.get("result") == "stored" and isinstance(result.get("id"), int):
-            result["folder"] = await folders_module.file_stored(
-                result.get("resolved_agent_id") or arguments.get("agent_id") or "",
-                result.get("resolved_project_id", arguments.get("project_id", "")),
-                f"mem:{result['id']}",
-                folder,
-            )
+            # bug-834: the memory has committed, so a filing failure is reported in
+            # `folder`, as the other riders report theirs, not raised over the store.
+            try:
+                result["folder"] = await folders_module.file_stored(
+                    result.get("resolved_agent_id") or arguments.get("agent_id") or "",
+                    result.get("resolved_project_id", arguments.get("project_id", "")),
+                    f"mem:{result['id']}",
+                    folder,
+                )
+            except Exception as exc:
+                logger.warning("store: folder rider failed for mem:%s: %r", result["id"], exc)
+                result["folder"] = {"filed": False, "reason": f"filing failed: {exc}"}
         return result
 
     registry._handlers["store"] = store
@@ -3160,13 +3167,16 @@ def _enable_declared_folders(registry) -> None:
             return await listing(arguments)
         if view != "folders":
             return error_response('view must be "folders"', path=arguments.get("path"), children=[])
-        path = arguments.get("path")
-        return await do_list_folder_view(
-            validate_str(arguments, "agent_id"),
-            validate_int(arguments, "limit", 100),
-            [] if path is None else path,
-            validate_str(arguments, "project_id", None),
-        )
+        path = [] if arguments.get("path") is None else arguments["path"]
+        agent_id = validate_str(arguments, "agent_id")
+        project_id = validate_str(arguments, "project_id", None)
+        # bug-835: the folder view passes the same gate as every other listing, so
+        # '@auto' resolves and the warning / resolved_project_id are echoed.
+        resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+        if error:
+            return {**_oc_reject(error), "path": path, "children": []}
+        result = await do_list_folder_view(agent_id, validate_int(arguments, "limit", 100), path, resolved)
+        return _oc_annotate(result, project_id, resolved, warning)
 
     registry._handlers["list_memories"] = list_memories
 
@@ -3236,7 +3246,8 @@ async def do_open_dashboard(open_browser: bool = False) -> dict:
         url = dashboard_embedded.open_for(config.DB_PATH, _dashboard_health(asyncio.get_running_loop()))
     except dashboard_store.StoreError as e:
         return error_response(str(e))
-    opened = bool(open_browser) and webbrowser.open(url)
+    # bug-918: the browser is given a page that sends it on, not the token's address.
+    opened = bool(open_browser) and webbrowser.open(dashboard_web.browser_address(url))
     return {
         "ok": True,
         "url": url,
@@ -3406,6 +3417,42 @@ def _peer_is_remote(peer: str) -> bool:
     # An IPv4-mapped IPv6 address is that IPv4 address; ask the mapped one.
     address = getattr(address, "ipv4_mapped", None) or address
     return not address.is_loopback
+
+
+# The browser origins the CORS policy admits.
+_CORS_ORIGINS = ("https://claude.ai", "https://www.claude.ai")
+
+
+def _names_this_machine(value: str) -> bool:
+    """Does this Host value or Origin name localhost or a loopback address?"""
+    try:
+        name = urlparse(value if "//" in value else "//" + value).hostname
+    except ValueError:
+        return False
+    return bool(name) and not _peer_is_remote(name)
+
+
+def _foreign_browser_refusal(headers) -> JSONResponse | None:
+    """bug-919: the answer to a web page on another site, or None to serve.
+
+    Without authentication, Host and Origin are all that tell a local client
+    from a page that pointed its own host name at 127.0.0.1 (DNS rebinding): a
+    browser always sends Host, and sends Origin on a POST. A client that is not
+    a browser may send neither, and is served.
+    """
+    host = headers.get("host")
+    if host and not _names_this_machine(host):
+        return JSONResponse(
+            {"error": "Without authentication this server answers only requests addressed to localhost or a loopback address."},
+            status_code=421,
+        )
+    origin = headers.get("origin")
+    if origin and origin not in _CORS_ORIGINS and not _names_this_machine(origin):
+        return JSONResponse(
+            {"error": "Without authentication this server refuses requests from a web page on another site."},
+            status_code=403,
+        )
+    return None
 
 
 class _OAuthDiscovery(NamedTuple):
@@ -3981,6 +4028,11 @@ class BearerTokenMiddleware:
             return
         if not self.auth_token:
             self._warn_once_if_remotely_reached(request)
+            # bug-919: no credential to check, so refuse a foreign Host or Origin.
+            refusal = _foreign_browser_refusal(request.headers)
+            if refusal is not None:
+                await refusal(scope, receive, send)
+                return
         if self.auth_token:
             token = _bearer_credential(request.headers.get("authorization", ""))
             # A missing/malformed header yields an empty token, which must
@@ -4143,7 +4195,7 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
         middleware=[
             Middleware(
                 CORSMiddleware,
-                allow_origins=["https://claude.ai", "https://www.claude.ai"],
+                allow_origins=list(_CORS_ORIGINS),
                 allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
                 allow_headers=[
                     "Authorization",

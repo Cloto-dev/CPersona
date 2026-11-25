@@ -128,7 +128,11 @@ package out of uv's cache; for a server that has to come back after a reboot,
 
 ### 3. Register with the MCP client
 
-Pick an absolute `CPERSONA_DB_PATH` (e.g. `~/.claude/cpersona.db`).
+Pick an absolute `CPERSONA_DB_PATH` (e.g. `/home/you/.claude/cpersona.db`, with
+your own home directory). Write it out in full: `~` and `$HOME` are not
+expanded, because the client starts the server without a shell, and the
+server would create a literal `~` directory under whatever directory the
+client was started in.
 
 **Claude Code:**
 

@@ -279,7 +279,10 @@ class IdpTokenVerifier:
                 issuer=issuer,
                 options={"require": list(REQUIRED_CLAIMS)},
             )
-        except jwt.PyJWTError as exc:
+        except Exception as exc:  # noqa: BLE001
+            # bug-829: not only PyJWTError. A header naming an allowed algorithm
+            # of the other key family (ES256 for an RSA key) makes PyJWT raise
+            # TypeError, which escaped as a 500.
             # Debug, not warning: a bad token is an ordinary event on a public
             # endpoint, and warning here would let anyone fill the log. The
             # reason is still recorded for an operator who turns debug on while

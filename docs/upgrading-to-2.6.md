@@ -32,7 +32,7 @@ reachable by exact version.
 ## What the first start does
 
 On its first start, 2.6 migrates the database from schema version 13 (every
-2.5.x release) to schema version 20 (19 for 2.6.7a2 to 2.6.11a1, 18 for 2.6.3 to 2.6.7a1, 17 for 2.6.0 to 2.6.2), one step at a time. **No
+2.5.x release) to schema version 21 (20 for 2.6.11a2 to 2.6.13, 19 for 2.6.7a2 to 2.6.11a1, 18 for 2.6.3 to 2.6.7a1, 17 for 2.6.0 to 2.6.2), one step at a time. **No
 stored row is rewritten**: each step adds tables and triggers, or one column. A step that fails is not
 recorded as done, so it is retried on the next start.
 
@@ -340,4 +340,4 @@ New in 2.6 and inert unless asked for: the `reconstruct` tool, the recall trace
 Restore the backup you took before the upgrade (the database and the
 calibration file), then install 2.5.12. **Do not point 2.5 at a migrated
 database.** 2.5.12 opens a newer schema only with a warning that it may misread
-it; nothing converts a schema version 17 database back.
+it; nothing converts a schema version 21 database back.

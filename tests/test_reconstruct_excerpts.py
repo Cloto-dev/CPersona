@@ -13,7 +13,7 @@ import tempfile
 import numpy as np
 import pytest
 
-from cpersona import admin_handlers, config, database, memory_handlers, nodes, reconstruct, server, session, tasks
+from cpersona import admin_handlers, blocks, config, database, memory_handlers, nodes, reconstruct, server, session, tasks
 from cpersona.reconstruct import allocate, rank_nodes, resolve_budget
 
 AGENT = "agent.excerpts"
@@ -423,7 +423,9 @@ async def test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_i
         await tmp.drain()
         (item,) = (await reconstruct.do_reconstruct(AGENT, "vault combination", deep=True))["items"]
         assert item["content_len"] > len(item["content"]) and "7431" not in item["content"]
-        assert item["expand"] == {"ref": item["head_ref"], "node": item["node"]["index"]}
+        assert item["expand"] == {
+            "ref": item["head_ref"], "node": item["node"]["index"], "revision": blocks.text_revision(LONG),
+        }
         (more,) = (await memory_handlers.do_get_contents(AGENT, [item["expand"]]))["items"]
         assert more["content"].startswith(item["content"]) and "7431" in more["content"]
         assert len(more["content"]) < len(LONG) / 2

@@ -8,7 +8,9 @@ Who can read it:
   server, so the token is not in a request line, a log or a Referer. The page keeps
   it for the tab and sends it as ``Authorization: Bearer``; without it the JSON
   endpoints answer 401. Another program or user on the same machine can reach the
-  port, but not the data.
+  port, but not the data. Nor is the address on a command line, which other
+  accounts can read: a browser started for it is given a page only its owner can
+  read, which sends it on (``browser_address``).
 - The Host header must name the loopback address and this port. A web page cannot
   then read the data by pointing its own host name at 127.0.0.1 (DNS rebinding).
 - Only GET is answered, and the page loads nothing from anywhere else (the CSP).
@@ -22,10 +24,14 @@ Who can read it:
 The page, its script and its style carry no data, so they are served without the token.
 """
 
+import contextlib
 import hmac
+import html
 import json
+import os
 import secrets
 import sqlite3
+import tempfile
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,6 +43,8 @@ from cpersona import __version__
 from cpersona.dashboard import graph, overall, store
 
 HOST = "127.0.0.1"
+#: How long the page that sends a browser on to the dashboard is kept.
+FORWARD_SECONDS = 60
 
 _STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -236,7 +244,7 @@ def make_handler(
                 return True
             if path in ("/api/code", "/api/stop"):
                 action = path.rsplit("/", 1)[1]
-                if not local.proof_ok(action, self.headers.get("X-Dashboard-Proof", "")):
+                if not local.proof_ok(action, self.headers.get("X-Dashboard-Proof", ""), port_ref[0]):
                     self._json(403, {"error": "Only the command line of this store's owner can ask this."})
                     return True
                 if action == "code":
@@ -315,6 +323,37 @@ def make_handler(
         do_POST = do_PUT = do_PATCH = do_DELETE = _refuse
 
     return Handler
+
+
+def _remove(path: str) -> None:
+    with contextlib.suppress(OSError):
+        os.remove(path)
+
+
+def browser_address(url: str) -> str:
+    """What to give a browser so it opens ``url``.
+
+    bug-918: on Linux the browser, and xdg-open before it, is started with what it
+    opens as an argument, and other accounts can read a process's arguments, so the
+    token or code in ``url`` must not be one. It is given instead the address of a
+    page only its owner can read, which sends it on to ``url``; the page is removed
+    after FORWARD_SECONDS. When the page cannot be written, the browser gets the
+    address without its secret, and the person opens the one printed or returned."""
+    target = html.escape(url, quote=True)
+    try:
+        fd, page = tempfile.mkstemp(prefix="cpersona-dashboard-", suffix=".html")  # owner-only
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(
+                '<!doctype html><meta charset="utf-8">'
+                f'<meta http-equiv="refresh" content="0;url={target}">'
+                f'<title>CPersona dashboard</title><a href="{target}">Open the dashboard</a>\n'
+            )
+    except OSError:
+        return url.partition("#")[0]
+    timer = threading.Timer(FORWARD_SECONDS, _remove, (page,))
+    timer.daemon = True
+    timer.start()
+    return Path(page).as_uri()
 
 
 def make_server(

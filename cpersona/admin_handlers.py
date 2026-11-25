@@ -34,6 +34,7 @@ from cpersona import config
 from cpersona import fileperms
 from cpersona import generation
 from cpersona import nodes
+from cpersona import recall_log
 from cpersona import session
 from cpersona import tasks
 from cpersona import vector
@@ -1207,7 +1208,7 @@ async def _purge_agent_remote_namespace(agent_id: str) -> None:
 
 
 async def do_delete_agent_data(agent_id: str, session_key: str = "") -> dict:
-    """Delete ALL data for a specific agent (memories, profiles, episodes)."""
+    """Delete ALL data for a specific agent (memories, profiles, episodes, recall log rows)."""
     key, _declared = resolve_session_key(session_key)
     if session.is_paused_for(key):
         return session.make_skipped_response(
@@ -1235,6 +1236,7 @@ async def do_delete_agent_data(agent_id: str, session_key: str = "") -> dict:
     _purge_agent_calibration(agent_id)
     dropped_indexes = _purge_local_vector_index(counts)
     await _purge_agent_remote_namespace(agent_id)
+    recall_log.purge_agent(agent_id)  # bug-913: its query text goes with it
 
     result = {"ok": True, "agent_id": agent_id, **counts}
     if dropped_indexes:
@@ -1827,7 +1829,12 @@ def _read_calibration_sidecar() -> tuple[dict | None, bool]:
     path = _calibration_sidecar_path()
     try:
         with open(path) as fh:
-            return json.load(fh), False
+            state = json.load(fh)
+        # bug-810: valid JSON that is not an object (a list, a string, a number, null)
+        # holds no calibration either, and every caller reads it with .get().
+        if not isinstance(state, dict):
+            raise ValueError(f"expected a JSON object, found {type(state).__name__}")
+        return state, False
     except FileNotFoundError:
         return None, False
     except (OSError, ValueError) as exc:
@@ -2272,6 +2279,7 @@ async def do_calibrate_threshold(
     session_key: str = "",
     *,
     precision_override: float | None | object = _CURRENT_PRECISION,
+    server_owned: bool = False,
 ) -> dict:
     """Auto-calibrate the vector-similarity threshold from the embedding distribution.
 
@@ -2292,6 +2300,9 @@ async def do_calibrate_threshold(
     When no gate could be measured at the new beta and the agent holds one measured at
     its current beta, the stored beta is kept and the result carries
     ``precision_override_applied: false``.
+
+    ``server_owned`` is the startup guard's, and no tool argument reaches it either: that
+    calibration is the server's own work and belongs to no session, so no pause skips it.
     """
     import numpy as np
 
@@ -2342,8 +2353,11 @@ async def do_calibrate_threshold(
     # shape (echo keys resolved above, computed fields nulled); the guard sits
     # AFTER the pure param validation so invalid input still returns the real
     # error response, pause or not (same doctrine as the import/merge gates).
+    # bug-812: the startup guard calls without a key, so a client's keyless pause that
+    # landed while it ran skipped the remaining agents, which the guard then counted as
+    # calibrated and later boots restored without measuring.
     key, _declared = resolve_session_key(session_key)
-    if session.is_paused_for(key):
+    if not server_owned and session.is_paused_for(key):
         return session.make_skipped_response(
             {
                 "ok": True,
@@ -2540,7 +2554,13 @@ async def do_calibrate_threshold(
                 vector._get_precision_beta(agent_id),
             )
             fused_stats = None
-        if fused_stats is not None:
+        # bug-811: a gate measured at a new beta enters process memory with that beta,
+        # only once the sidecar holds both. Applied before the save, it stayed in force
+        # after a failed or skipped write that set_recall_precision reports as not applied.
+        held_gate = None
+        if fused_stats is not None and precision_override is not _CURRENT_PRECISION:
+            held_gate = fused_stats
+        elif fused_stats is not None:
             # The 0.1544 collapse produced zero log lines —
             # the gate is recall's effective filter, so a replacement is worth one.
             logger.info(
@@ -2599,9 +2619,10 @@ async def do_calibrate_threshold(
             # gate exists; a calibration that measured one has nothing left to record.
             gate_unavailable = (
                 None
-                if vector._fused_gate_signal is not None or not carried
+                if held_gate is not None or vector._fused_gate_signal is not None or not carried
                 else (stored_state or {}).get("gate_unavailable")
             )
+            held_gates = {agent_id: held_gate["threshold"]} if held_gate is not None else {}
             sidecar_persisted = _save_calibration_state(
                 embedding_dim,
                 config.EMBEDDING_MODEL,
@@ -2611,8 +2632,13 @@ async def do_calibrate_threshold(
                 agent_fused_gates={
                     **carried.get("agent_fused_gates", {}),
                     **dict(vector._agent_fused_gates),
+                    **held_gates,
                 },
-                fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
+                fused_gate_signal=(
+                    held_gate["signal"]
+                    if held_gate is not None
+                    else carried.get("fused_gate_signal", vector._fused_gate_signal)
+                ),
                 agent_betas=agent_betas,
                 calibrated_at=(
                     measured_at if not agent_id or stored_global_time is None else stored_global_time
@@ -2622,6 +2648,20 @@ async def do_calibrate_threshold(
             )
             if sidecar_persisted:
                 vector._clear_calibration_pending()
+                if held_gate is not None:
+                    logger.info(
+                        "Fused gate [%s]: %s -> %.4f (signal=%s, beta=%s)",
+                        agent_id,
+                        vector._agent_fused_gates.get(agent_id, "unset"),
+                        held_gate["threshold"],
+                        held_gate["signal"],
+                        gate_beta,
+                    )
+                    # On disk already, so claimed rather than pending, as the beta is.
+                    vector._agent_fused_gates[agent_id] = held_gate["threshold"]
+                    vector._fused_gate_signal = held_gate["signal"]
+                    vector._claim_agent_calibration(agent_id, "agent_fused_gates")
+                    vector._claim_global_calibration("fused_gate_signal")
         elif not sidecar_lock_held:
             logger.warning(
                 "Not persisting calibration: the lock on the sidecar at %s could not be "
@@ -3152,7 +3192,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             _live_fingerprint(),
         )
 
-    global_result = await do_calibrate_threshold(agent_id="")
+    global_result = await do_calibrate_threshold(agent_id="", server_owned=True)
     agents = []
     if global_result.get("ok"):
         # Deliberate corpus-wide agent enumeration (typed no-filter helper —
@@ -3164,7 +3204,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
                 iso_all.params,
             )
         for (aid,) in agent_rows:
-            r = await do_calibrate_threshold(agent_id=aid)
+            r = await do_calibrate_threshold(agent_id=aid, server_owned=True)
             if r.get("ok"):
                 agents.append(aid)
 
@@ -3319,6 +3359,27 @@ def _imported_label(record: dict, blob: bytes | None) -> str:
     return label
 
 
+def _restorable_embedding(
+    record: dict, tally: "_ImportTally", line_num: int, kind: str, stored: str, original: str
+) -> bytes | None:
+    """The file's embedding, if it still describes the text being stored.
+
+    bug-813: the vector was computed from the file's text. When sanitising changed
+    that text (cap, annotation strip, trim), the vector describes words the row no
+    longer holds, so the row is stored without one and the null-embedding repair
+    re-embeds it from the stored text.
+    """
+    if stored != original:
+        if record.get("embedding_b64"):
+            tally.errors.append(
+                f"Line {line_num}: {kind} embedding not restored (the text was changed on "
+                "import); the row is stored without one and check_health's null-embedding "
+                "repair can re-embed it"
+            )
+        return None
+    return _decode_embedding(record, tally, line_num, kind)
+
+
 def _decode_embedding(record: dict, tally: "_ImportTally", line_num: int, kind: str) -> bytes | None:
     """Decode a base64 embedding blob from an export record.
 
@@ -3330,8 +3391,7 @@ def _decode_embedding(record: dict, tally: "_ImportTally", line_num: int, kind: 
     same question as "are these numbers" -- a whole number of float32s can be a vector
     of NaNs, and ``vector.pack_for_storage`` refuses exactly that on the store path. So
     the same file was accepted here and refused there: a restore wrote a non-finite
-    vector durably, where it scores against every query (the similarity floor is a ``<``
-    comparison, which a NaN does not fall below) and poisons the agent's threshold
+    vector durably, where it scores NaN against every query and poisons the agent's threshold
     calibration until an operator runs a repairing health check. The two write paths now
     give the same verdict on the same values.
 
@@ -4265,6 +4325,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
     last_recalled_at = _optional_text(record, "last_recalled_at")
     created_at = _optional_text(record, "created_at")
 
+    file_content = content
     content, truncated = sanitize_content_with_flag(content)
     if not content:
         tally.skipped_memories += 1
@@ -4322,7 +4383,7 @@ async def _import_memory_record(db, record: dict, aid: str, tally: _ImportTally,
         # bug-092: created_at and the recall stats ride along too — the
         # old INSERT re-stamped every restored row with import time and
         # zeroed its recall-frequency boost.
-        blob = _decode_embedding(record, tally, line_num, "memory")
+        blob = _restorable_embedding(record, tally, line_num, "memory", content, file_content)
         cur = await db.execute(
             "INSERT OR IGNORE INTO memories"
             " (agent_id, project_id, channel, msg_id, content, source, timestamp, metadata,"
@@ -4440,6 +4501,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
     end_time = _optional_text(record, "end_time")
     created_at = _optional_text(record, "created_at")
 
+    file_summary = summary
     summary, truncated = sanitize_content_with_flag(summary)
     if not summary:
         tally.skipped_episodes += 1
@@ -4464,7 +4526,7 @@ async def _import_episode_record(db, record: dict, aid: str, tally: _ImportTally
         )
 
     if not tally.dry_run:
-        blob = _decode_embedding(record, tally, line_num, "episode")
+        blob = _restorable_embedding(record, tally, line_num, "episode", summary, file_summary)
         cur = await db.execute(
             "INSERT INTO episodes"
             " (agent_id, project_id, channel, summary, keywords, start_time, end_time, resolved,"
@@ -5418,6 +5480,7 @@ async def do_merge_memories(
         if not any(left_at_source.values()):
             _purge_agent_calibration(source_agent_id)
             await _purge_agent_remote_namespace(source_agent_id)
+            recall_log.purge_agent(source_agent_id)  # bug-913
         else:
             # bug-346: the source is still live, so the namespace must stay -- but the
             # rows this move took out of it must not. The purge above is the teardown

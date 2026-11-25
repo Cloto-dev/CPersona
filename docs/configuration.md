@@ -375,6 +375,15 @@ authentication (local development only). Earlier versions allowed an
 unauthenticated loopback bind and logged that it was "bound to loopback only",
 which read as an all-clear and was not one.
 
+**Without authentication, only local names are answered.** In that mode the
+server refuses a request whose `Host` header names anything other than
+`localhost` or a loopback address (421), and a browser request whose `Origin`
+is neither of those nor the claude.ai origins the CORS policy admits (403). A
+web page therefore cannot reach the server by pointing its own host name at
+`127.0.0.1` (DNS rebinding). A client that addresses the server by any other
+name, such as a container's service name, needs `CPERSONA_AUTH_TOKEN` or an
+ACL file.
+
 Setting `CPERSONA_ACL_FILE` satisfies the same requirement a different way.
 Every request must then resolve to a named client, so the single-token check
 does not apply.

@@ -1295,7 +1295,11 @@ def test_excluded_vendored_modules_are_unreachable():
 
     reachable = set()
     frontier = set()
-    for path in sorted(PKG.glob("*.py")):
+    # bug-841: recursive, so subpackages such as cpersona/dashboard/ are roots too. The
+    # vendored tree is not a root: its modules count only when reached from cpersona.
+    for path in sorted(PKG.rglob("*.py")):
+        if vendored_dir in path.parents:
+            continue
         frontier |= _vendored_refs(path) & modules
     frontier |= _vendored_refs(vendored_dir / "__init__.py") & modules
     while frontier:

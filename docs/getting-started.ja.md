@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/getting-started.md@blob:0ea5cc921da7e9d91d149d31a333b60cf7e5e883 -->
+<!-- i18n-source: docs/getting-started.md@blob:ca412f1464822071a5a86831a50ddf0838e269de -->
 
 # はじめに
 
@@ -22,7 +22,11 @@ Claude Code か Codex に、[公式サイト](https://cpersona.cloto.dev/ja/#set
 
 自分で進める場合に必要なものは次のとおりです。
 
-- **Python 3.11 以上**
+- **Python 3.11 以上**で、その `sqlite3` モジュールが **SQLite 3.34 以上**を使っていること。
+  全文索引は FTS5 の trigram トークナイザーを使い、これは SQLite 3.34 で入りました。
+  `python3 -c "import sqlite3; print(sqlite3.sqlite_version)"` で確かめられます。
+  それより古い SQLite では、最初の起動が `no such tokenizer: trigram` で止まります。
+  `CPERSONA_FTS_ENABLED=false` にするとその索引を作らなくなり、recall はキーワードの経路を使えなくなります
 - ワンコマンド経路を使うなら **[uv](https://docs.astral.sh/uv/)** (任意。`pip` でも可)
 - MCP クライアント: Claude Desktop、Claude Code、Codex CLI、Cursor、VS Code、
   またはその他の MCP ホスト (手順 3 に各クライアントのエントリがあります)
@@ -346,7 +350,8 @@ jina-v5-nano のベクトル (768 次元) は、bge-m3 のベクトル (1024 次
 
 先に絶対パスの `CPERSONA_DB_PATH` を決めてください。例が
 `/home/you/.claude/cpersona.db` を使っているのは、Claude 利用者ならそのディレクトリが
-既にあるからです。絶対パスなら何でも構いません。
+既にあるからです。絶対パスなら何でも構いません。パスは省略せずに書いてください。
+クライアントはシェルを通さずにサーバーを起動するので、`~` や `$HOME` は展開されません。
 
 | クライアント | エントリの置き場所 | 形 | ここで確認 |
 | --- | --- | --- | --- |

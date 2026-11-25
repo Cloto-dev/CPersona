@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/faq.md@blob:b2e2fe252f9cbfdcb95a7ca997825f759ff18027 -->
+<!-- i18n-source: docs/faq.md@blob:6ad6600e8197cd9fec3da54052d7d7222f321f37 -->
 
 # FAQ
 
@@ -133,6 +133,16 @@ recall で負けることはあります。「失われては困る」なら loc
 ついては何も分かりません。また、`check_health` が緑なだけでは、エンドポイントが
 動いている証明になりません。
 → [埋め込みサーバー停止の検知](operations.md#detecting-a-dead-embedding-server)
+
+### CPersona にはどの SQLite が要りますか？ { #which-sqlite-does-cpersona-need }
+
+サーバーを動かす Python が使う SQLite が 3.34 以上である必要があります。全文索引は
+FTS5 の trigram トークナイザーを使い、これは SQLite 3.34 で入りました。
+`python3 -c "import sqlite3; print(sqlite3.sqlite_version)"` で確かめられます。
+それより古い SQLite では、最初の起動が `no such tokenizer: trigram` で止まります。
+新しい SQLite を使う Python でサーバーを動かすか、`CPERSONA_FTS_ENABLED=false` で
+その索引を作らないようにしてください。その場合、recall はキーワードの経路を使えません。
+→ [はじめに: 前提条件](getting-started.md#prerequisites)
 
 ### CPersona が LLM で記憶を統合・要約する日は来ますか？ { #will-cpersona-ever-merge-or-summarize-memories-with-an-llm }
 

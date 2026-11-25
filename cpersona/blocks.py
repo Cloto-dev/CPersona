@@ -1543,9 +1543,10 @@ def text_revision(text: str) -> str:
     text share it. What it is for is refusal — a span handed back later can be
     checked against the text as it stands, and a record rewritten since is an
     `unresolved` answer rather than a different passage served under the same
-    offsets. A block or node range needs no such check, because the triggers
-    delete a record's derived rows when its text changes; a raw span has nothing
-    equivalent, which is why every place that hands a span back attaches this.
+    offsets. A block or node range needs it as much as a raw span: the triggers
+    delete a record's derived rows when its text changes, but the rebuild brings
+    the same indices back over different characters (bug-831), which is why every
+    place that hands a range back attaches this.
     """
     import hashlib
 

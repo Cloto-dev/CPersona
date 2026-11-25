@@ -58,8 +58,9 @@ _cache: dict[str, tuple] = {}
 def tree(conn) -> dict:
     """The logical directory as points, down to the month."""
     rows = conn.execute(
-        "SELECT agent_id, project_id, channel, substr(timestamp, 1, 4) AS y, "
-        "substr(timestamp, 6, 2) AS m, count(*) AS n FROM memories "
+        # bug-821: the UTC year and month of the instant, as the memory list groups them.
+        "SELECT agent_id, project_id, channel, coalesce(substr(utc_time(timestamp), 1, 4), '') AS y, "
+        "coalesce(substr(utc_time(timestamp), 6, 2), '') AS m, count(*) AS n FROM memories "
         "GROUP BY agent_id, project_id, channel, y, m"
     ).fetchall()
     counts: dict[tuple, int] = {}
@@ -205,6 +206,7 @@ def _grouped(conn, db_path: str) -> dict:
     else:
         out = _cluster(conn)
     with _lock:
+        graph._expire(_cache, time.monotonic())  # bug-819: release expired groupings
         _cache[key] = (sig[:3], time.monotonic(), out)
     return out
 

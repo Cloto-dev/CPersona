@@ -27,6 +27,7 @@ from pathlib import Path
 
 from cpersona.config import MAX_PROFILE_LENGTH
 from cpersona.database import SCHEMA_VERSION
+from cpersona.utils import _parse_timestamp_utc
 
 #: The oldest schema this reader has been run against. Every column it reads
 #: exists from here on.
@@ -42,8 +43,9 @@ _LEVEL_SQL = (
     "agent_id",
     "project_id",
     "channel",
-    "substr(timestamp, 1, 4)",
-    "substr(timestamp, 6, 2)",
+    # bug-821: the UTC year and month of the instant, '' when it cannot be read.
+    "coalesce(substr(utc_time(timestamp), 1, 4), '')",
+    "coalesce(substr(utc_time(timestamp), 6, 2), '')",
 )
 
 #: A page of the list. The page asks for less; the ceiling bounds what one request reads.
@@ -63,6 +65,22 @@ _STAMP_LINE = re.compile(r"^\s*(session date|date|time|timestamp)\s*:", re.IGNOR
 
 class StoreError(Exception):
     """The database cannot be read safely; the message says why, for a person."""
+
+
+def _utc_time(ts):
+    """A stored time as the UTC instant it names, in text that sorts as time does.
+
+    bug-821: stored times mix offsets and separators, so their text neither groups
+    nor sorts by time. This reads them with the parser ``list_memories`` uses; None
+    when it cannot.
+    """
+    dt = _parse_timestamp_utc(ts) if isinstance(ts, str) else None
+    return dt.replace(tzinfo=None).isoformat(timespec="microseconds") if dt else None
+
+
+def _fold(text):
+    # bug-822: SQLite's lower() folds ASCII only; this folds case as Python does.
+    return text.lower() if isinstance(text, str) else text
 
 
 def open_store(path: str) -> sqlite3.Connection:
@@ -89,6 +107,8 @@ def open_store(path: str) -> sqlite3.Connection:
             f"{file} uses schema {version}, newer than this dashboard reads ({MAX_SCHEMA}). "
             "Update cpersona to read it."
         )
+    conn.create_function("utc_time", 1, _utc_time, deterministic=True)
+    conn.create_function("fold", 1, _fold, deterministic=True)
     return conn
 
 
@@ -248,7 +268,7 @@ OVERVIEW_ROWS = 5
 def _overview_rows(conn: sqlite3.Connection, where: str, order: str) -> list[dict]:
     """A few memories for the overview. The ids are chosen first and only theirs are
     read in full, so a large store does not load every row's text to keep five."""
-    outer = ", ".join("m." + part.strip() for part in order.split(","))
+    outer = re.sub(r"\b(id|timestamp|recall_count)\b", r"m.\1", order)
     rows = conn.execute(
         "SELECT m.id, m.agent_id, m.timestamp, m.content, m.recall_count FROM memories m"
         f" JOIN (SELECT id FROM memories {where} ORDER BY {order} LIMIT ?) t ON t.id = m.id ORDER BY {outer}",
@@ -263,14 +283,18 @@ def _overview_rows(conn: sqlite3.Connection, where: str, order: str) -> list[dic
 def overview(conn: sqlite3.Connection, name: str) -> dict:
     """What the store holds and when it was written, with the latest memories and
     the ones recalled most."""
+    # bug-821: the earliest and latest instant, given as stored.
     span = conn.execute(
-        "SELECT min(timestamp), max(timestamp) FROM memories"
+        "SELECT (SELECT timestamp FROM memories WHERE utc_time(timestamp) IS NOT NULL ORDER BY utc_time(timestamp), id LIMIT 1),"
+        " (SELECT timestamp FROM memories WHERE utc_time(timestamp) IS NOT NULL ORDER BY utc_time(timestamp) DESC, id DESC LIMIT 1)"
     ).fetchone()
     months = conn.execute(
-        "SELECT substr(timestamp, 1, 7) AS m, count(*) AS n FROM memories GROUP BY m ORDER BY m"
+        "SELECT coalesce(substr(utc_time(timestamp), 1, 7), '') AS m, count(*) AS n FROM memories GROUP BY m ORDER BY m"
     ).fetchall()
+    # With one max(), SQLite takes the bare `timestamp` from the row holding it.
     agents = conn.execute(
-        "SELECT agent_id, count(*) AS n, max(timestamp) AS last FROM memories GROUP BY agent_id ORDER BY n DESC, agent_id"
+        "SELECT agent_id, count(*) AS n, timestamp AS last, max(utc_time(timestamp)) FROM memories"
+        " GROUP BY agent_id ORDER BY n DESC, agent_id"
     ).fetchall()
     return {
         "db": name,
@@ -286,9 +310,9 @@ def overview(conn: sqlite3.Connection, name: str) -> dict:
         "agents": [
             {"id": r["agent_id"], "count": r["n"], "last": r["last"]} for r in agents
         ],
-        "recent": _overview_rows(conn, "", "timestamp DESC, id DESC"),
+        "recent": _overview_rows(conn, "", "utc_time(timestamp) DESC, id DESC"),
         # A memory never recalled is not "recalled most", however few have been.
-        "recalled": _overview_rows(conn, "WHERE recall_count > 0", "recall_count DESC, timestamp DESC, id DESC"),
+        "recalled": _overview_rows(conn, "WHERE recall_count > 0", "recall_count DESC, utc_time(timestamp) DESC, id DESC"),
     }
 
 
@@ -327,7 +351,7 @@ def memories(
     """One page of memories, newest first, within a folder, a month and a search."""
     where, args = _path_where(path or [], "m.")
     if month:
-        where.append("substr(m.timestamp, 1, 7) = ?")
+        where.append("substr(utc_time(m.timestamp), 1, 7) = ?")
         args.append(month)
     sql = "SELECT m.id, m.agent_id, m.project_id, m.channel, m.timestamp, m.content, m.recall_count, m.locked FROM memories m"
     query = query.strip()
@@ -336,14 +360,14 @@ def memories(
         where.append("memories_fts MATCH ?")
         args.append('"' + query.replace('"', '""') + '"')
     elif query:
-        where.append("instr(lower(m.content), lower(?)) > 0")
+        where.append("instr(fold(m.content), fold(?)) > 0")
         args.append(query)
     if where:
         sql += " WHERE " + " AND ".join(where)
     total = conn.execute(f"SELECT count(*) FROM ({sql})", args).fetchone()[0]
     limit = max(1, min(int(limit), MAX_LIMIT))
     rows = conn.execute(
-        sql + " ORDER BY m.timestamp DESC, m.id DESC LIMIT ? OFFSET ?",
+        sql + " ORDER BY utc_time(m.timestamp) DESC, m.id DESC LIMIT ? OFFSET ?",
         [*args, limit, max(0, int(offset))],
     )
     return {
@@ -445,7 +469,7 @@ def search(
     p = parse_search(text)
     if sort not in SEARCH_SORTS:
         raise ValueError(f"sort is one of {', '.join(SEARCH_SORTS)}")
-    has = (lambda col: f"instr({col}, ?) > 0") if case else (lambda col: f"instr(lower({col}), lower(?)) > 0")
+    has = (lambda col: f"instr({col}, ?) > 0") if case else (lambda col: f"instr(fold({col}), fold(?)) > 0")
     where, args = [], []
     words: list[str] = list(p["terms"])
     for t in p["terms"]:
@@ -458,11 +482,11 @@ def search(
     for op, vals in p["ops"]:
         for v in vals if op != "line" else []:
             if op == "path":
-                where.append("instr(lower(m.agent_id || '/' || m.project_id || '/' || m.channel), lower(?)) > 0")
+                where.append("instr(fold(m.agent_id || '/' || m.project_id || '/' || m.channel), fold(?)) > 0")
             elif op == "agent":
-                where.append("instr(lower(m.agent_id), lower(?)) > 0")
+                where.append("instr(fold(m.agent_id), fold(?)) > 0")
             elif op == "month":
-                where.append("substr(m.timestamp, 1, length(?)) = ?")
+                where.append("substr(utc_time(m.timestamp), 1, length(?)) = ?")
                 args.append(v)
             elif op == "tag":
                 if not _has_table(conn, "entity_mentions"):
@@ -470,8 +494,8 @@ def search(
                     continue
                 where.append(
                     "('mem:' || m.id) IN (SELECT em.ref FROM entity_mentions em JOIN entities e ON e.id = em.entity_id "
-                    "WHERE instr(lower(e.name), lower(?)) > 0 OR em.entity_id IN "
-                    "(SELECT entity_id FROM entity_aliases WHERE instr(lower(alias), lower(?)) > 0))"
+                    "WHERE instr(fold(e.name), fold(?)) > 0 OR em.entity_id IN "
+                    "(SELECT entity_id FROM entity_aliases WHERE instr(fold(alias), fold(?)) > 0))"
                 )
                 args.append(v)
             args.append(v)
@@ -489,14 +513,16 @@ def search(
         elif name == "vector":
             where.append("m.embedding IS NOT NULL")
         elif name in ("project", "channel"):
-            where.append(f"m.{name} = ?")
+            # bug-823: the project is kept in project_id.
+            where.append({"project": "m.project_id = ?", "channel": "m.channel = ?"}[name])
             args.append(value)
-    order = {"new": "m.timestamp DESC, m.id DESC", "old": "m.timestamp, m.id", "recalled": "m.recall_count DESC, m.timestamp DESC, m.id DESC"}[sort]
-    sql = (
-        "SELECT m.id, m.agent_id, m.project_id, m.channel, m.timestamp, m.content, m.recall_count, m.locked FROM memories m"
-        + (" WHERE " + " AND ".join(where) if where else "")
-        + f" ORDER BY {order}"
-    )
+    order = {
+        "new": "utc_time(m.timestamp) DESC, m.id DESC",
+        "old": "utc_time(m.timestamp), m.id",
+        "recalled": "m.recall_count DESC, utc_time(m.timestamp) DESC, m.id DESC",
+    }[sort]
+    cols = "m.id, m.agent_id, m.project_id, m.channel, m.timestamp, m.content, m.recall_count, m.locked"
+    clause = " WHERE " + " AND ".join(where) if where else ""
     fold = (lambda s: s) if case else (lambda s: s.lower())
 
     def on_one_line(content: str) -> bool:
@@ -505,11 +531,26 @@ def search(
 
     if not where and not lines:
         return {"total": 0, "rows": []}
-    found = conn.execute(sql, args).fetchall()
-    if lines:
-        found = [r for r in found if on_one_line(r["content"])]
     limit = max(1, min(int(limit), MAX_LIMIT))
-    page = found[max(0, int(offset)) : max(0, int(offset)) + limit]
+    offset = max(0, int(offset))
+    if lines:
+        # bug-824: line: is judged in Python, one row at a time, keeping only the
+        # page's ids, so a request never holds more than a page of text.
+        total, ids = 0, []
+        for r in conn.execute(f"SELECT m.id, m.content FROM memories m{clause} ORDER BY {order}", args):
+            if on_one_line(r["content"]):
+                if offset <= total < offset + limit:
+                    ids.append(r["id"])
+                total += 1
+        page = conn.execute(
+            f"SELECT {cols} FROM memories m WHERE m.id IN ({','.join('?' * len(ids))}) ORDER BY {order}", ids
+        ).fetchall()
+    else:
+        # bug-824: counted and paged in SQL, so only the page's text is read.
+        total = conn.execute(f"SELECT count(*) FROM memories m{clause}", args).fetchone()[0]
+        page = conn.execute(
+            f"SELECT {cols} FROM memories m{clause} ORDER BY {order} LIMIT ? OFFSET ?", [*args, limit, offset]
+        ).fetchall()
     needles = [fold(w) for w in words if w]
 
     def matched(content: str) -> tuple[int, list[str]]:
@@ -543,7 +584,7 @@ def search(
                 "locked": bool(r["locked"]),
             }
         )
-    return {"total": len(found), "rows": rows}
+    return {"total": total, "rows": rows}
 
 
 # ---- Episodes: the summary an agent stores when a conversation ends
@@ -555,7 +596,7 @@ def _fts_or_substring(query: str, fts: str, alias: str, columns: tuple[str, ...]
         return "", [], []
     if len(query) >= FTS_MIN_CHARS:
         return f" JOIN {fts} f ON f.rowid = {alias}.id", [f"{fts} MATCH ?"], ['"' + query.replace('"', '""') + '"']
-    either = " OR ".join(f"instr(lower({alias}.{c}), lower(?)) > 0" for c in columns)
+    either = " OR ".join(f"instr(fold({alias}.{c}), fold(?)) > 0" for c in columns)
     return "", [f"({either})"], [query] * len(columns)
 
 
@@ -575,7 +616,7 @@ def episodes(conn: sqlite3.Connection, query: str = "", limit: int = 50, offset:
     limit = max(1, min(int(limit), MAX_LIMIT))
     # When a conversation took place, else when it was stored.
     rows = conn.execute(
-        sql + " ORDER BY coalesce(e.end_time, e.start_time, e.created_at) DESC, e.id DESC LIMIT ? OFFSET ?",
+        sql + " ORDER BY utc_time(coalesce(e.end_time, e.start_time, e.created_at)) DESC, e.id DESC LIMIT ? OFFSET ?",
         [*args, limit, max(0, int(offset))],
     )
     return {
@@ -638,8 +679,8 @@ def entities(conn: sqlite3.Connection, query: str = "", limit: int = 50, offset:
     query = query.strip()
     if query:
         where.append(
-            "(instr(lower(e.name), lower(?)) > 0 OR e.id IN "
-            "(SELECT entity_id FROM entity_aliases WHERE instr(lower(alias), lower(?)) > 0))"
+            "(instr(fold(e.name), fold(?)) > 0 OR e.id IN "
+            "(SELECT entity_id FROM entity_aliases WHERE instr(fold(alias), fold(?)) > 0))"
         )
         args += [query, query]
     sql = (

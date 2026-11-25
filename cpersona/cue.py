@@ -185,6 +185,10 @@ def period(
         end = cue.before if cue.before is not None else now
         if start is None:
             return None
+        if cue.after is None and end <= start:
+            # bug-817: the scope holds nothing before `before`. The period stays on
+            # the cue's own end, empty, instead of moving to the oldest record.
+            start = _earlier(end, timedelta(seconds=1))
     if end <= start:
         # A one-instant scope (a single record) still has a period around it.
         end = _later(start, timedelta(seconds=1))

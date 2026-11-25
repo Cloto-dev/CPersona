@@ -159,8 +159,16 @@ def get_context() -> OperatingContext | None:
         return None
     try:
         stat = os.stat(path)
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         _cached_key, _cached_context, _cached_error = None, None, None
+        return None
+    except OSError as e:
+        # bug-830: only an absent file is silently dormant. A path that cannot be
+        # stat'ed (an unsearchable directory, a symlink loop) is unusable: dormant
+        # too, but the error is kept so check_health reports it.
+        if _cached_error != str(e):  # every call re-stats; warn once per cause
+            logger.warning("operating context %s unusable, feature dormant: %s", path, e)
+        _cached_key, _cached_context, _cached_error = None, None, str(e)
         return None
     key = (path, stat.st_mtime_ns)
     if key == _cached_key:
@@ -202,7 +210,9 @@ def load_state() -> dict:
     return {
         "enabled": True,
         "path": path,
-        "present": os.path.exists(path),
+        # bug-830: os.path.exists is False when the path cannot be stat'ed, so a
+        # retained error also counts as present (get_context clears it on absence).
+        "present": os.path.exists(path) or _cached_error is not None,
         "parse_error": _cached_error,
         "summary_len": len(context.summary) if context is not None else 0,
     }

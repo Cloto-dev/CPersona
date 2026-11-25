@@ -98,13 +98,21 @@ def _signature(conn) -> tuple:
     )
 
 
+def _expire(cache: dict, now: float) -> None:
+    """Drop the entries older than CACHE_SECONDS (bug-819: they were never released)."""
+    for k in [k for k, v in cache.items() if now - v[1] >= CACHE_SECONDS]:
+        del cache[k]
+
+
 def _held(conn, db_path: str) -> dict | None:
     """Every vector of the store by width, from the cache when it is still the same store."""
     key = os.path.abspath(db_path)
     sig = _signature(conn)
-    if sig[3] > CACHE_MAX_BYTES:
-        return None
     with _lock:
+        _expire(_cache, time.monotonic())
+        if sig[3] > CACHE_MAX_BYTES:
+            _cache.pop(key, None)  # bug-819: a store grown past the cap keeps no old copy
+            return None
         hit = _cache.get(key)
         if hit and hit[0] == sig[:3] and time.monotonic() - hit[1] < CACHE_SECONDS:
             return hit[2]
@@ -182,22 +190,30 @@ def _nearest_across(conn, db_path, seeds: list[int], width: int, seed_vecs) -> d
     }
 
 
+#: Ids asked for at a time, under SQLite's oldest limit on bound parameters.
+_ID_BATCH = 900
+
+
 def _declared(conn, mem_ids: set[int]) -> tuple[list[dict], list[dict]]:
     """Entity points and declared lines that touch the shown memories."""
     if not mem_ids or not store._has_table(conn, "entity_mentions"):
         return [], []
+    # bug-820: every read below is batched, under SQLite's limit on bound parameters.
     refs = [f"mem:{i}" for i in sorted(mem_ids)]
-    marks = ",".join("?" * len(refs))
-    mentions = conn.execute(
-        f"SELECT entity_id, ref FROM entity_mentions WHERE ref IN ({marks})", refs
-    ).fetchall()
+    mentions = []
+    for at in range(0, len(refs), _ID_BATCH):
+        part = refs[at : at + _ID_BATCH]
+        mentions += conn.execute(
+            f"SELECT entity_id, ref FROM entity_mentions WHERE ref IN ({','.join('?' * len(part))})",
+            part,
+        ).fetchall()
     ent_ids = sorted({m[0] for m in mentions})
     entities = []
-    if ent_ids:
-        emarks = ",".join("?" * len(ent_ids))
-        entities = conn.execute(
-            f"SELECT id, name, agent_id FROM entities WHERE id IN ({emarks}) ORDER BY id",
-            ent_ids,
+    for at in range(0, len(ent_ids), _ID_BATCH):
+        part = ent_ids[at : at + _ID_BATCH]
+        entities += conn.execute(
+            f"SELECT id, name, agent_id FROM entities WHERE id IN ({','.join('?' * len(part))}) ORDER BY id",
+            part,
         ).fetchall()
     known = {e[0] for e in entities}
     links = [
@@ -207,14 +223,17 @@ def _declared(conn, mem_ids: set[int]) -> tuple[list[dict], list[dict]]:
     ]
     ends = {("entity", i) for i in known} | {("mem", i) for i in mem_ids}
     # Through the subject index: a relation is drawn only when both of its ends are.
-    ent_list, mem_list = sorted(known), sorted(mem_ids)
-    for r in conn.execute(
-        "SELECT subject_kind, subject_id, predicate, object_kind, object_id FROM relations "
-        f"WHERE (subject_kind = 'entity' AND subject_id IN ({','.join('?' * len(ent_list))})) "
-        f"OR (subject_kind = 'mem' AND subject_id IN ({','.join('?' * len(mem_list))})) "
-        "ORDER BY id",
-        [*ent_list, *mem_list],
-    ):
+    rels = []
+    for kind, subjects in (("entity", sorted(known)), ("mem", sorted(mem_ids))):
+        for at in range(0, len(subjects), _ID_BATCH):
+            part = subjects[at : at + _ID_BATCH]
+            rels += conn.execute(
+                "SELECT id, subject_kind, subject_id, predicate, object_kind, object_id FROM relations "
+                f"WHERE subject_kind = ? AND subject_id IN ({','.join('?' * len(part))})",
+                [kind, *part],
+            ).fetchall()
+    rels.sort(key=lambda r: r[0])  # in declaration order, as one query read them
+    for _rid, *r in rels:
         a, b = (r[0], r[1]), (r[3], r[4])
         if a in ends and b in ends:
             name = {"entity": "e", "mem": "m"}
@@ -268,13 +287,14 @@ def folder(conn, path: list[str] | None = None, month: str = "") -> dict:
     """The memories of a folder and month (the newest MAX_NODES, when set), joined as above."""
     where, args = store._path_where(path or [])
     if month:
-        where.append("substr(timestamp, 1, 7) = ?")
+        # bug-821: the month of the UTC instant, as the memory list filters it.
+        where.append("substr(utc_time(timestamp), 1, 7) = ?")
         args.append(month)
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(f"SELECT count(*) FROM memories{clause}", args).fetchone()[0]
     rows = conn.execute(
         "SELECT id, agent_id, timestamp, embedding FROM memories"
-        f"{clause} ORDER BY timestamp DESC, id DESC LIMIT ?",
+        f"{clause} ORDER BY utc_time(timestamp) DESC, id DESC LIMIT ?",
         [*args, -1 if MAX_NODES is None else MAX_NODES],
     ).fetchall()
     return _drawn(conn, rows, total, "folder")
@@ -300,31 +320,28 @@ def _drawn(conn, rows, total: int, view: str, **extra) -> dict:
     }
 
 
-#: Ids asked for at a time, under SQLite's oldest limit on bound parameters.
-_ID_BATCH = 900
-
-
 def members(conn, ids: list[int], view: str, **extra) -> dict:
     """These memories (the newest MAX_NODES, when set), drawn as a folder is."""
     dated = []
     for at in range(0, len(ids), _ID_BATCH):
         part = ids[at : at + _ID_BATCH]
         dated += conn.execute(
-            f"SELECT id, timestamp FROM memories WHERE id IN ({','.join('?' * len(part))})",
+            f"SELECT id, utc_time(timestamp) FROM memories WHERE id IN ({','.join('?' * len(part))})",
             part,
         ).fetchall()
-    dated.sort(key=lambda r: (r[1], r[0]), reverse=True)
+    # bug-821: newest by the instant; a time that cannot be read sorts last.
+    dated.sort(key=lambda r: (r[1] or "", r[0]), reverse=True)
     keep = [r[0] for r in dated[:MAX_NODES]]
     rows = []
     # Batched like the ids above: undrawn by a cap, a group can hold thousands.
     for at in range(0, len(keep), _ID_BATCH):
         part = keep[at : at + _ID_BATCH]
         rows += conn.execute(
-            "SELECT id, agent_id, timestamp, embedding FROM memories "
+            "SELECT id, agent_id, timestamp, embedding, utc_time(timestamp) AS utc FROM memories "
             f"WHERE id IN ({','.join('?' * len(part))})",
             part,
         ).fetchall()
-    rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
+    rows.sort(key=lambda r: (r["utc"] or "", r["id"]), reverse=True)
     return _drawn(conn, rows, len(dated), view, **extra)
 
 
@@ -385,7 +402,7 @@ def around(conn, db_path: str, memory_id: int, hops: int = DEFAULT_HOPS) -> dict
     marks = ",".join("?" * len(reached))
     rows = conn.execute(
         f"SELECT id, agent_id, timestamp FROM memories WHERE id IN ({marks}) "
-        "ORDER BY timestamp DESC, id DESC",
+        "ORDER BY utc_time(timestamp) DESC, id DESC",
         list(reached),
     ).fetchall()
     return {

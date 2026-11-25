@@ -771,7 +771,9 @@ async def follow_rechannelled(db, moved: dict[int, tuple[str, str]], *, from_cha
                                  (relation["object_kind"], relation["object_id"])):
                 if kind == "entity":
                     take(channel, end_id)
-            per_channel[channel].relations.append({**relation, "channel": channel})
+            # bug-814: a relation between two records carries no entity, so take()
+            # may not have created this channel's graph yet.
+            per_channel.setdefault(channel, Graph()).relations.append({**relation, "channel": channel})
             gone_relations.append(relation["id"])
         if not per_channel:
             continue
@@ -1151,6 +1153,37 @@ async def _mentioning_records(
     return found[:limit], total
 
 
+async def _readable_refs(
+    db, refs, *, agent_id: str, project_id: str | None, channel: str, source_id: str
+) -> set[str]:
+    """The refs among `refs` that name a record the call could read directly.
+
+    Readable as in `_mentioning_records`: this agent's, in the call's project and
+    channel, matching `source_id`, and an episode only where recall would return one.
+    """
+    ids: dict[str, list[int]] = {"mem": [], "ep": []}
+    for ref in refs:
+        parsed = parse_ref(ref)
+        if parsed is not None and canonical_ref(ref) == ref:
+            ids[parsed[0]].append(parsed[1])
+    iso = isolation_where(agent_id=agent_id, project_id=project_id, channel=channel, alias="t")
+    readable: set[str] = set()
+    for kind, row_ids in ids.items():
+        if not row_ids or (kind == "ep" and source_id and not channel):
+            continue
+        # Episodes carry no source; where they are readable at all, the filter is off.
+        src = source_id_where(source_id if kind == "mem" else "", alias="t")
+        for offset in range(0, len(row_ids), 500):
+            batch = row_ids[offset:offset + 500]
+            marks = ",".join("?" for _ in batch)
+            rows = await db.execute_fetchall(
+                f"SELECT t.id FROM {_TABLE[kind]} t WHERE t.id IN ({marks}) AND {iso.clause}{src.and_clause}",
+                (*batch, *iso.params, *src.params),
+            )
+            readable.update(f"{kind}:{r[0]}" for r in rows)
+    return readable
+
+
 async def walk_graph(
     agent_id: str,
     start_refs: list[str],
@@ -1322,12 +1355,18 @@ async def traverse(
                 mentions_cut = True
             response["entities"].append(entry)
 
+        anchors = {edges[r][4] for r in edges if edges[r][4] and edges[r][0] in kept_set and edges[r][1] in kept_set}
+        readable_anchors = await _readable_refs(
+            db, anchors, agent_id=agent_id, project_id=project_id, channel=channel, source_id=source_id
+        )
+
     for rel_id in sorted(edges, key=lambda r: recency[r]):
         subject, obj, predicate, declared_at, anchor, declared_by = edges[rel_id]
         if subject in kept_set and obj in kept_set:
             relation: dict = {"id": rel_id, "subject": subject, "predicate": predicate, "object": obj,
                               "declared_by": declared_by, "declared_at": declared_at}
-            if anchor:
+            # bug-920: the anchor is a record ref, listed only when this call could read it.
+            if anchor in readable_anchors:
                 relation["anchor_ref"] = anchor
             response["relations"].append(relation)
 

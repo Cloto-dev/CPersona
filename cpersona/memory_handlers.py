@@ -267,12 +267,42 @@ async def _store_dedup_answer(
         # this caller's copy cannot be written beside the other source's.
         # Refused, not skipped: nothing was stored under this source, and a
         # skip would have reported the write as harmlessly done.
-        return _store_rejected(
-            "this content is already stored under a different source id in the "
-            "same agent, project and channel; one copy is kept per bucket, so it "
-            "was not stored for this source"
-        )
+        return _store_rejected(_OTHER_SOURCE_IN_BUCKET)
     return None
+
+
+_OTHER_SOURCE_IN_BUCKET = (
+    "this content is already stored under a different source id in the "
+    "same agent, project and channel; one copy is kept per bucket, so it "
+    "was not stored for this source"
+)
+
+
+async def _unique_index_answer(
+    db, agent_id: str, project_id: str, channel: str, msg_id: str, content: str, own_source_id: str | None
+) -> dict:
+    """What a store whose INSERT the unique indexes ignored is answered with.
+
+    bug-825: decided as the probe decides, from the row the insert collided
+    with. Run inside the write transaction, so that row cannot change under it.
+    A msg_id collision is a skip whatever its source; a content collision under
+    another source id is refused, as the sequential probe refuses it. Both skips
+    stay id-less, as documented for this branch.
+    """
+    if msg_id:
+        row = await db.execute_fetchall(
+            "SELECT 1 FROM memories WHERE agent_id = ? AND project_id = ? AND msg_id = ? LIMIT 1",
+            (agent_id, project_id, msg_id),
+        )
+        if row:
+            return _store_skipped("duplicate (unique index)")
+    row = await db.execute_fetchall(
+        "SELECT source FROM memories WHERE agent_id = ? AND project_id = ? AND channel = ? AND content = ? LIMIT 1",
+        (agent_id, project_id, channel, content),
+    )
+    if row and _declared_source_id(row[0][0]) != own_source_id:
+        return _store_rejected(_OTHER_SOURCE_IN_BUCKET)
+    return _store_skipped("duplicate (unique index)")
 
 
 async def do_store(
@@ -462,17 +492,19 @@ async def do_store(
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_id, project_id, msg_id, content, source, timestamp, metadata, embedding_blob, embedding_label, channel),
             )
+            if cursor.rowcount == 0:
+                # v2.5.2 additive asymmetry: the msg_id / content branches echo the
+                # existing row's id from their SELECT probe. The OR IGNORE fallback
+                # fires only when a concurrent writer slipped between those probes
+                # and this INSERT (bug-010 TOCTOU), and its skip stays id-less as
+                # documented. Callers keying on `id` MUST treat it as optional
+                # under `result="skipped"`. bug-825: the source is still checked
+                # here, under the write lock, as the probe checks it.
+                answer = await _unique_index_answer(
+                    db, agent_id, project_id, channel, msg_id, content, own_source_id
+                )
     if answer is not None:
         return answer
-    if cursor.rowcount == 0:
-        # v2.5.2 additive asymmetry: the msg_id / content branches echo the
-        # existing row's id from their SELECT probe. The OR IGNORE fallback fires
-        # only when a concurrent writer slipped between those probes and this
-        # INSERT (bug-010 TOCTOU), and a fresh SELECT to recover the id would
-        # re-enter the same TOCTOU seam we deliberately closed — so this branch
-        # stays id-less by design. Callers keying on `id` MUST treat it as
-        # optional under `result="skipped"`.
-        return _store_skipped("duplicate (unique index)")
     # lastrowid comes from this cursor's INSERT, so a store interleaved on the
     # shared connection cannot shift it (bug-010: the previous max-id re-SELECT
     # could bind a different row's id to the remote vector entry, making recall
@@ -713,6 +745,16 @@ class _Beside:
     def cancel(self) -> None:
         self._task.cancel()
 
+    async def settle(self) -> None:
+        """Wait for the arm to end and drop its outcome (bug-924).
+
+        For a caller that raises before reading the arm: the arm's reads finish while
+        the caller's loop still runs, instead of answering on a loop that may close."""
+        try:
+            await self._task
+        except BaseException:  # noqa: BLE001 - the caller re-raises its own error
+            pass
+
 
 class _QueryVectorSlot(list):
     """``query_vec_out`` that also says when the query vector arrives.
@@ -923,12 +965,16 @@ async def _recall_rrf(
         # fusion at a score of 0, the gate here reads their cosine and let them
         # through, and they filled the tail of any answer the near and lexical
         # lists left short of `limit`.
-        vector_results = await _search_vector(
-            db, agent_id, query, depth, min_similarity=rrf_min_sim,
-            channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_results if PRIOR_FAR_WEIGHT > 0 else None,
-            query_vec_out=query_vec_seen,
-        )
+        try:
+            vector_results = await _search_vector(
+                db, agent_id, query, depth, min_similarity=rrf_min_sim,
+                channel=channel, project_id=project_id, source_id=source_id,
+                far_out=far_results if PRIOR_FAR_WEIGHT > 0 else None,
+                query_vec_out=query_vec_seen,
+            )
+        except BaseException:
+            await lexical.settle()  # bug-924: no keyword read left running past the recall
+            raise
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -1081,12 +1127,16 @@ async def _recall_rsf(
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # bug-442: as under rrf, a far channel weighted 0 is not read at all.
-        near_rows = await _search_vector(
-            db, agent_id, query, depth, min_similarity=rsf_min_sim,
-            channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_rows if PRIOR_FAR_WEIGHT > 0 else None,
-            query_vec_out=query_vec_out,
-        )
+        try:
+            near_rows = await _search_vector(
+                db, agent_id, query, depth, min_similarity=rsf_min_sim,
+                channel=channel, project_id=project_id, source_id=source_id,
+                far_out=far_rows if PRIOR_FAR_WEIGHT > 0 else None,
+                query_vec_out=query_vec_out,
+            )
+        except BaseException:
+            await lexical.settle()  # bug-924
+            raise
         for row in near_rows:
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -2535,6 +2585,7 @@ async def do_recall(
     depth_seats: int = 0,
     providers_: providers.Providers | None = None,
     query_vec_out: list | None = None,
+    gate_out: dict | None = None,
 ) -> dict:
     """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
 
@@ -2563,6 +2614,11 @@ async def do_recall(
     read, so both use one set; a list the recall fills with the query vector it
     embedded, so the caller need not embed the query again; and a cue the caller
     already read, which is not read a second time. Library arguments, not tool ones.
+
+    ``gate_out`` is a dict the recall sets ``refused_all`` in when the quality gate
+    was handed rows and refused every one (bug-832), so a caller can tell a pool
+    the gate emptied from one nothing reached without asking for the trace. A
+    library argument, not a tool one; nothing is added to the response.
     """
     # Half of a surrogate pair cannot be bound as text. Whether a recall survived
     # one depended on which arm reached SQLite with it first, so it is refused
@@ -2602,6 +2658,7 @@ async def do_recall(
         **({"extra_keyword_seats": extra_keyword_seats} if extra_keyword_seats else {}),
         **({"depth_seats": depth_seats} if depth_seats else {}),
         **({"query_vec_out_": query_vec_out} if query_vec_out is not None else {}),
+        **({"gate_out_": gate_out} if gate_out is not None else {}),
     )
     if not trace:
         return await _recall_reading_keywords_once(agent_id, query, limit, **kwargs)
@@ -2694,6 +2751,7 @@ async def _do_recall(
     extra_keyword_seats: int = 0,
     depth_seats: int = 0,
     query_vec_out_: list | None = None,
+    gate_out_: dict | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -3013,6 +3071,12 @@ async def _do_recall(
         gate_signal=gate_signal,
         pure_recency=pure_recency,
     )
+    # bug-832: rows were found and the gate refused all of them. Said to a caller
+    # that asked (reconstruct's shortfall reason), whether or not the rescue fires.
+    if gate_out_ is not None and any(r.get("id") != -1 for r in pre_gate) and not any(
+        r.get("id") != -1 for r in results
+    ):
+        gate_out_["refused_all"] = True
 
     # bug-183 (2.5.2): the gate is a filter with no floor, so a query whose every hit is
     # lexical-but-semantically-distant (identifier/hash lookup, cross-lingual, a needle in
