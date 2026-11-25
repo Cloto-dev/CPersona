@@ -621,8 +621,8 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   and shows the lines that matched. `"a phrase"` matches as written and `-word`
   leaves out memories holding the word. `path:` matches agent/project/channel,
   `agent:` the agent, `tag:` an entity's name or alias that the memory mentions,
-  `line:` words that must share a line, and `month:` the start of the timestamp
-  (`month:2026-10`). `[locked]`, `[recalled]` and `[vector]` keep memories that
+  `line:` words that must share a line, and `month:` the start of the record's
+  time in UTC (`month:2026-10`). `[locked]`, `[recalled]` and `[vector]` keep memories that
   are locked, have been recalled, or hold a vector; `[project:x]` and
   `[channel:x]` keep that exact project or channel. Aa matches case, and the
   panel's own settings sort the results by newest, oldest or most recalled.
