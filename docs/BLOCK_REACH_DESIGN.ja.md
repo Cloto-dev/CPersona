@@ -1,4 +1,4 @@
-<!-- i18n-source: docs/BLOCK_REACH_DESIGN.md@blob:cb6ec339c205076a11a402de74991f369b2c3657 -->
+<!-- i18n-source: docs/BLOCK_REACH_DESIGN.md@blob:cc0c9a4a2c696d6a0521a9ac65449f640d2dac06 -->
 
 # Block による到達 — 設計 { #block-reach-design }
 

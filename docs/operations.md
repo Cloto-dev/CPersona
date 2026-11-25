@@ -598,7 +598,11 @@ cpersona dashboard --install-shortcut              # a desktop shortcut that ope
   header naming the loopback address, and only to GET. Asking a running dashboard
   for a code, or to stop, takes a proof made with the store's key file, which only
   its owner can read. Another user of the same machine can reach the port but not
-  the data. `--no-browser` prints the address without opening it.
+  the data. `--no-browser` prints the address without opening it. The browser is
+  not started with that address on its command line, which other accounts can
+  read: it is given a page only its owner can read, which sends it on. A browser
+  installed as a snap or flatpak on Linux keeps its own temporary folder and may
+  not find that page; open the printed address instead.
 - **How it is laid out**: two layouts, chosen in the settings (the gear at the
   foot of the side panel) and kept in the browser. *Standard*, the default, is
   one side panel of the views, grouped under headings (the overview; records:
