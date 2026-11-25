@@ -63,3 +63,38 @@ async def test_bug_923_closing_skips_a_reader_whose_worker_ended():
     finally:
         if database._bg_read_db is first:
             database._bg_read_db, database._bg_read_db_owner = None, None
+
+
+# ---- bug-924: a recall whose vector arm raises waits for the keyword arm it started
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fusion", ["_recall_rrf", "_recall_rsf"])
+async def test_bug_924_a_failed_vector_arm_leaves_no_keyword_read_running(fusion, monkeypatch):
+    from cpersona import memory_handlers, vector
+
+    db = await database.get_db()
+    await db.execute(
+        "INSERT INTO memories (agent_id, content, timestamp) VALUES ('a924', 'alpha beta gamma', '2026-01-01T00:00:00+00:00')"
+    )
+    await db.commit()
+    finished = []
+    real = memory_handlers._lexical_arms
+
+    async def slow_arms(*args, **kwargs):
+        await asyncio.sleep(0.2)  # still reading when the vector arm raises
+        out = await real(*args, **kwargs)
+        finished.append(True)
+        return out
+
+    monkeypatch.setattr(memory_handlers, "_lexical_arms", slow_arms)
+    monkeypatch.setattr(vector, "_embedding_client", object())  # the vector arm raises
+    before = asyncio.all_tasks()
+    try:
+        with pytest.raises(AttributeError):
+            await getattr(memory_handlers, fusion)(db, "a924", "alpha", 10, False)
+        left = [t for t in asyncio.all_tasks() - before if not t.done()]
+        assert not left, f"the recall raised with its keyword arm still running: {left}"
+        assert finished == [True]
+    finally:
+        await db.execute("DELETE FROM memories WHERE agent_id = 'a924'")
+        await db.commit()

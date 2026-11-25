@@ -14092,6 +14092,22 @@
       "note": "Found while the 2.6.18a2 fixes ran in CI: the calibration tests timed out on GitHub's x86_64 runners and, deterministically, under x86_64 emulation, never on the development machines. A dump of every task showed calibration waiting on the background reader, whose worker thread had ended.",
       "fix_note": "The request, background and side reader getters in cpersona/database.py replace a cached reader whose worker thread has ended (_serving), and do not await the close of such a reader. tests/test_2618a2_bug923.py ends a reader's worker the way a closed loop does and requires a working replacement; removing the liveness check turns all three cases red with 'the reader with no worker was handed out again'. close_db() also drops such a connection instead of awaiting its close(), which never returns; test_bug_923_closing_skips_a_reader_whose_worker_ended requires it to return within five seconds and fails when the close is awaited again.",
       "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-924",
+      "summary": "(LOW) A recall whose vector arm raised left its keyword arms running after it returned. The rrf and rsf fusions start the keyword arms beside the vector arm and read them after it; when the vector search raised (an embedding backend fault, or a test's stand-in client), the exception propagated and the keyword arms kept reading on their own, with nothing left to read their outcome. A caller that caught the error and finished, such as threshold calibration, returned while those reads were still in flight; when the caller's event loop then closed, the read could no longer be answered, the reader's worker thread ended (bug-923), and the test run's cleanup waited forever.",
+      "severity": "LOW",
+      "discovered": "2026-11-26T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/memory_handlers.py",
+      "pattern": "async def settle\\(self\\) -> None:",
+      "expected": "present",
+      "status": "fixed",
+      "category": "concurrency",
+      "fix_sketch": "When the vector search raises, wait for the keyword arm to end before re-raising, so no read the recall started outlives it.",
+      "note": "Found while the 2.6.18a2 fixes ran in CI: the mutation-proof shards that stop at a caught calibration mutation hung on GitHub's x86_64 runners, and under x86_64 emulation the run hung in cleanup after the failed calibration's recall.",
+      "fix_note": "_Beside.settle() waits for an arm and drops its outcome; _recall_rrf and _recall_rsf call it on the keyword arm when the vector search raises, then re-raise. tests/test_2618a2_bug923.py::test_bug_924_a_failed_vector_arm_leaves_no_keyword_read_running slows the keyword arm and requires no task to be left running when the recall raises; dropping the settle() call fails it with the keyword arm still pending.",
+      "fixed_in": "2.6.18a2"
     }
   ]
 }

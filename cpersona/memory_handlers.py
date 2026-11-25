@@ -745,6 +745,16 @@ class _Beside:
     def cancel(self) -> None:
         self._task.cancel()
 
+    async def settle(self) -> None:
+        """Wait for the arm to end and drop its outcome (bug-924).
+
+        For a caller that raises before reading the arm: the arm's reads finish while
+        the caller's loop still runs, instead of answering on a loop that may close."""
+        try:
+            await self._task
+        except BaseException:  # noqa: BLE001 - the caller re-raises its own error
+            pass
+
 
 class _QueryVectorSlot(list):
     """``query_vec_out`` that also says when the query vector arrives.
@@ -955,12 +965,16 @@ async def _recall_rrf(
         # fusion at a score of 0, the gate here reads their cosine and let them
         # through, and they filled the tail of any answer the near and lexical
         # lists left short of `limit`.
-        vector_results = await _search_vector(
-            db, agent_id, query, depth, min_similarity=rrf_min_sim,
-            channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_results if PRIOR_FAR_WEIGHT > 0 else None,
-            query_vec_out=query_vec_seen,
-        )
+        try:
+            vector_results = await _search_vector(
+                db, agent_id, query, depth, min_similarity=rrf_min_sim,
+                channel=channel, project_id=project_id, source_id=source_id,
+                far_out=far_results if PRIOR_FAR_WEIGHT > 0 else None,
+                query_vec_out=query_vec_seen,
+            )
+        except BaseException:
+            await lexical.settle()  # bug-924: no keyword read left running past the recall
+            raise
         for rank, row in enumerate(vector_results):
             if _content_excluded(row.get("content", ""), _excl):
                 continue
@@ -1113,12 +1127,16 @@ async def _recall_rsf(
     rsf_min_sim = vector._get_vector_threshold(agent_id) * RRF_THRESHOLD_FACTOR
     if vector._embedding_client:
         # bug-442: as under rrf, a far channel weighted 0 is not read at all.
-        near_rows = await _search_vector(
-            db, agent_id, query, depth, min_similarity=rsf_min_sim,
-            channel=channel, project_id=project_id, source_id=source_id,
-            far_out=far_rows if PRIOR_FAR_WEIGHT > 0 else None,
-            query_vec_out=query_vec_out,
-        )
+        try:
+            near_rows = await _search_vector(
+                db, agent_id, query, depth, min_similarity=rsf_min_sim,
+                channel=channel, project_id=project_id, source_id=source_id,
+                far_out=far_rows if PRIOR_FAR_WEIGHT > 0 else None,
+                query_vec_out=query_vec_out,
+            )
+        except BaseException:
+            await lexical.settle()  # bug-924
+            raise
         for row in near_rows:
             if _content_excluded(row.get("content", ""), _excl):
                 continue
