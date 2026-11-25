@@ -14079,7 +14079,7 @@
     },
     {
       "id": "bug-923",
-      "summary": "(LOW) A cached read connection could outlive its worker thread and then hang every read sent to it. aiosqlite answers a call on the event loop that made it; when that loop has closed before the answer arrives, the worker raises while answering and its thread ends, but the connection still reports itself open. The request, background and side read connections are cached per write connection and were handed out again in that state, so every later read on them was queued to no thread and waited forever. It showed as calibration tests that hung on slower CI machines after an earlier test's loop closed with a read in flight; a host that drives the library from several event loops could reach the same state.",
+      "summary": "(LOW) A cached read connection could outlive its worker thread and then hang every read sent to it. aiosqlite answers a call on the event loop that made it; when that loop has closed before the answer arrives, the worker raises while answering and its thread ends, but the connection still reports itself open. The request, background and side read connections are cached per write connection and were handed out again in that state, so every later read on them was queued to no thread and waited forever, and so did closing them. It showed as calibration tests that hung on slower CI machines after an earlier test's loop closed with a read in flight; a host that drives the library from several event loops could reach the same state.",
       "severity": "LOW",
       "discovered": "2026-11-26T00:00:00Z",
       "version": "2.6.18a1",
@@ -14090,7 +14090,7 @@
       "category": "concurrency",
       "fix_sketch": "Before handing out a cached reader, check that its worker thread is alive; replace one that is not, without awaiting its close, which would also wait forever.",
       "note": "Found while the 2.6.18a2 fixes ran in CI: the calibration tests timed out on GitHub's x86_64 runners and, deterministically, under x86_64 emulation, never on the development machines. A dump of every task showed calibration waiting on the background reader, whose worker thread had ended.",
-      "fix_note": "The request, background and side reader getters in cpersona/database.py replace a cached reader whose worker thread has ended (_serving), and do not await the close of such a reader. tests/test_2618a2_bug923.py ends a reader's worker the way a closed loop does and requires a working replacement; removing the liveness check turns all three cases red with 'the reader with no worker was handed out again'.",
+      "fix_note": "The request, background and side reader getters in cpersona/database.py replace a cached reader whose worker thread has ended (_serving), and do not await the close of such a reader. tests/test_2618a2_bug923.py ends a reader's worker the way a closed loop does and requires a working replacement; removing the liveness check turns all three cases red with 'the reader with no worker was handed out again'. close_db() also drops such a connection instead of awaiting its close(), which never returns; test_bug_923_closing_skips_a_reader_whose_worker_ended requires it to return within five seconds and fails when the close is awaited again.",
       "fixed_in": "2.6.18a2"
     }
   ]
