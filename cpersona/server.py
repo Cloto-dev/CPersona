@@ -3419,6 +3419,42 @@ def _peer_is_remote(peer: str) -> bool:
     return not address.is_loopback
 
 
+# The browser origins the CORS policy admits.
+_CORS_ORIGINS = ("https://claude.ai", "https://www.claude.ai")
+
+
+def _names_this_machine(value: str) -> bool:
+    """Does this Host value or Origin name localhost or a loopback address?"""
+    try:
+        name = urlparse(value if "//" in value else "//" + value).hostname
+    except ValueError:
+        return False
+    return bool(name) and not _peer_is_remote(name)
+
+
+def _foreign_browser_refusal(headers) -> JSONResponse | None:
+    """bug-919: the answer to a web page on another site, or None to serve.
+
+    Without authentication, Host and Origin are all that tell a local client
+    from a page that pointed its own host name at 127.0.0.1 (DNS rebinding): a
+    browser always sends Host, and sends Origin on a POST. A client that is not
+    a browser may send neither, and is served.
+    """
+    host = headers.get("host")
+    if host and not _names_this_machine(host):
+        return JSONResponse(
+            {"error": "Without authentication this server answers only requests addressed to localhost or a loopback address."},
+            status_code=421,
+        )
+    origin = headers.get("origin")
+    if origin and origin not in _CORS_ORIGINS and not _names_this_machine(origin):
+        return JSONResponse(
+            {"error": "Without authentication this server refuses requests from a web page on another site."},
+            status_code=403,
+        )
+    return None
+
+
 class _OAuthDiscovery(NamedTuple):
     """Resolved RFC 9728 discovery configuration (docs/OAUTH_DESIGN.md §7).
 
@@ -3992,6 +4028,11 @@ class BearerTokenMiddleware:
             return
         if not self.auth_token:
             self._warn_once_if_remotely_reached(request)
+            # bug-919: no credential to check, so refuse a foreign Host or Origin.
+            refusal = _foreign_browser_refusal(request.headers)
+            if refusal is not None:
+                await refusal(scope, receive, send)
+                return
         if self.auth_token:
             token = _bearer_credential(request.headers.get("authorization", ""))
             # A missing/malformed header yields an empty token, which must
@@ -4154,7 +4195,7 @@ def _build_http_app(auth_token: str, mcp_endpoint, lifespan, acl_config: "acl.Ac
         middleware=[
             Middleware(
                 CORSMiddleware,
-                allow_origins=["https://claude.ai", "https://www.claude.ai"],
+                allow_origins=list(_CORS_ORIGINS),
                 allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
                 allow_headers=[
                     "Authorization",
