@@ -56,10 +56,15 @@ def _forged_cookie(owner: str, text: str = KNOWN) -> str:
     return f"v1.{remote._b64(owner.encode())}.{until}.{remote._mac(key, owner, until, b'')}"
 
 
+# The port a proof is made for; the proof signs it (bug-914).
+PROOF_PORT = 48700
+
+
 def _forged_proof(text: str = KNOWN) -> str:
     key = hashlib.sha256(text.encode()).digest()
-    stamp = str(int(time.time()))
-    raw = hmac.new(key, b"\0".join((local._DOMAIN, b"code", stamp.encode())), hashlib.sha256).digest()
+    stamp = str(int(time.time() * local._STAMP_UNIT))
+    message = b"\0".join((local._DOMAIN, b"code", str(PROOF_PORT).encode(), stamp.encode()))
+    raw = hmac.new(key, message, hashlib.sha256).digest()
     return f"{stamp}.{base64.urlsafe_b64encode(raw).decode().rstrip('=')}"
 
 
@@ -70,7 +75,7 @@ def _tokenless_client():
 
 def _signs_with(store: str, text: str = KNOWN) -> tuple[bool, bool]:
     """Whether a cookie and a local proof made from ``text`` are accepted."""
-    return remote.session(_forged_cookie("v", text), store) is not None, local.proof_ok(store, "code", _forged_proof(text))
+    return remote.session(_forged_cookie("v", text), store) is not None, local.proof_ok(store, "code", _forged_proof(text), PROOF_PORT)
 
 
 # --- bug-916: what the key file is ------------------------------------------
@@ -137,7 +142,7 @@ def test_bug_916_control_sessions_under_a_refused_key_file_last_while_the_proces
     value = remote.redeem(remote.issue_link(), store)
     assert remote.session(value, store) is not None
     assert remote.session(value, store) is not None
-    assert local.proof_ok(store, "code", local.proof(store, "code"))
+    assert local.proof_ok(store, "code", local.proof(store, "code", PROOF_PORT), PROOF_PORT)
 
 
 @posix_modes
@@ -155,12 +160,12 @@ def test_bug_916_a_key_file_widened_while_the_server_runs_stops_signing(store, t
 
 def test_bug_915_deleting_the_key_file_ends_every_session_without_a_restart(store, tmp_path):
     value = remote.redeem(remote.issue_link(), store)
-    proof = local.proof(store, "code")
+    proof = local.proof(store, "code", PROOF_PORT)
     assert _key_file(tmp_path).exists()
     assert remote.session(value, store) is not None
     _key_file(tmp_path).unlink()  # nothing clears the process's state
     assert remote.session(value, store) is None, "a session outlived the deleted key file"
-    assert not local.proof_ok(store, "code", proof)
+    assert not local.proof_ok(store, "code", proof, PROOF_PORT)
     # A new key file is made, and a new link opens a session that keeps working.
     fresh = remote.redeem(remote.issue_link(), store)
     assert _key_file(tmp_path).exists()
