@@ -3166,13 +3166,16 @@ def _enable_declared_folders(registry) -> None:
             return await listing(arguments)
         if view != "folders":
             return error_response('view must be "folders"', path=arguments.get("path"), children=[])
-        path = arguments.get("path")
-        return await do_list_folder_view(
-            validate_str(arguments, "agent_id"),
-            validate_int(arguments, "limit", 100),
-            [] if path is None else path,
-            validate_str(arguments, "project_id", None),
-        )
+        path = [] if arguments.get("path") is None else arguments["path"]
+        agent_id = validate_str(arguments, "agent_id")
+        project_id = validate_str(arguments, "project_id", None)
+        # bug-835: the folder view passes the same gate as every other listing, so
+        # '@auto' resolves and the warning / resolved_project_id are echoed.
+        resolved, warning, error = operating_context.check_project_id(project_id, agent_id, write=False)
+        if error:
+            return {**_oc_reject(error), "path": path, "children": []}
+        result = await do_list_folder_view(agent_id, validate_int(arguments, "limit", 100), path, resolved)
+        return _oc_annotate(result, project_id, resolved, warning)
 
     registry._handlers["list_memories"] = list_memories
 
