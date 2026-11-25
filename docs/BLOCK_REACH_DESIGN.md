@@ -356,8 +356,10 @@ two independent sentences must be quoted apart, or a rule that always took the
 neighbour would satisfy every severance test by quoting the whole record.
 
 A range handed back this way carries the **revision** of the text its offsets
-were measured in. A block range validates itself, because the triggers drop a
-record's blocks when its text changes; a raw span has nothing equivalent, and
+were measured in, whether it names blocks, nodes or raw characters. The
+triggers drop a record's blocks and nodes when its text changes, but the
+rebuild that follows brings the same indices back over different characters,
+so an index cannot tell old text from new any more than a raw span can, and
 serving old offsets against new text would quote something the record never
 said. A record rewritten since is refused, not served.
 

@@ -1135,9 +1135,9 @@ def _block_quote(claim: _Candidate, entry: tuple, query_bits, query_grams: set[s
     complete evidence.
 
     The expand carries the revision of the text these offsets were measured in.
-    A block range validates itself (the triggers drop a record's blocks when its
-    text changes), and the revision is what makes that refusal legible rather
-    than leaving a caller to infer it from an empty answer.
+    The triggers drop a record's blocks when its text changes, but the rebuild
+    brings the same indices back over the new text, so the revision is what
+    refuses a rewritten record rather than serving it under the old range.
     """
     text, block_rows = entry
     ranked = rank_blocks(text, block_rows, query_bits, query_grams, query_vec)
@@ -1226,7 +1226,14 @@ def _quote(
             # The quote is the start of a node several times its length. Reading the
             # rest of that node is the cheapest next step, so it is handed over as the
             # argument get_contents takes, rather than left to be assembled from `node`.
-            quote["expand"] = {"ref": claim.ref, "node": quote["node"]["index"]}
+            # bug-831: with the revision of the text the node was cut from. A rewrite
+            # drops the record's nodes, but the rebuild brings the same indices back
+            # over different characters, so the index alone cannot refuse it.
+            quote["expand"] = {
+                "ref": claim.ref,
+                "node": quote["node"]["index"],
+                "revision": blocks.text_revision(text),
+            }
         else:
             quote["node_unavailable"] = NODES_NOT_CURRENT if claim.ref in not_current else NODES_NONE
     return quote
@@ -1744,6 +1751,9 @@ async def do_reconstruct(
     # bug-474 / bug-494: the candidate recall runs with this reconstruction's provider
     # set and the cue it already read, and hands back the query vector it embedded.
     recalled_vec: list = []
+    # bug-832: whether the gate refused every row it was handed. gate_fallback says so
+    # only where the rescue runs, which the default configuration never does.
+    gate_seen: dict = {}
     recall_result = await p.reconstruct_candidates.candidates(
         agent_id,
         query,
@@ -1764,8 +1774,10 @@ async def do_reconstruct(
         **({"time_cue": parsed_cue} if parsed_cue is not None else {}),
         providers_=p,
         query_vec_out=recalled_vec,
+        gate_out=gate_seen,
     )
     messages = recall_result.get("messages", [])
+    below_gate = bool(recall_result.get("gate_fallback") or gate_seen.get("refused_all"))
 
     # do_recall emits its ranked list reversed (most relevant LAST), so that a
     # consumer trimming a payload keeps the valuable end. Rank 0 is most relevant.
@@ -1821,7 +1833,7 @@ async def do_reconstruct(
         response["shortfall_reason"] = (
             "count_zero" if effective_count == 0 else (
                 SHORTFALL_BELOW_QUALITY_THRESHOLD
-                if recall_result.get("gate_fallback")
+                if below_gate
                 else SHORTFALL_NO_RELEVANT_EVIDENCE
             )
         )
@@ -2140,7 +2152,7 @@ async def do_reconstruct(
                 SHORTFALL_BUDGET_EXHAUSTED
                 if window_cut
                 else SHORTFALL_BELOW_QUALITY_THRESHOLD
-                if recall_result.get("gate_fallback")
+                if below_gate
                 else SHORTFALL_EXHAUSTED_CANDIDATES
             )
         return out, positions

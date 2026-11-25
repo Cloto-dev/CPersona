@@ -2567,6 +2567,7 @@ async def do_recall(
     depth_seats: int = 0,
     providers_: providers.Providers | None = None,
     query_vec_out: list | None = None,
+    gate_out: dict | None = None,
 ) -> dict:
     """Recall, optionally returning the recall trace (docs/RECALL_PROCESS_DESIGN.md §1).
 
@@ -2595,6 +2596,11 @@ async def do_recall(
     read, so both use one set; a list the recall fills with the query vector it
     embedded, so the caller need not embed the query again; and a cue the caller
     already read, which is not read a second time. Library arguments, not tool ones.
+
+    ``gate_out`` is a dict the recall sets ``refused_all`` in when the quality gate
+    was handed rows and refused every one (bug-832), so a caller can tell a pool
+    the gate emptied from one nothing reached without asking for the trace. A
+    library argument, not a tool one; nothing is added to the response.
     """
     # Half of a surrogate pair cannot be bound as text. Whether a recall survived
     # one depended on which arm reached SQLite with it first, so it is refused
@@ -2634,6 +2640,7 @@ async def do_recall(
         **({"extra_keyword_seats": extra_keyword_seats} if extra_keyword_seats else {}),
         **({"depth_seats": depth_seats} if depth_seats else {}),
         **({"query_vec_out_": query_vec_out} if query_vec_out is not None else {}),
+        **({"gate_out_": gate_out} if gate_out is not None else {}),
     )
     if not trace:
         return await _recall_reading_keywords_once(agent_id, query, limit, **kwargs)
@@ -2726,6 +2733,7 @@ async def _do_recall(
     extra_keyword_seats: int = 0,
     depth_seats: int = 0,
     query_vec_out_: list | None = None,
+    gate_out_: dict | None = None,
 ) -> dict:
     """Recall relevant memories using multi-strategy search.
 
@@ -3045,6 +3053,12 @@ async def _do_recall(
         gate_signal=gate_signal,
         pure_recency=pure_recency,
     )
+    # bug-832: rows were found and the gate refused all of them. Said to a caller
+    # that asked (reconstruct's shortfall reason), whether or not the rescue fires.
+    if gate_out_ is not None and any(r.get("id") != -1 for r in pre_gate) and not any(
+        r.get("id") != -1 for r in results
+    ):
+        gate_out_["refused_all"] = True
 
     # bug-183 (2.5.2): the gate is a filter with no floor, so a query whose every hit is
     # lexical-but-semantically-distant (identifier/hash lookup, cross-lingual, a needle in
