@@ -58,11 +58,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 # Mirror conftest's hermetic pins so the capture script gets the same environment
-# the suite runs under. setdefault is idempotent, so importing this from a test
-# (where conftest already ran) changes nothing.
-os.environ.setdefault("CPERSONA_DB_PATH", os.path.join(tempfile.mkdtemp(), "behaviour.db"))
-os.environ.setdefault("CPERSONA_EMBEDDING_MODE", "none")
-os.environ.setdefault("CPERSONA_OPERATING_CONTEXT", "off")
+# the suite runs under. bug-840: assigned, never setdefault, as in conftest. The
+# capture script runs without conftest, so setdefault kept a CPERSONA_DB_PATH
+# exported in the shell and observe()'s reset emptied that store. Under pytest
+# conftest has already pinned the same kind of scratch values, so this only
+# swaps one scratch database path for another.
+os.environ["CPERSONA_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "behaviour.db")
+os.environ["CPERSONA_EMBEDDING_MODE"] = "none"
+os.environ["CPERSONA_OPERATING_CONTEXT"] = "off"
 
 import numpy as np  # noqa: E402
 
