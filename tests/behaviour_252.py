@@ -629,12 +629,21 @@ _KEYS_ADDED_SINCE_GOLDEN = {
 # source's updated_at, as an import has since bug-223. The copied profile's other
 # columns, and every other row both scenarios record, are still compared.
 # Behaviour pinned in tests/test_2611a2_x04.py.
+#
+# ("corpus-nonfinite-recall-scan-shipping-default", ("result", "messages")) --
+# bug-836: the live scan let a NaN-scored row past the similarity floor, where it
+# displaced finite rows and then vanished from the answer; the index supplier
+# already dropped it at the floor. The scan now does the same, so this answer is
+# the one the -index- sibling recorded, and tests/test_2618a2_u05.py compares it
+# with that recorded answer exactly. Every other part of the scenario is still
+# compared here.
 _VALUES_CHANGED_SINCE_GOLDEN = {
     ("health-fix-repairs-warn", ("result", "issues")),
     ("corpus-nonfinite-recall-index", ("result", "built", "bytes")),
     ("corpus-nonfinite-recall-index-shipping-default", ("result", "built", "bytes")),
     ("merge-copy-skip", ("db", "profiles", 0, "updated_at")),
     ("merge-move", ("db", "profiles", 0, "updated_at")),
+    ("corpus-nonfinite-recall-scan-shipping-default", ("result", "messages")),
 }
 
 

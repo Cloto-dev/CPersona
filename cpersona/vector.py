@@ -80,9 +80,9 @@ def pack_for_storage(embedding: object) -> bytes | None:
     embeddings[0]``, which is a truthiness test: it accepts a vector of NaNs, a
     vector of strings, and a vector one element wide from a backend that changed
     model. A NaN that gets through is not recoverable by reading the row back —
-    it scores against every query, and because the similarity floor is a ``<``
-    comparison a NaN does not fall below it, so the bad row stays and pushes good
-    rows out. This is the last point where that can still be stopped, which is why
+    it scores NaN against every query, so the scans drop it at the floor (bug-836)
+    and it can never be found, and it poisons threshold calibration. This is the
+    last point where that can still be stopped, which is why
     the check lives here rather than at each call site.
 
     The embedding client validates the backend's response at the wire; this
@@ -1726,7 +1726,8 @@ async def _chunked_cosine_scan(
                 for row_id, sim_val in zip(ids, _cosine_batch(query_vec, query_dim, blobs)):
                     position = ordinal
                     ordinal += 1
-                    if sim_val < effective_min_sim:
+                    # bug-836: written so a NaN score fails, as in the index supplier.
+                    if not (sim_val >= effective_min_sim):
                         continue
                     score = float(sim_val)
                     if limit is None:

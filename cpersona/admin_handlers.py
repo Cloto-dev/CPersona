@@ -3391,8 +3391,7 @@ def _decode_embedding(record: dict, tally: "_ImportTally", line_num: int, kind: 
     same question as "are these numbers" -- a whole number of float32s can be a vector
     of NaNs, and ``vector.pack_for_storage`` refuses exactly that on the store path. So
     the same file was accepted here and refused there: a restore wrote a non-finite
-    vector durably, where it scores against every query (the similarity floor is a ``<``
-    comparison, which a NaN does not fall below) and poisons the agent's threshold
+    vector durably, where it scores NaN against every query and poisons the agent's threshold
     calibration until an operator runs a repairing health check. The two write paths now
     give the same verdict on the same values.
 
