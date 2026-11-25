@@ -1148,6 +1148,18 @@ _init_lock = asyncio.Lock()
 _read_lock = asyncio.Lock()
 
 
+def _serving(conn: aiosqlite.Connection) -> bool:
+    """Whether ``conn`` still has the worker thread that answers its calls (bug-923).
+
+    aiosqlite answers each call on the loop that made it. When that loop has closed
+    before the answer arrives, the worker raises while answering and its thread ends,
+    yet the connection still reads as open: every later call is queued to no one and
+    waits forever. A cached reader in that state is replaced, never awaited.
+    """
+    thread = getattr(conn, "_thread", None)
+    return thread is None or thread.is_alive()
+
+
 async def _get_read_db() -> aiosqlite.Connection:
     """Get or create the dedicated read-only connection (bug-086).
 
@@ -1157,14 +1169,14 @@ async def _get_read_db() -> aiosqlite.Connection:
     harnesses' boot simulations) never leaves reads pointed at the old file."""
     global _read_db, _read_db_owner
     write_db = await get_db()
-    if _read_db is not None and _read_db_owner is write_db:
+    if _read_db is not None and _read_db_owner is write_db and _serving(_read_db):
         return _read_db
     async with _read_lock:
         write_db = await get_db()
-        if _read_db is not None and _read_db_owner is write_db:
+        if _read_db is not None and _read_db_owner is write_db and _serving(_read_db):
             return _read_db
         stale, _read_db, _read_db_owner = _read_db, None, None
-        if stale is not None and stale is not write_db:
+        if stale is not None and stale is not write_db and _serving(stale):
             with contextlib.suppress(Exception):
                 await stale.close()
         if DB_PATH == ":memory:":
@@ -1184,14 +1196,14 @@ async def _get_background_read_db() -> aiosqlite.Connection:
     for an in-memory database."""
     global _bg_read_db, _bg_read_db_owner
     write_db = await get_db()
-    if _bg_read_db is not None and _bg_read_db_owner is write_db:
+    if _bg_read_db is not None and _bg_read_db_owner is write_db and _serving(_bg_read_db):
         return _bg_read_db
     async with _read_lock:
         write_db = await get_db()
-        if _bg_read_db is not None and _bg_read_db_owner is write_db:
+        if _bg_read_db is not None and _bg_read_db_owner is write_db and _serving(_bg_read_db):
             return _bg_read_db
         stale, _bg_read_db, _bg_read_db_owner = _bg_read_db, None, None
-        if stale is not None and stale is not write_db:
+        if stale is not None and stale is not write_db and _serving(stale):
             with contextlib.suppress(Exception):
                 await stale.close()
         if DB_PATH == ":memory:":
@@ -1210,14 +1222,14 @@ async def _get_side_read_db() -> aiosqlite.Connection:
     connection there is, in turn, as they did before this seam existed."""
     global _side_read_db, _side_read_db_owner
     write_db = await get_db()
-    if _side_read_db is not None and _side_read_db_owner is write_db:
+    if _side_read_db is not None and _side_read_db_owner is write_db and _serving(_side_read_db):
         return _side_read_db
     async with _read_lock:
         write_db = await get_db()
-        if _side_read_db is not None and _side_read_db_owner is write_db:
+        if _side_read_db is not None and _side_read_db_owner is write_db and _serving(_side_read_db):
             return _side_read_db
         stale, _side_read_db, _side_read_db_owner = _side_read_db, None, None
-        if stale is not None and stale is not write_db:
+        if stale is not None and stale is not write_db and _serving(stale):
             with contextlib.suppress(Exception):
                 await stale.close()
         if DB_PATH == ":memory:":
