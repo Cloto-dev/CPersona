@@ -137,6 +137,17 @@ re-storing content the corpus already has tells you nothing about the encoder.
 And a green `check_health` on its own does not prove the endpoint is up.
 → [Detecting a dead embedding server](operations.md#detecting-a-dead-embedding-server)
 
+### Which SQLite does CPersona need?
+
+SQLite 3.34 or later, as linked by the Python that runs the server: the
+full-text index uses the FTS5 trigram tokenizer, which first shipped in 3.34.
+Check with `python3 -c "import sqlite3; print(sqlite3.sqlite_version)"`. On an
+older SQLite the first start stops with `no such tokenizer: trigram`. Run the
+server on a Python built with a newer SQLite, or set
+`CPERSONA_FTS_ENABLED=false` to skip that index; recall then has no keyword
+channel.
+→ [Getting Started: prerequisites](getting-started.md#prerequisites)
+
 ### Will CPersona ever merge or summarize memories with an LLM?
 
 No. *The server never calls a generative model* is a core, unchanging

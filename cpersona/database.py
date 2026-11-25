@@ -1455,7 +1455,18 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         if fts_created_this_boot or fts_backfill_pending or fts_triggers_stale:
             await _set_fts_backfill_pending(db, True)
             await db.commit()
-        await db.executescript(FTS_SQL)
+        try:
+            await db.executescript(FTS_SQL)
+        except sqlite3.OperationalError as exc:
+            # bug-837: an SQLite before 3.34 has no trigram tokenizer; say what to do.
+            if "trigram" not in str(exc):
+                raise
+            raise sqlite3.OperationalError(
+                f"{exc}. The full-text index needs SQLite 3.34 or later (FTS5 trigram "
+                f"tokenizer); this Python links SQLite {sqlite3.sqlite_version}. Use a Python "
+                "built with a newer SQLite, or set CPERSONA_FTS_ENABLED=false to start "
+                "without the full-text index."
+            ) from exc
 
     row = await db.execute_fetchall("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     current = row[0][0] if row else 0

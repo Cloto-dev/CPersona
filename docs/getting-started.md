@@ -24,7 +24,12 @@ The rest of this page is the same setup, step by step, for doing it yourself.
 
 For doing the setup yourself:
 
-- **Python 3.11+**
+- **Python 3.11+** whose `sqlite3` module links **SQLite 3.34 or later**: the
+  full-text index uses the FTS5 trigram tokenizer, which first shipped in
+  SQLite 3.34. Check with `python3 -c "import sqlite3; print(sqlite3.sqlite_version)"`.
+  On an older SQLite the first start stops with `no such tokenizer: trigram`;
+  `CPERSONA_FTS_ENABLED=false` skips that index, and recall then has no keyword
+  channel
 - **[uv](https://docs.astral.sh/uv/)** for the one-command path (optional —
   `pip` works too)
 - An MCP client: Claude Desktop, Claude Code, Codex CLI, Cursor, VS Code, or
@@ -367,7 +372,8 @@ what they call the keys.
 
 Pick an absolute `CPERSONA_DB_PATH` first. The examples use
 `/home/you/.claude/cpersona.db` because that directory already exists for
-Claude users, but any absolute path works.
+Claude users, but any absolute path works. Write it out in full: `~` and
+`$HOME` are not expanded, because the client starts the server without a shell.
 
 | Client | Where the entry goes | Shape | Checked here |
 | --- | --- | --- | --- |
