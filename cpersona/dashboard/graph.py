@@ -287,13 +287,14 @@ def folder(conn, path: list[str] | None = None, month: str = "") -> dict:
     """The memories of a folder and month (the newest MAX_NODES, when set), joined as above."""
     where, args = store._path_where(path or [])
     if month:
-        where.append("substr(timestamp, 1, 7) = ?")
+        # bug-821: the month of the UTC instant, as the memory list filters it.
+        where.append("substr(utc_time(timestamp), 1, 7) = ?")
         args.append(month)
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(f"SELECT count(*) FROM memories{clause}", args).fetchone()[0]
     rows = conn.execute(
         "SELECT id, agent_id, timestamp, embedding FROM memories"
-        f"{clause} ORDER BY timestamp DESC, id DESC LIMIT ?",
+        f"{clause} ORDER BY utc_time(timestamp) DESC, id DESC LIMIT ?",
         [*args, -1 if MAX_NODES is None else MAX_NODES],
     ).fetchall()
     return _drawn(conn, rows, total, "folder")
@@ -325,21 +326,22 @@ def members(conn, ids: list[int], view: str, **extra) -> dict:
     for at in range(0, len(ids), _ID_BATCH):
         part = ids[at : at + _ID_BATCH]
         dated += conn.execute(
-            f"SELECT id, timestamp FROM memories WHERE id IN ({','.join('?' * len(part))})",
+            f"SELECT id, utc_time(timestamp) FROM memories WHERE id IN ({','.join('?' * len(part))})",
             part,
         ).fetchall()
-    dated.sort(key=lambda r: (r[1], r[0]), reverse=True)
+    # bug-821: newest by the instant; a time that cannot be read sorts last.
+    dated.sort(key=lambda r: (r[1] or "", r[0]), reverse=True)
     keep = [r[0] for r in dated[:MAX_NODES]]
     rows = []
     # Batched like the ids above: undrawn by a cap, a group can hold thousands.
     for at in range(0, len(keep), _ID_BATCH):
         part = keep[at : at + _ID_BATCH]
         rows += conn.execute(
-            "SELECT id, agent_id, timestamp, embedding FROM memories "
+            "SELECT id, agent_id, timestamp, embedding, utc_time(timestamp) AS utc FROM memories "
             f"WHERE id IN ({','.join('?' * len(part))})",
             part,
         ).fetchall()
-    rows.sort(key=lambda r: (r["timestamp"], r["id"]), reverse=True)
+    rows.sort(key=lambda r: (r["utc"] or "", r["id"]), reverse=True)
     return _drawn(conn, rows, len(dated), view, **extra)
 
 
@@ -400,7 +402,7 @@ def around(conn, db_path: str, memory_id: int, hops: int = DEFAULT_HOPS) -> dict
     marks = ",".join("?" * len(reached))
     rows = conn.execute(
         f"SELECT id, agent_id, timestamp FROM memories WHERE id IN ({marks}) "
-        "ORDER BY timestamp DESC, id DESC",
+        "ORDER BY utc_time(timestamp) DESC, id DESC",
         list(reached),
     ).fetchall()
     return {
