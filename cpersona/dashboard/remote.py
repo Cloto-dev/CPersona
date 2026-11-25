@@ -57,6 +57,8 @@ _lock = threading.Lock()
 # code -> (expiry, owner)
 _links: dict[str, tuple[float, str]] = {}
 _key: bytes | None = None
+# The key file _key came from and its state then; None while _key is the setting's.
+_key_file: tuple[str, tuple | None] | None = None
 
 
 def _prune(now: float, owner: str) -> None:
@@ -81,39 +83,68 @@ def issue_link(owner: str = "") -> str:
 
 
 def clear() -> None:
-    global _key
+    global _key, _key_file
     with _lock:
         _links.clear()
         _key = None
+        _key_file = None
+
+
+def key_path(db_path: str) -> str:
+    """The file beside the store that holds the session and proof key."""
+    stem = os.path.splitext(os.path.basename(db_path))[0] or "cpersona"
+    return os.path.join(os.path.dirname(os.path.abspath(db_path)), f"{stem}-dashboard.key")
+
+
+def _file_state(path: str) -> tuple | None:
+    """What the key file is now, to tell whether it changed; None when it is absent."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_mode, st.st_uid, st.st_size, st.st_mtime_ns)
 
 
 def _signing_key(db_path: str) -> bytes:
-    """The key sessions are signed with: the setting, else the key file, made once."""
-    global _key
-    if _key is not None:
+    """The key sessions are signed with: the setting, else the key file, made once.
+
+    The file is looked at on every use, so deleting or replacing it ends every
+    session while the server runs.
+    """
+    global _key, _key_file
+    if _key is not None and _key_file is None:
         return _key
     from cpersona import config
 
     if config.DASHBOARD_SESSION_KEY:
         _key = hashlib.sha256(config.DASHBOARD_SESSION_KEY.encode()).digest()
+        _key_file = None
         return _key
-    stem = os.path.splitext(os.path.basename(db_path))[0] or "cpersona"
-    path = os.path.join(os.path.dirname(os.path.abspath(db_path)), f"{stem}-dashboard.key")
-    try:
-        # Made owner-only and never replaced: an existing key file is the one in use.
-        if fileperms.create_private(path):
-            with fileperms.open_private(path, "w") as f:
-                f.write(secrets.token_hex(32) + "\n")
-        with open(path) as f:
-            text = f.read().strip()
-        if len(text) < 32:
-            raise ValueError(f"{path} holds no key")
-        _key = hashlib.sha256(text.encode()).digest()
-    except (OSError, ValueError) as e:
-        # Sessions still work, but end when the process does.
-        logger.warning("dashboard sessions will not outlive this process: %s", e)
-        _key = secrets.token_bytes(32)
-    return _key
+    path = key_path(db_path)
+    with _lock:
+        # bug-915: the key held is reused only while the file is the one it was
+        # read from. Its state is taken before the read, so a change during the
+        # read is seen on the next use.
+        seen = _file_state(path)
+        if _key is not None and _key_file == (path, seen):
+            return _key
+        try:
+            # Made owner-only and never replaced: an existing key file is the one in use.
+            if fileperms.create_private(path):
+                with fileperms.open_private(path, "w") as f:
+                    f.write(secrets.token_hex(32) + "\n")
+            # bug-916: an existing file is the one in use only when it is this
+            # user's own private regular file, not whatever the name leads to.
+            text = fileperms.read_private(path).strip()
+            if len(text) < 32:
+                raise ValueError(f"{path} holds no key")
+            _key = hashlib.sha256(text.encode()).digest()
+        except (OSError, ValueError) as e:
+            # Sessions still work, but end when the process does.
+            logger.warning("dashboard sessions will not outlive this process: %s", e)
+            _key = secrets.token_bytes(32)
+        _key_file = (path, seen)
+        return _key
 
 
 def _credential(owner: str, bearer: str) -> bytes | None:

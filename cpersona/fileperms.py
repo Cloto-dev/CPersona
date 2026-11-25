@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from typing import NamedTuple
 
@@ -253,6 +254,27 @@ def mode_bits_are_enforced(platform_name: str | None = None) -> bool:
     return (os.name if platform_name is None else platform_name) == "posix"
 
 
+def read_private(path: str) -> str:
+    """The text of ``path``, a regular file this user owns that no one else can reach.
+
+    For a secret this package wrote with ``open_private`` and reads back by name.
+    A file that is not that one would choose the secret for whoever placed it, so
+    it raises: ``OSError`` for a symlink at the final component (refused as
+    ``open_private`` refuses one), ``ValueError`` for anything but a regular file,
+    and, where mode bits are the access control, for another owner or any group or
+    other bit.
+    """
+    # bug-916: O_NONBLOCK so a FIFO at the path cannot block the open.
+    fd = os.open(path, os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd) as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"{path} is not a regular file")
+        if mode_bits_are_enforced() and (st.st_uid != os.geteuid() or st.st_mode & 0o077):
+            raise ValueError(f"{path} is not owner-only")
+        return f.read()
+
+
 def owned_paths() -> list[OwnedPath]:
     """Every path this package places, asked of the module that places it.
 
@@ -270,6 +292,7 @@ def owned_paths() -> list[OwnedPath]:
     import glob as _glob
 
     from cpersona import block_index, coarse_index, config, recall_log, update_check, vector_index
+    from cpersona.dashboard import remote as dashboard_remote
 
     db = config.DB_PATH
     if db == ":memory:":
@@ -296,6 +319,9 @@ def owned_paths() -> list[OwnedPath]:
         for table in ("memories", "episodes")
     ]
     out.append(OwnedPath(block_index.index_path(), "file", "the embedding sign bits of every block row"))
+    # bug-917: the dashboard's key signs its session cookies and the local
+    # dashboard's sign-in proofs.
+    out.append(OwnedPath(dashboard_remote.key_path(db), "file", "the key that signs dashboard sessions and sign-in proofs"))
     # The recall log keeps each query's text beside the store (recall_log.py).
     log = recall_log.log_path()
     if log:
