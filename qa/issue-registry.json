@@ -12350,12 +12350,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "return json\\.load\\(fh\\), False",
+      "pattern": "# bug-810: valid JSON that is not an object",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Treat a parsed sidecar that is not a dict as unreadable, with a warning, the unreadable flag and the existing backup path, as the dashboard reader already does. Consider running the calibration purge after the index and remote purges so it cannot skip them.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-347 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-347 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "_read_calibration_sidecar now treats valid JSON that is not an object (list, string, number, bool, null) as unreadable, so the existing warning, copy-aside and unreadable report apply and delete_agent_data and merge move no longer raise after their delete commits. Reverting the isinstance guard (if False) turns 15 tests in tests/test_2618a2_u01.py red, including test_bug_810_non_object_sidecar_reads_as_unreadable and test_bug_810_delete_agent_data_runs_every_purge_with_non_object_sidecar."
     },
     {
       "id": "bug-811",
@@ -12364,12 +12366,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "vector\\._agent_fused_gates\\[agent_id\\] = fused_stats\\[\"threshold\"\\]",
+      "pattern": "# bug-811: a gate measured at a new beta enters process memory",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "When a new precision is being recorded, apply the measured gate to process memory only after the sidecar write succeeds, so a failed or skipped write leaves the previous gate in force.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-523 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-523 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "do_calibrate_threshold holds a gate measured at a new beta out of process memory, passes it to the sidecar write, and applies it only after the write succeeds, so a refused set_recall_precision leaves the previous gate and beta paired. Reverting the hold (if False) turns tests/test_2618a2_u01.py::test_bug_811_refused_precision_change_leaves_previous_gate[save_fails] and [lock_not_taken] red; dropping the post-save apply also turns test_bug_811_accepted_precision_change_applies_gate_and_beta_together red."
     },
     {
       "id": "bug-812",
@@ -12378,12 +12382,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "r = await do_calibrate_threshold\\(agent_id=aid\\)",
+      "pattern": "# bug-812: the startup guard calls without a key",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "no-persist-contract",
       "fix_sketch": "Run the startup guard's calibrations under an internal key no client pause can reach (as the queue drain already exempts server-originated work), and never count a skipped calibration as calibrated.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-729 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-729 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The startup guard now calls do_calibrate_threshold with an internal server_owned flag that skips the no-persist check, because that calibration belongs to no session; client calibrations still obey the pause. Reverting the check to plain session.is_paused_for(key) turns tests/test_2618a2_u01.py::test_bug_812_keyless_pause_during_startup_guard_does_not_skip_agents red."
     },
     {
       "id": "bug-813",
@@ -12392,12 +12398,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/admin_handlers.py",
-      "pattern": "blob = _decode_embedding\\(record, tally, line_num, \"memory\"\\)",
+      "pattern": "blob = _restorable_embedding\\(record, tally, line_num, \"memory\", content, file_content\\)",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "data-integrity",
       "fix_sketch": "Keep the file's embedding only when the sanitised text equals the file's text; otherwise store NULL so the null-embedding repair re-embeds the row. Do the same on the episode path.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-221 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-221 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "import_memories restores the file's embedding only when the sanitised text equals the file's text; otherwise the row is stored without a vector or model label, the line is reported in the import errors, and the null-embedding repair re-embeds it. Applies to memory content and episode summaries. Reverting the guard in _restorable_embedding to if False makes test_bug_813_import_drops_the_vector_of_text_it_changed fail."
     },
     {
       "id": "bug-814",
@@ -12406,12 +12414,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/associations.py",
-      "pattern": "per_channel\\[channel\\]\\.relations\\.append\\(\\{\\*\\*relation, \"channel\": channel\\}\\)",
+      "pattern": "# bug-814: a relation between two records carries no entity",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Fetch the target graph with per_channel.setdefault(channel, Graph()) before appending the relation, so record-to-record relations get a graph too, and add a regression test that migrates an anchored and an unanchored mem-to-mem relation with no entity in the channel.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-569 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-569 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "follow_rechannelled now creates the per-channel graph on first use for relations too, so a relation between two records follows its moved memories and the migration no longer raises KeyError and rolls back. Reverting setdefault to per_channel[channel] makes tests/test_2618a2_u03.py::test_bug_814_mem_to_mem_relation_follows_its_records fail with KeyError."
     },
     {
       "id": "bug-815",
@@ -12420,12 +12430,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/checks.py",
-      "pattern": "\\{surplus\\} AND \\{associations\\.names_memory_sql\\('memories\\.id'\\)\\}",
+      "pattern": "\"UPDATE OR IGNORE folder_members SET ref = \\? WHERE ref = \\?\"",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "data-integrity",
       "fix_sketch": "Before each repair DELETE, move the doomed row's folder membership to the survivor (UPDATE OR IGNORE folder_members SET ref to the survivor's ref), alongside the association repoint. Also select copies that are only filed, not just those named by associations.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-564 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-564 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "Both dedup repairs that delete a copy in favour of an equal survivor (duplicate_content and the rewrite-collision path) now move the copy's folder filing to the survivor with UPDATE OR IGNORE, so a filing the survivor already has is kept. The duplicate path also selects rows that are only filed. Reverting the folder_members UPDATE turns tests/test_2618a2_u04.py::test_bug_815_duplicate_content_repair_moves_the_filing_to_the_survivor and ::test_bug_815_annotation_collision_repair_moves_the_filing_to_the_survivor red."
     },
     {
       "id": "bug-816",
@@ -12434,12 +12446,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/checks.py",
-      "pattern": "continue  # the command itself is unavailable on this build",
+      "pattern": "if _is_lock_error\\(exc\\):$",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Check whether the OperationalError is a busy or locked error. If it is, report that the probe could not run (or let the runner record a crashed check) instead of skipping, and keep the silent skip only for an unsupported command.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-326 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-326 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "check_fts_integrity now tells a busy or locked database apart from a build without the integrity-check command. A lock error propagates and the runner reports fts_integrity as check_crashed instead of healthy. The silent skip stays for an unsupported command only. Making the lock test always false turns tests/test_2618a2_u04.py::test_bug_816_a_locked_database_is_reported_as_a_check_that_did_not_run red."
     },
     {
       "id": "bug-817",
@@ -12448,12 +12462,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/cue.py",
-      "pattern": "start = cue\\.after if cue\\.after is not None else oldest",
+      "pattern": "# bug-817: the scope holds nothing before",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Do not close an open start at the oldest memory when before already precedes it. Use an earlier bound (or the oldest record across memories and episodes), so the searched period and the recent_only judgement follow the caller's own before.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "cue.period keeps a before-only cue whose before is not later than the scope's oldest record on its own end as an empty period, instead of a one-second period at the oldest record. Replacing the new start line with pass turns six tests in tests/test_2618a2_u05.py red."
     },
     {
       "id": "bug-818",
@@ -12462,12 +12478,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/dashboard/__main__.py",
-      "pattern": "^        local\\.ask\\(args\\.port, \"stop\", db\\)$",
+      "pattern": "# bug-818: only an accepted request stopped it",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Keep the status returned by the stop request and report success with exit 0 only on 202. Otherwise print the server's error to stderr and exit non-zero, as the sign-in code branch already does.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "cpersona dashboard --stop now reports success and exits 0 only when the running dashboard accepts the stop (202). A refusal or a dropped connection prints the reason to stderr and exits 2. Changing the status check back so a 403 passes fails test_bug_818_a_refused_stop_is_not_reported_as_stopped."
     },
     {
       "id": "bug-819",
@@ -12476,12 +12494,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/dashboard/graph.py",
-      "pattern": "^    if sig\\[3\\] > CACHE_MAX_BYTES:$",
+      "pattern": "_cache\\.pop\\(key, None\\)  # bug-819",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Move the size gate inside the cache lock and drop the key when the store is over the cap. Also remove expired entries before reading or inserting, and do the same in the cluster cache.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "Expired entries of the dashboard vector cache and cluster cache are now dropped under the lock on each access, and a store past CACHE_MAX_BYTES drops its own held copy. Removing the expiry call in graph._held fails test_bug_819_expired_vector_copies_are_released, and replacing the key pop with pass fails test_bug_819_a_store_past_the_cap_drops_its_held_copy."
     },
     {
       "id": "bug-820",
@@ -12490,12 +12510,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/dashboard/graph.py",
-      "pattern": "SELECT entity_id, ref FROM entity_mentions WHERE ref IN \\(\\{marks\\}\\)",
+      "pattern": "# bug-820: every read below is batched",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Read mentions, entities and relations in batches of the module's existing id batch size and merge the results before drawing, so no statement binds more parameters than the oldest SQLite limit.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The mention, entity and relation reads behind the network view's declared lines are now batched below SQLite's bound-parameter limit and merged back into declaration order. Unbatching the mention read fails test_bug_820_declared_lines_are_read_in_batches with too many SQL variables, and dropping the merge sort fails it on relation order."
     },
     {
       "id": "bug-821",
@@ -12504,12 +12526,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/dashboard/store.py",
-      "pattern": "\"substr\\(timestamp, 1, 4\\)\",",
+      "pattern": "# bug-821: the UTC year and month of the instant",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Normalize to UTC before grouping, filtering and sorting, for example with datetime(timestamp) in SQL or the same parser list_memories uses, in the tree, the month filter, the overview and every ORDER BY on timestamp.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-286 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-286 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The dashboard store reads stored times through a utc_time() SQL function that uses the same UTC parser as list_memories. Folders, month filters, the month operator, the overview and every newest-first order now follow the instant, not the text. Reverting the year and month levels to substr(timestamp) turns test_bug_821_folders_and_month_filters_follow_the_utc_time red. Reverting the memory list order to m.timestamp turns test_bug_821_newest_first_is_by_the_instant red. The dashboard graph's folder month filter and row order, members() and around(), and the map's year and month groups were moved to the same instant when the units were integrated (tests/test_2618a2_integration.py)."
     },
     {
       "id": "bug-822",
@@ -12518,12 +12542,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/dashboard/store.py",
-      "pattern": "has = \\(lambda col: f\"instr\\(\\{col\\}, \\?\\) > 0\"\\) if case else \\(lambda col: f\"instr\\(lower\\(\\{col\\}\\), lower\\(\\?\\)\\) > 0\"\\)",
+      "pattern": "# bug-822: SQLite.s lower\\(\\) folds ASCII only",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Register a deterministic Unicode case-fold function on the read-only dashboard connection and use it instead of SQLite lower() in the case-insensitive search, tag, entity and substring filters.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The read-only dashboard connection registers a fold() SQL function that uses Python's Unicode lower(). Every case-insensitive filter of the dashboard store uses it instead of SQLite's ASCII-only lower(). Reverting the search panel's filter to lower() turns test_bug_822_case_insensitive_filters_fold_beyond_ascii red."
     },
     {
       "id": "bug-823",
@@ -12532,12 +12558,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/dashboard/store.py",
-      "pattern": "where\\.append\\(f\"m\\.\\{name\\} = \\?\"\\)",
+      "pattern": "# bug-823: the project is kept in project_id",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Map each property to its real column (project to project_id, channel to channel) instead of formatting the property name into SQL, and test [project:x] end to end.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The search property names now map to their columns, and project maps to project_id, so [project:x] keeps that project instead of failing with no such column. Reverting to the interpolated m.{name} column turns test_bug_823_project_property_keeps_that_project red with HTTP 500."
     },
     {
       "id": "bug-824",
@@ -12546,12 +12574,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/dashboard/store.py",
-      "pattern": "found = conn\\.execute\\(sql, args\\)\\.fetchall\\(\\)",
+      "pattern": "# bug-824: counted and paged in SQL",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "resource-budget",
       "fix_sketch": "Count matches with count(*) and page in SQL with LIMIT/OFFSET, and for the same-line filter select ids first and fetch text only for the rows on the page.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "Dashboard search now counts and pages in SQL. With line:, it streams the candidate rows one at a time and keeps only the page's ids, so a request reads one page of text instead of every match. Reverting the page query to a full fetchall sliced in Python turns test_bug_824_search_pages_in_sql_and_reads_one_page red."
     },
     {
       "id": "bug-825",
@@ -12560,12 +12590,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/memory_handlers.py",
-      "pattern": "^        return _store_skipped\\(\"duplicate \\(unique index\\)\"\\)$",
+      "pattern": "bug-825: decided as the probe decides",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Inside the write transaction, read the source of the colliding row in the writer's exact bucket and return rejected when it differs from the caller's source id; keep the id-less skip for a same-source collision.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-774 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-774 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The ignored insert is now decided inside the write transaction from the row it collided with. A content collision under another source id is rejected as the sequential probe rejects it. A msg_id or same-source collision keeps the id-less skip. Deleting the source comparison in _unique_index_answer turns test_bug_825_race_loser_under_another_source_is_rejected red."
     },
     {
       "id": "bug-826",
@@ -12619,12 +12651,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/oauth.py",
-      "pattern": "        except jwt\\.PyJWTError as exc:",
+      "pattern": "# bug-829: not only PyJWTError\\. A header naming an allowed algorithm",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Treat any exception from jwt.decode as a rejection (return None, log at debug), or check that the header algorithm matches the cached key's family before decoding.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-311 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-311 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "verify_token now treats any exception from jwt.decode as a refusal logged at debug, so a header naming an allowed algorithm of the other key family (ES256 for an RSA key, RS256 for an EC key) gets a 401 instead of a 500. Reverting the except clause to jwt.PyJWTError makes test_bug_829_wrong_key_family_is_a_refusal_not_an_exception and test_bug_829_middleware_answers_401_for_a_wrong_family_token fail."
     },
     {
       "id": "bug-830",
@@ -12633,12 +12667,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/operating_context.py",
-      "pattern": "^    except OSError:$",
+      "pattern": "# bug-830: only an absent file is silently dormant",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Treat only FileNotFoundError as absent in get_context and keep the error text for any other stat failure. Derive the loader's present flag from that outcome, so the operating-context health check reports the unusable sidecar.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-238 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-238 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "get_context now treats only a missing file or directory as absent. Any other stat failure keeps the error and counts as present, so check_health reports operating_context_parse_error instead of staying silent. Reverting the except clause to catch every OSError, or reverting present to os.path.exists alone, turns test_bug_830_unsearchable_sidecar_directory_leaves_a_finding red."
     },
     {
       "id": "bug-831",
@@ -12647,12 +12683,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/reconstruct.py",
-      "pattern": "quote\\[\"expand\"\\] = \\{\"ref\": claim\\.ref, \"node\": quote\\[\"node\"\\]\\[\"index\"\\]\\}",
+      "pattern": "# bug-831: with the revision of the text the node was cut from",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Add the revision of the node set's text to the node expand, as the block and span expands do. Add a test that rewrites the record, drains the node rebuild, and asserts get_contents answers stale_revision.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-578 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-578 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The node expand from a cut reconstruct quote now carries the revision of the text the node was cut from, so get_contents refuses it with stale_revision after update_memory and the node rebuild. The docstrings and BLOCK_REACH_DESIGN (en and ja) that said node and block ranges validate themselves were corrected. Reverting the revision key in the node expand turns test_bug_831_node_expand_refuses_a_record_rewritten_and_rebuilt and test_a_cut_node_quote_hands_over_the_argument_that_reads_the_rest_of_its_node red."
     },
     {
       "id": "bug-832",
@@ -12661,12 +12699,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/reconstruct.py",
-      "pattern": "^                SHORTFALL_BELOW_QUALITY_THRESHOLD$",
+      "pattern": "# bug-832: whether the gate refused every row it was handed",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Pass from the recall whether the gate refused any retrieved row, and report below_quality_threshold whenever the pool was non-empty before the gate and empty after it, at both shortfall sites.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The recall core now reports to reconstruct, through a library argument with no response change, when the quality gate refused every row it was handed. reconstruct reports below_quality_threshold for that pool both when nothing survives and when only held rows fill a short window. Reverting the condition to gate_fallback alone turns test_bug_832_a_pool_the_gate_emptied_reports_below_quality_threshold and test_bug_832_a_short_window_after_the_gate_emptied_the_pool_says_so red."
     },
     {
       "id": "bug-833",
@@ -12690,12 +12730,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/server.py",
-      "pattern": "result\\[\"folder\"\\] = await folders_module\\.file_stored\\(",
+      "pattern": "# bug-834: the memory has committed",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "silent-failure",
       "fix_sketch": "Catch exceptions from the folder filing step and report them in the folder field (filed false with a reason), keeping result and id, as the associations and lock steps already do.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-532 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-532 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The folder rider in the store wrapper is guarded. A filing failure after the memory commits is logged and reported in folder as filed false with a reason, and result, id and locked are kept. Narrowing its except clause turns test_bug_834_folder_rider_failure_is_reported_in_its_own_field red."
     },
     {
       "id": "bug-835",
@@ -12704,12 +12746,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/server.py",
-      "pattern": "return await do_list_folder_view\\(",
+      "pattern": "# bug-835: the folder view passes the same gate",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "contract-drift",
       "fix_sketch": "Resolve and check project_id with the operating context before calling the folder view, return the documented refusal shape on error, and annotate the result with the resolved project and any warning, as the other list_memories paths do.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The list_memories folder view now passes the same read gate as the other listings (check_project_id, then _oc_annotate), so @auto resolves and the warning and resolved_project_id are echoed. Passing the raw project_id to do_list_folder_view again, or dropping the _oc_annotate wrap, turns test_bug_835_folder_view_resolves_auto_and_echoes_the_gate red."
     },
     {
       "id": "bug-836",
@@ -12718,12 +12762,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "cpersona/vector.py",
-      "pattern": "^\\s+if sim_val < effective_min_sim:$",
+      "pattern": "# bug-836: written so a NaN score fails",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "correctness",
       "fix_sketch": "Use the same comparison as the index path (skip unless sim >= floor) so NaN never passes, or skip blobs that fail the finite-value check before scoring.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-300 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-300 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The live chunked scan now keeps a row only when sim >= floor, as the index suppliers do, so a NaN-scored row is dropped. Putting back the old sim < floor line turns both bug-836 tests in tests/test_2618a2_u05.py red."
     },
     {
       "id": "bug-837",
@@ -12731,13 +12777,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
-      "file": "docs/getting-started.md",
-      "pattern": "^- \\*\\*Python 3\\.11\\+\\*\\*$",
+      "file": "cpersona/database.py",
+      "pattern": "# bug-837: an SQLite before 3\\.34 has no trigram tokenizer",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "fix_sketch": "List SQLite 3.34 or later beside Python 3.11 in the prerequisites. Optionally check sqlite3.sqlite_version_info at boot and fail with a message naming the minimum and CPERSONA_FTS_ENABLED=false.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "Getting Started (prerequisites) and the FAQ, in English and Japanese, now state that SQLite 3.34 or later is required for the FTS5 trigram tokenizer. They say how to check the version and that CPERSONA_FTS_ENABLED=false skips that index. On a missing trigram tokenizer the boot error now names the minimum, the SQLite found and that switch, and other errors pass through unchanged. Re-raising every OperationalError unchanged turns tests/test_2618a2_u14.py::test_bug_837_old_sqlite_boot_error_names_minimum_and_switch red. Removing the minimum from a page turns the matching test_bug_837_docs_state_the_sqlite_minimum_and_the_way_out case red."
     },
     {
       "id": "bug-838",
@@ -12745,13 +12793,15 @@
       "severity": "MEDIUM",
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
-      "file": "docs/upgrading-to-2.6.md",
-      "pattern": "to schema version 20 \\(19 for 2\\.6\\.7a2 to 2\\.6\\.11a1",
+      "file": "scripts/check-docs-facts.py",
+      "pattern": "# bug-838: the spelled-out forms too\\.",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "fix_sketch": "Correct the sentence in both languages to end at 21 and add the range for 20. Add the upgrade pages to the documentation-facts scan and widen the schema pattern to the long English and Japanese wordings.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "docs-facts now scans both upgrade pages and checks the spelled-out forms schema version N and its Japanese equivalent against SCHEMA_VERSION. Table rows and a migration's starting point are skipped. The guide (en and ja) now ends the migration at 21 and adds the 2.6.11a2 to 2.6.13 range at 20. Dropping the upgrade page from DOC_FILES turns tests/test_2618a2_u14.py::test_bug_838_upgrade_pages_are_scanned red. Disabling the new pattern loop turns ::test_bug_838_gate_reads_the_schema_claim_in_both_languages red. Writing 20 back into either guide turns ::test_bug_838_upgrade_pages_agree_with_schema_version red."
     },
     {
       "id": "bug-839",
@@ -12760,12 +12810,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "plugin/skills/cpersona-memory/SKILL.md",
-      "pattern": "Pick an absolute `CPERSONA_DB_PATH` \\(e\\.g\\. `~/\\.claude/cpersona\\.db`\\)",
+      "pattern": "Pick an absolute .CPERSONA_DB_PATH. \\(e\\.g\\. ./home/you/\\.claude/cpersona\\.db",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "fix_sketch": "Use a real absolute path in the example, as the getting-started guide does, and state that a tilde is not expanded in the client's env block.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The skill's example CPERSONA_DB_PATH is now a full path (/home/you/.claude/cpersona.db). The skill and Getting Started (en and ja) say that ~ and $HOME are not expanded, because the client starts the server without a shell. Putting the ~ example back turns tests/test_2618a2_u14.py::test_bug_839_no_db_path_example_relies_on_shell_expansion and ::test_bug_839_skill_example_is_absolute_and_says_why red."
     },
     {
       "id": "bug-840",
@@ -12774,12 +12826,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "tests/behaviour_252.py",
-      "pattern": "^os\\.environ\\.setdefault\\(\"CPERSONA_DB_PATH\", ",
+      "pattern": "bug-840: assigned, never setdefault",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "isolation",
       "fix_sketch": "Assign CPERSONA_DB_PATH, CPERSONA_EMBEDDING_MODE and CPERSONA_OPERATING_CONTEXT unconditionally in the capture helper, as the suite's conftest does. Add a test that imports the helper with a hostile exported path and shows that store is untouched.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-593 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-593 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "tests/behaviour_252.py now assigns CPERSONA_DB_PATH, CPERSONA_EMBEDDING_MODE and CPERSONA_OPERATING_CONTEXT as conftest does, so the capture script run in a bare process no longer keeps a database path exported in the shell. Reverting the DB_PATH line to os.environ.setdefault turns test_bug_840_capture_import_leaves_exported_store_untouched red (observe() rewrote the exported store), and reverting either of the other two turns test_bug_840_capture_import_overrides_exported_embedding_and_context red."
     },
     {
       "id": "bug-841",
@@ -12788,12 +12842,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "tests/test_structural_gates.py",
-      "pattern": "^    for path in sorted\\(PKG\\.glob\\(\"\\*\\.py\"\\)\\):$",
+      "pattern": "# bug-841: recursive, so subpackages",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "test-coverage",
       "fix_sketch": "Walk the package recursively when seeding the import graph, so dashboard modules are roots too. Add a teeth test that plants an excluded import in a dashboard module and expects the gate to fail.",
-      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-164 does not cover this path."
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. The fix for bug-164 does not cover this path.",
+      "fixed_in": "2.6.18a2",
+      "fix_note": "Gate 13 now seeds its import walk with a recursive glob over cpersona and skips the vendored tree, so dashboard modules are roots. Reverting the seed to PKG.glob turns both test_bug_841_gate13_sees_dashboard_imports cases red (DID NOT RAISE), and dropping the vendored skip turns the real gate red on the excluded modules that reference each other."
     },
     {
       "id": "bug-842",
@@ -13672,13 +13728,14 @@
       "discovered": "2026-11-24T00:00:00Z",
       "version": "2.6.18a1",
       "file": "docs/upgrading-to-2.6.md",
-      "pattern": "2\\.5\\.x release\\) to schema version 20 \\(19 for 2\\.6\\.7a2",
+      "pattern": "to schema version 21 \\(20 for 2\\.6\\.11a2 to 2\\.6\\.13",
       "expected": "present",
-      "status": "open",
+      "status": "fixed",
       "category": "doc-drift",
       "fix_sketch": "Change the target to 21 (20 for 2.6.11a2 to 2.6.13, 19 for 2.6.7a2 to 2.6.11a1, and so on). Make the rollback sentence say that nothing converts a migrated 2.6 database back, without naming a version. Mirror the change in upgrading-to-2.6.ja.md.",
       "note": "Found by the 2026-11-24 audit of 2.6.18a1; confirmed by reading the code, not reproduced.",
-      "routing": "2.7"
+      "fixed_in": "2.6.18a2",
+      "fix_note": "The upgrade guide (English and Japanese) now says the first 2.6 start migrates to schema version 21, lists the 2.6.11a2 to 2.6.13 step, and refers to a schema 21 database in the rollback paragraph. It was corrected with the docs-facts change for bug-838, which now scans this page, so test_bug_838_upgrade_pages_agree_with_schema_version in tests/test_2618a2_u14.py turns red if a stale number comes back."
     },
     {
       "id": "bug-901",
@@ -13859,6 +13916,166 @@
       "fix_sketch": "Make the reach test require a sub-package module such as dashboard/shortcut.py, and add a synthetic-tree test that calls the scan with a tmp_path root containing sub/fileperms.py and a sub-package writer, asserting both are scanned.",
       "note": "Found by the 2026-11-24 audit of 2.6.18a1; confirmed by reading the code, not reproduced. The fix for bug-273 does not cover this path.",
       "routing": "2.7"
+    },
+    {
+      "id": "bug-913",
+      "summary": "(MEDIUM) With the recall log enabled, delete_agent_data left the deleted agent's rows in the recall log file. Each row holds that agent's query text, arguments and returned references. The tool is documented to delete everything belonging to the agent, and the docs say the log holds query text that nothing else stores. After the call answered ok:true, the queries stayed on disk, the dashboard's recall log page kept showing them, and a later agent created with the same id saw them as its own history. A move-mode merge that emptied its source left the source agent's rows in the same way.",
+      "severity": "MEDIUM",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/admin_handlers.py",
+      "pattern": "recall_log\\.purge_agent\\(agent_id\\)  # bug-913: its query text goes with it",
+      "expected": "present",
+      "status": "fixed",
+      "category": "data-remanence",
+      "fix_sketch": "Add a per-agent delete to the recall log module and call it post-commit beside the calibration, index and remote-namespace purges in delete_agent_data and in the emptied-source branch of a move. Update the docstring to name the recall log.",
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1 and reproduced by a test that fails at 869e2d2. Related to bug-337, which treats derived data left on disk after a purge as a defect.",
+      "fix_note": "The recall log module has a per-agent delete, called after commit beside the other purges in delete_agent_data and in the branch of a move-mode merge that empties its source. It runs even with logging now off and creates no file when none exists. Removing the call in do_delete_agent_data makes test_bug_913_delete_agent_data_purges_the_agents_recall_log_rows fail.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-914",
+      "summary": "(MEDIUM) The command-line dashboard's owner proof was not bound to the dashboard it was sent to. It covered only the action and a timestamp, and the store identity on the instance check is a digest of the path that any local user can compute. Another user who held the port the command line probed could answer as that store's dashboard, receive a fresh proof, and replay it within 60 seconds to the owner's real dashboard on another port. That yielded a sign-in code and a session cookie that read every memory, which contradicted the documented promise that other users of the machine can reach the port but not the data.",
+      "severity": "MEDIUM",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/dashboard/local.py",
+      "pattern": "_DOMAIN, action\\.encode\\(\\), str\\(port\\)\\.encode\\(\\), stamp\\.encode\\(\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Put the target port, or a per-instance nonce from the instance check, into the proof's MAC input, and verify it against the dashboard's own port or nonce so a relayed proof is refused.",
+      "note": "Binding the port alone would still let a program that held the port pass the proof on once it let the port go and the owner's next run started a dashboard there. That is why the start check is part of the fix. A proof made by an earlier release is no longer taken.",
+      "fix_note": "The proof now signs the port it is sent to, and the dashboard checks it against the port it listens on. The dashboard also refuses a proof stamped (to the millisecond) before it started. A proof handed to another program therefore opens nothing on any other port, nor on a dashboard started later on the same port. Removing the port from the MAC turns tests/test_2618a2_u12.py::test_bug_914_a_proof_relayed_from_another_port_opens_nothing red. Dropping the start check turns test_bug_914_a_proof_made_before_the_dashboard_started_opens_nothing red.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-915",
+      "summary": "(MEDIUM) Deleting the remote dashboard's session key file does not end existing sessions while the server runs. The signing key is read once, cached in process memory and never re-read, so every 30-day session cookie keeps reading the store until the process restarts. The documentation says deleting that file ends every session and does not mention a restart, so an operator revoking a leaked cookie this way gets no effect and no warning.",
+      "severity": "MEDIUM",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/dashboard/remote.py",
+      "pattern": "^        # bug-915: the key held is reused only while the file is the one it was$",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Drop the cached key when the key file no longer exists or has changed, for example by checking it on each use, or document that a restart is required after deleting the file.",
+      "note": "The documentation already said that deleting the file ends every session, so the code was changed rather than the docs. A key file whose mode is widened while the server runs also stops signing on the next request, and is used again once narrowed (see bug-916). The CPERSONA_DASHBOARD_SESSION_KEY setting is still read once, at startup.",
+      "fix_note": "remote._signing_key keeps the key together with the path and lstat state (device, inode, mode, owner, size, mtime) of the file it came from. The state is taken before the read, and the key is reused only while the file still has that state, under the module lock. A deleted file is made again with a new key, and a replaced or rewritten one is read again, so existing sessions and proofs stop verifying on the next request. Reverting the comparison to 'if _key is not None: return _key' turns test_bug_915_deleting_the_key_file_ends_every_session_without_a_restart and both cases of test_bug_915_replacing_the_key_file_ends_every_session in tests/test_2618a2_u11.py red. Making it reload on every use turns test_bug_916_control_sessions_under_a_refused_key_file_last_while_the_process_runs red.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-916",
+      "summary": "(MEDIUM) The dashboard signing key file is trusted without checking what it is. When CPERSONA_DASHBOARD_SESSION_KEY is unset, the key loader reads an existing <name>-dashboard.key with a plain open() (cpersona/dashboard/remote.py:107), which follows a symlink and accepts a file of any owner or mode, although the docs call the file owner-only and the private-file helper refuses symlinks when it writes. Measured: with the key path planted as a symlink to a 0644 file of known text, a session cookie forged from that text for an ACL client with no static token was accepted with that client's grants, and a forged owner proof for the code action was accepted by the local dashboard (cpersona/dashboard/local.py:52 signs those proofs with the same key), which hands out a sign-in code for the whole store. A control where the server created the key file refused the same forged cookie. The precondition is a store directory writable by another local account before the key is first made, or at a later restart when the directory has no sticky bit.",
+      "severity": "MEDIUM",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/dashboard/remote.py",
+      "pattern": "^            # bug-916: an existing file is the one in use only when it is this$",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Open the key file with O_NOFOLLOW, fstat the descriptor, and use it only when it is a regular file owned by the effective uid with no group or other permission bits; otherwise log a warning and fall back to a process-only key. Add tests that plant a symlink and a group-readable file at the key path and assert that a cookie and a local proof forged from their contents are refused.",
+      "note": "Related to bug-352 and bug-359, which refused a symlink when the package writes a file; this was the read side, for the dashboard key. The regular-file check is defence in depth: a FIFO or a directory at the path is already refused by the non-blocking open or the read, so reverting that check alone leaves every test green. A server running as root now refuses a key file owned by another account and signs with a process-only key.",
+      "fix_note": "remote._signing_key now reads an existing key file through the new fileperms.read_private. That helper opens the file with O_NOFOLLOW and O_NONBLOCK and uses it only when fstat shows a regular file owned by the effective uid with no group or other bits; owner and mode are checked where mode bits are the access control. Any other file is left alone, a warning is logged and a process-only key signs. Reverting the read to open(path).read() turns seven tests in tests/test_2618a2_u11.py red. Dropping only O_NOFOLLOW turns test_bug_916_a_symlink_at_the_key_path_is_not_followed red. Dropping only the group and other mask turns test_bug_916_a_key_file_other_accounts_can_reach_is_not_used red. Dropping only the uid comparison turns test_bug_916_a_key_file_owned_by_another_account_is_not_used red. Dropping only O_NONBLOCK makes test_bug_916_a_fifo_at_the_key_path_neither_blocks_nor_signs fail on its timeout.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-917",
+      "summary": "(MEDIUM) The dashboard key file that the package writes beside the store is missing from the list of paths the file-permissions health check inspects. That key signs dashboard session cookies and the local dashboard's sign-in proofs. After a restore or copy that lost file modes, check_health(fix=true) narrows the database to owner-only but neither reports nor narrows a world-readable key. Another local account can then read the key and mint the proof that makes the local dashboard issue a sign-in code.",
+      "severity": "MEDIUM",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/fileperms.py",
+      "pattern": "^    # bug-917: the dashboard's key signs its session cookies and the local$",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Give the dashboard key path its own function, use it in the dashboard module, and list it in owned_paths so the permissions check reports and narrows it.",
+      "note": "Same class as bug-661, where owned_paths left out the coarse index files, on a file added later. The entry is listed whether or not CPERSONA_DASHBOARD_SESSION_KEY is set, since a key file left from before the setting is used again if the setting is removed. With bug-916, a widened key file is also refused for signing until it is narrowed.",
+      "fix_note": "The key path moved into remote.key_path, which _signing_key uses, and fileperms.owned_paths lists it. check_file_permissions therefore reports a widened key file, and fix=true narrows it to 0600. Removing the owned_paths entry turns tests/test_2618a2_u11.py::test_bug_917_a_widened_key_file_is_reported_and_narrowed red. tests/test_file_permissions_check.py::test_every_owned_file_is_reachable_by_the_check now covers the key file too.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-918",
+      "summary": "(MEDIUM) Opening the dashboard in a browser passed the secret-bearing address to Python's webbrowser module. On Linux that starts xdg-open, and through it the browser, with the address as a command-line argument, which other local accounts can read from the process table. For open_dashboard the address carried the bearer token, which stays valid for the life of the server and reads every memory. For the command-line dashboard it carried the one-time sign-in code, which another account could spend first. This contradicted the documented promise that another user of the same machine can reach the port but not the data.",
+      "severity": "MEDIUM",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/server.py",
+      "pattern": "opened = bool\\(open_browser\\) and webbrowser\\.open\\(dashboard_web\\.browser_address\\(url\\)\\)",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Never put the token or code on a child process command line. Open an owner-only local file, or another channel only the owner can read, that forwards the browser to the secret address, and apply the same change to the command-line dashboard launcher.",
+      "note": "The agent plugin's dashboard command and the remote tool's description still suggest opening the returned link with open or xdg-open, which would put a remote one-time code on a command line. That guidance is outside this fix.",
+      "fix_note": "Both launchers now give the browser the file address of an owner-only page, made with mkstemp, that forwards it to the token or code address. The page is removed after a minute while the process runs, and if it cannot be written the browser gets the address without its secret. Reverting server.py to webbrowser.open(url) turns tests/test_2618a2_u12.py::test_bug_918_open_dashboard_keeps_the_token_off_the_command_line red. Reverting the command line's _open the same way turns test_bug_918_the_command_line_keeps_the_sign_in_code_off_the_command_line red.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-919",
+      "summary": "(MEDIUM) The streamable-HTTP transport checks neither the Host nor the Origin header. The session manager is built without transport security settings, so the MCP SDK leaves DNS-rebinding protection off, and no middleware in the app checks either header. With the documented local-development opt-in CPERSONA_ALLOW_UNAUTHENTICATED_HTTP=true, a web page can rebind its own host name to 127.0.0.1 and call every tool same-origin (read, export, import, delete_agent_data). A POST /mcp from loopback with Host and Origin naming a foreign site gets HTTP 200 with the tool result, and the server logs no warning about outside access.",
+      "severity": "MEDIUM",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/server.py",
+      "pattern": "# bug-919: no credential to check, so refuse a foreign Host or Origin\\.",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Give the session manager TransportSecuritySettings with DNS-rebinding protection on (loopback hosts on the bound port, the existing CORS origins), or refuse a request whose Host is not a loopback name or whose Origin is foreign before it reaches a tool, as the dashboard already does.",
+      "note": "Found by the 2026-11-24 audit of 2.6.18a1; reproduced by a test that fails at 869e2d2. Fixed in the middleware rather than through the SDK settings, so that it covers every mount, leaves clients that send no Host header working, and leaves authenticated deployments behind a public host name unaffected.",
+      "fix_note": "Without credentials, BearerTokenMiddleware refuses a Host that is not localhost or a loopback address (421) and an Origin that is neither loopback nor in the CORS allowlist (403), before the request reaches a tool. A request without either header is served, and token and ACL modes are unchanged. Reverting the refusal call (if refusal is not None changed to if False) makes test_bug_919_rebinding_request_does_not_reach_the_tool and the six test_bug_919_foreign_host_or_origin_is_refused_without_auth cases fail.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-920",
+      "summary": "(LOW) traverse listed a relation's anchor_ref without checking that the call could read the anchored record, although its description promises that records are listed only when the project, channel and source_id filters would admit them. A traverse filtered by source_id, or in one project, could therefore return the ref of a record from another source or another project, while the same call's mention refs, and a recall with the same filters, left that record out.",
+      "severity": "LOW",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/associations.py",
+      "pattern": "# bug-920: the anchor is a record ref, listed only when this call could read it",
+      "expected": "present",
+      "status": "fixed",
+      "category": "isolation",
+      "fix_sketch": "Run each anchor ref through the readability filter the mention refs use (isolation plus source_id). Leave anchor_ref out when the record cannot be read, keeping the relation itself.",
+      "note": "Fixed at read time in traverse. declare still accepts an anchor of the same agent from another project or channel (the existence check is agent-scoped); that write-side rule is unchanged, so the read-side filter is what keeps such an anchor out of a scoped traverse.",
+      "fix_note": "traverse now runs each relation's anchor ref through the same readability rule its mention refs use (isolation, source_id, and the episode rule) and leaves anchor_ref out when the call could not read that record, keeping the relation. Reverting the gate to a plain truthiness check makes the four test_bug_920 tests in tests/test_2618a2_u03.py fail.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-921",
+      "summary": "(LOW) An agent-scoped check_health report still named the absolute server path of the shared index files. The vector_index_unusable, coarse_index_unusable and block_index_unusable findings copied the index loader's error text into detail, and that text begins with the full index file path beside the database. So a caller with read on a single agent learned the server's database directory, which agent-scoped reports otherwise withhold and only the unscoped operator report shows.",
+      "severity": "LOW",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/checks.py",
+      "pattern": "\"detail\": _without_server_path\\(str\\(exc\\), vector_index\\.index_path\\(table\\), agent_id\\),",
+      "expected": "present",
+      "status": "fixed",
+      "category": "health-check-scope-leak",
+      "fix_sketch": "Pass the three detail strings through the existing path-stripping helper with the index file path and agent_id (vector, coarse and block index), so a scoped report names only the file. Add a scoped test for each finding.",
+      "note": "Incomplete coverage of the bug-778 rule: that fix applied the path helpers to file_permissions and the operating-context checks only. Confirmed by reading and by a scoped test per finding.",
+      "fix_note": "The vector_index_unusable, coarse_index_unusable and block_index_unusable details now go through the existing path-trimming helper with each index file's path, so an agent-scoped report names only the file and the unscoped report keeps the full path. Reverting the vector detail to str(exc) turns tests/test_2618a2_u04.py::test_bug_921_vector_index_unusable_names_no_server_path_when_scoped red, and the coarse and block tests fail the same way.",
+      "fixed_in": "2.6.18a2"
+    },
+    {
+      "id": "bug-922",
+      "summary": "(LOW) The dashboard overview inserted the month label of the by-month histogram into HTML attributes without escaping. The label is the first seven characters of a stored timestamp, and an unparseable timestamp is stored as given. So anyone who could write to an agent the viewer reads could store a timestamp that closes the title attribute and injects markup into every viewer's overview. The content security policy blocks scripts but not injected elements.",
+      "severity": "LOW",
+      "discovered": "2026-11-24T00:00:00Z",
+      "version": "2.6.18a1",
+      "file": "cpersona/dashboard/static/app.js",
+      "pattern": "title=\"\\$\\{esc\\(m\\.month\\)\\}: \\$\\{esc\\(m\\.count\\)\\}\" aria-label=\"\\$\\{esc\\(m\\.month\\)\\}",
+      "expected": "present",
+      "status": "fixed",
+      "category": "security",
+      "fix_sketch": "Wrap m.month (and the count, for consistency) in esc() in the title and aria-label attributes of the histogram buttons, as data-month already is, and add a test that renders a month containing a quote and angle brackets.",
+      "note": "Confirmed by reading and by rendering the template line in node. Fixed together with its registration.",
+      "fix_note": "The month and count in the title and aria-label attributes of the overview histogram are now escaped like data-month. Restoring the unescaped template fails test_bug_922_histogram_month_is_escaped_in_every_attribute and, where node is installed, test_bug_922_a_month_with_markup_stays_inside_its_attributes.",
+      "fixed_in": "2.6.18a2"
     }
   ]
 }
