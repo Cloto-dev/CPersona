@@ -1827,7 +1827,12 @@ def _read_calibration_sidecar() -> tuple[dict | None, bool]:
     path = _calibration_sidecar_path()
     try:
         with open(path) as fh:
-            return json.load(fh), False
+            state = json.load(fh)
+        # bug-810: valid JSON that is not an object (a list, a string, a number, null)
+        # holds no calibration either, and every caller reads it with .get().
+        if not isinstance(state, dict):
+            raise ValueError(f"expected a JSON object, found {type(state).__name__}")
+        return state, False
     except FileNotFoundError:
         return None, False
     except (OSError, ValueError) as exc:
@@ -2272,6 +2277,7 @@ async def do_calibrate_threshold(
     session_key: str = "",
     *,
     precision_override: float | None | object = _CURRENT_PRECISION,
+    server_owned: bool = False,
 ) -> dict:
     """Auto-calibrate the vector-similarity threshold from the embedding distribution.
 
@@ -2292,6 +2298,9 @@ async def do_calibrate_threshold(
     When no gate could be measured at the new beta and the agent holds one measured at
     its current beta, the stored beta is kept and the result carries
     ``precision_override_applied: false``.
+
+    ``server_owned`` is the startup guard's, and no tool argument reaches it either: that
+    calibration is the server's own work and belongs to no session, so no pause skips it.
     """
     import numpy as np
 
@@ -2342,8 +2351,11 @@ async def do_calibrate_threshold(
     # shape (echo keys resolved above, computed fields nulled); the guard sits
     # AFTER the pure param validation so invalid input still returns the real
     # error response, pause or not (same doctrine as the import/merge gates).
+    # bug-812: the startup guard calls without a key, so a client's keyless pause that
+    # landed while it ran skipped the remaining agents, which the guard then counted as
+    # calibrated and later boots restored without measuring.
     key, _declared = resolve_session_key(session_key)
-    if session.is_paused_for(key):
+    if not server_owned and session.is_paused_for(key):
         return session.make_skipped_response(
             {
                 "ok": True,
@@ -2540,7 +2552,13 @@ async def do_calibrate_threshold(
                 vector._get_precision_beta(agent_id),
             )
             fused_stats = None
-        if fused_stats is not None:
+        # bug-811: a gate measured at a new beta enters process memory with that beta,
+        # only once the sidecar holds both. Applied before the save, it stayed in force
+        # after a failed or skipped write that set_recall_precision reports as not applied.
+        held_gate = None
+        if fused_stats is not None and precision_override is not _CURRENT_PRECISION:
+            held_gate = fused_stats
+        elif fused_stats is not None:
             # The 0.1544 collapse produced zero log lines —
             # the gate is recall's effective filter, so a replacement is worth one.
             logger.info(
@@ -2599,9 +2617,10 @@ async def do_calibrate_threshold(
             # gate exists; a calibration that measured one has nothing left to record.
             gate_unavailable = (
                 None
-                if vector._fused_gate_signal is not None or not carried
+                if held_gate is not None or vector._fused_gate_signal is not None or not carried
                 else (stored_state or {}).get("gate_unavailable")
             )
+            held_gates = {agent_id: held_gate["threshold"]} if held_gate is not None else {}
             sidecar_persisted = _save_calibration_state(
                 embedding_dim,
                 config.EMBEDDING_MODEL,
@@ -2611,8 +2630,13 @@ async def do_calibrate_threshold(
                 agent_fused_gates={
                     **carried.get("agent_fused_gates", {}),
                     **dict(vector._agent_fused_gates),
+                    **held_gates,
                 },
-                fused_gate_signal=carried.get("fused_gate_signal", vector._fused_gate_signal),
+                fused_gate_signal=(
+                    held_gate["signal"]
+                    if held_gate is not None
+                    else carried.get("fused_gate_signal", vector._fused_gate_signal)
+                ),
                 agent_betas=agent_betas,
                 calibrated_at=(
                     measured_at if not agent_id or stored_global_time is None else stored_global_time
@@ -2622,6 +2646,20 @@ async def do_calibrate_threshold(
             )
             if sidecar_persisted:
                 vector._clear_calibration_pending()
+                if held_gate is not None:
+                    logger.info(
+                        "Fused gate [%s]: %s -> %.4f (signal=%s, beta=%s)",
+                        agent_id,
+                        vector._agent_fused_gates.get(agent_id, "unset"),
+                        held_gate["threshold"],
+                        held_gate["signal"],
+                        gate_beta,
+                    )
+                    # On disk already, so claimed rather than pending, as the beta is.
+                    vector._agent_fused_gates[agent_id] = held_gate["threshold"]
+                    vector._fused_gate_signal = held_gate["signal"]
+                    vector._claim_agent_calibration(agent_id, "agent_fused_gates")
+                    vector._claim_global_calibration("fused_gate_signal")
         elif not sidecar_lock_held:
             logger.warning(
                 "Not persisting calibration: the lock on the sidecar at %s could not be "
@@ -3152,7 +3190,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
             _live_fingerprint(),
         )
 
-    global_result = await do_calibrate_threshold(agent_id="")
+    global_result = await do_calibrate_threshold(agent_id="", server_owned=True)
     agents = []
     if global_result.get("ok"):
         # Deliberate corpus-wide agent enumeration (typed no-filter helper —
@@ -3164,7 +3202,7 @@ async def ensure_calibrated_on_startup(auto_calibrate: bool, on_model_change: bo
                 iso_all.params,
             )
         for (aid,) in agent_rows:
-            r = await do_calibrate_threshold(agent_id=aid)
+            r = await do_calibrate_threshold(agent_id=aid, server_owned=True)
             if r.get("ok"):
                 agents.append(aid)
 
