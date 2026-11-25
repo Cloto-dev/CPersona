@@ -98,13 +98,21 @@ def _signature(conn) -> tuple:
     )
 
 
+def _expire(cache: dict, now: float) -> None:
+    """Drop the entries older than CACHE_SECONDS (bug-819: they were never released)."""
+    for k in [k for k, v in cache.items() if now - v[1] >= CACHE_SECONDS]:
+        del cache[k]
+
+
 def _held(conn, db_path: str) -> dict | None:
     """Every vector of the store by width, from the cache when it is still the same store."""
     key = os.path.abspath(db_path)
     sig = _signature(conn)
-    if sig[3] > CACHE_MAX_BYTES:
-        return None
     with _lock:
+        _expire(_cache, time.monotonic())
+        if sig[3] > CACHE_MAX_BYTES:
+            _cache.pop(key, None)  # bug-819: a store grown past the cap keeps no old copy
+            return None
         hit = _cache.get(key)
         if hit and hit[0] == sig[:3] and time.monotonic() - hit[1] < CACHE_SECONDS:
             return hit[2]
@@ -182,22 +190,30 @@ def _nearest_across(conn, db_path, seeds: list[int], width: int, seed_vecs) -> d
     }
 
 
+#: Ids asked for at a time, under SQLite's oldest limit on bound parameters.
+_ID_BATCH = 900
+
+
 def _declared(conn, mem_ids: set[int]) -> tuple[list[dict], list[dict]]:
     """Entity points and declared lines that touch the shown memories."""
     if not mem_ids or not store._has_table(conn, "entity_mentions"):
         return [], []
+    # bug-820: every read below is batched, under SQLite's limit on bound parameters.
     refs = [f"mem:{i}" for i in sorted(mem_ids)]
-    marks = ",".join("?" * len(refs))
-    mentions = conn.execute(
-        f"SELECT entity_id, ref FROM entity_mentions WHERE ref IN ({marks})", refs
-    ).fetchall()
+    mentions = []
+    for at in range(0, len(refs), _ID_BATCH):
+        part = refs[at : at + _ID_BATCH]
+        mentions += conn.execute(
+            f"SELECT entity_id, ref FROM entity_mentions WHERE ref IN ({','.join('?' * len(part))})",
+            part,
+        ).fetchall()
     ent_ids = sorted({m[0] for m in mentions})
     entities = []
-    if ent_ids:
-        emarks = ",".join("?" * len(ent_ids))
-        entities = conn.execute(
-            f"SELECT id, name, agent_id FROM entities WHERE id IN ({emarks}) ORDER BY id",
-            ent_ids,
+    for at in range(0, len(ent_ids), _ID_BATCH):
+        part = ent_ids[at : at + _ID_BATCH]
+        entities += conn.execute(
+            f"SELECT id, name, agent_id FROM entities WHERE id IN ({','.join('?' * len(part))}) ORDER BY id",
+            part,
         ).fetchall()
     known = {e[0] for e in entities}
     links = [
@@ -207,14 +223,17 @@ def _declared(conn, mem_ids: set[int]) -> tuple[list[dict], list[dict]]:
     ]
     ends = {("entity", i) for i in known} | {("mem", i) for i in mem_ids}
     # Through the subject index: a relation is drawn only when both of its ends are.
-    ent_list, mem_list = sorted(known), sorted(mem_ids)
-    for r in conn.execute(
-        "SELECT subject_kind, subject_id, predicate, object_kind, object_id FROM relations "
-        f"WHERE (subject_kind = 'entity' AND subject_id IN ({','.join('?' * len(ent_list))})) "
-        f"OR (subject_kind = 'mem' AND subject_id IN ({','.join('?' * len(mem_list))})) "
-        "ORDER BY id",
-        [*ent_list, *mem_list],
-    ):
+    rels = []
+    for kind, subjects in (("entity", sorted(known)), ("mem", sorted(mem_ids))):
+        for at in range(0, len(subjects), _ID_BATCH):
+            part = subjects[at : at + _ID_BATCH]
+            rels += conn.execute(
+                "SELECT id, subject_kind, subject_id, predicate, object_kind, object_id FROM relations "
+                f"WHERE subject_kind = ? AND subject_id IN ({','.join('?' * len(part))})",
+                [kind, *part],
+            ).fetchall()
+    rels.sort(key=lambda r: r[0])  # in declaration order, as one query read them
+    for _rid, *r in rels:
         a, b = (r[0], r[1]), (r[3], r[4])
         if a in ends and b in ends:
             name = {"entity": "e", "mem": "m"}
@@ -298,10 +317,6 @@ def _drawn(conn, rows, total: int, view: str, **extra) -> dict:
         **extra,
         **_points(conn, rows, similar),
     }
-
-
-#: Ids asked for at a time, under SQLite's oldest limit on bound parameters.
-_ID_BATCH = 900
 
 
 def members(conn, ids: list[int], view: str, **extra) -> dict:

@@ -205,6 +205,7 @@ def _grouped(conn, db_path: str) -> dict:
     else:
         out = _cluster(conn)
     with _lock:
+        graph._expire(_cache, time.monotonic())  # bug-819: release expired groupings
         _cache[key] = (sig[:3], time.monotonic(), out)
     return out
 

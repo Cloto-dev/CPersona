@@ -16,10 +16,12 @@ sign-in code and the browser opens on it.
 
 Exit codes: 0 when the dashboard ran, was opened or was stopped, or a shortcut was
 made or removed; 1 when ``--stop`` found none of this store; 2 when the database
-cannot be read, the port is taken, or a shortcut could not be made.
+cannot be read, the port is taken, the running dashboard refused to stop, or a
+shortcut could not be made.
 """
 
 import argparse
+import http.client
 import os
 import subprocess
 import sys
@@ -113,7 +115,14 @@ def main(argv: list[str] | None = None) -> int:
         if not mine:
             print(f"No dashboard of {db} is running on port {args.port}.", file=sys.stderr)
             return 1
-        local.ask(args.port, "stop", db)
+        # bug-818: only an accepted request stopped it; a refusal leaves it running.
+        try:
+            status, body = local.ask(args.port, "stop", db)
+        except (OSError, http.client.HTTPException) as e:
+            status, body = None, {"error": str(e) or type(e).__name__}
+        if status != 202:
+            print(f"The dashboard on port {args.port} did not stop: {body.get('error', status)}", file=sys.stderr)
+            return 2
         print(f"Stopped the dashboard on port {args.port}.")
         return 0
     if mine:

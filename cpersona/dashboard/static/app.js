@@ -461,7 +461,7 @@ function renderOverview() {
         <div class="track"><div class="fill" data-w="${100 * a.count / maxA}"></div></div><div class="num">${a.count}</div>`).join("")}</div>
     </div>
     <div class="block"><h2>${t("byMonth")}</h2><div class="hint">${t("byMonthHint")}</div>
-      <div class="hist">${o.months.map(m => `<button data-h="${Math.max(2, 100 * m.count / max)}" title="${m.month}: ${m.count}" aria-label="${m.month}: ${m.count}" data-month="${esc(m.month)}">${o.months.length <= 24 ? `<span class="hist-n" aria-hidden="true">${m.count.toLocaleString()}</span>` : ""}</button>`).join("")}</div>
+      <div class="hist">${o.months.map(m => `<button data-h="${Math.max(2, 100 * m.count / max)}" title="${esc(m.month)}: ${esc(m.count)}" aria-label="${esc(m.month)}: ${esc(m.count)}" data-month="${esc(m.month)}">${o.months.length <= 24 ? `<span class="hist-n" aria-hidden="true">${m.count.toLocaleString()}</span>` : ""}</button>`).join("")}</div>
       <div class="hist-axis"><span>${esc(o.months[0]?.month ?? "")}</span>${o.months.length > 1 ? `<span>${esc(o.months.at(-1).month)}</span>` : ""}</div>
     </div>`;
   sizes(page);
